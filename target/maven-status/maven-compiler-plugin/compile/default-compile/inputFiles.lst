@@ -24,9 +24,12 @@ C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\d
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\ExamStatisticsResponse.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\MatchingPairResponse.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\OptionResponse.java
+C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\OptionReviewResponse.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\QuestionResponse.java
+C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\QuestionReviewResponse.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\SessionDetailsResponse.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\SubmissionResponse.java
+C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\dto\response\SubmissionReviewResponse.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\entity\Answer.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\entity\Exam.java
 C:\Users\serxa\Desktop\testup.az\testupvibecodebackend\src\main\java\az\testup\entity\MatchingPair.java

@@ -2,7 +2,7 @@ package az.testup.controller;
 
 import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
-import az.testup.dto.response.SubmissionResponse;
+import az.testup.dto.response.*;
 import az.testup.entity.User;
 import az.testup.exception.UnauthorizedException;
 import az.testup.repository.UserRepository;
@@ -94,5 +94,19 @@ public class SubmissionController {
         }
         return userRepository.findByEmail(userDetails.getUsername())
                 .orElseThrow(() -> new UnauthorizedException("İstifadəçi tapılmadı"));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<SubmissionResponse> getSubmissionById(@PathVariable Long id) {
+        // ... (can implement if needed, for now using existing mapToResponse logic likely)
+        return ResponseEntity.notFound().build();
+    }
+
+    @GetMapping("/{id}/review")
+    public ResponseEntity<SubmissionReviewResponse> getSubmissionReview(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User student = userDetails != null ? userRepository.findByEmail(userDetails.getUsername()).orElse(null) : null;
+        return ResponseEntity.ok(submissionService.getSubmissionReview(id, student));
     }
 }

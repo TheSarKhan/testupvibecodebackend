@@ -37,6 +37,11 @@ public class ExamController {
         return ResponseEntity.ok(examService.getTeacherExams(teacher));
     }
 
+    @GetMapping("/public")
+    public ResponseEntity<List<ExamResponse>> getPublicExams() {
+        return ResponseEntity.ok(examService.getPublicExams());
+    }
+
     @GetMapping("/{id}/details")
     public ResponseEntity<ExamResponse> getExamById(
             @PathVariable Long id,

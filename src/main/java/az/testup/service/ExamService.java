@@ -67,6 +67,17 @@ public class ExamService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Returns all ACTIVE exams created by ADMIN users — visible to students on the main exam listing.
+     */
+    public List<ExamResponse> getPublicExams() {
+        return examRepository.findAll().stream()
+                .filter(e -> e.getStatus() == ExamStatus.ACTIVE
+                        && e.getTeacher().getRole().name().equals("ADMIN"))
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
     public ExamResponse getExamById(Long id, User teacher) {
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));

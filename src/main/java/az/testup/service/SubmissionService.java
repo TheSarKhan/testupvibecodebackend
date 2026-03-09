@@ -3,15 +3,13 @@ package az.testup.service;
 import az.testup.dto.request.AnswerRequest;
 import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
-import az.testup.dto.response.SubmissionResponse;
-import az.testup.dto.response.ExamStatisticsResponse;
+import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.enums.ExamVisibility;
 import az.testup.enums.QuestionType;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.ExamRepository;
-import az.testup.repository.QuestionRepository;
 import az.testup.repository.SubmissionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,7 +27,6 @@ public class SubmissionService {
 
     private final SubmissionRepository submissionRepository;
     private final ExamRepository examRepository;
-    private final QuestionRepository questionRepository;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -45,7 +42,7 @@ public class SubmissionService {
 
         Submission submission = Submission.builder()
                 .exam(exam)
-                .student(student) // null if guest
+                .student(student)
                 .guestName(student == null ? request.getGuestName() : null)
                 .startedAt(LocalDateTime.now())
                 .isFullyGraded(false)
@@ -87,7 +84,6 @@ public class SubmissionService {
                     .build();
 
             if (answerReq != null) {
-                // Auto-grading logic based on QuestionType
                 if (question.getQuestionType() == QuestionType.MCQ || question.getQuestionType() == QuestionType.TRUE_FALSE) {
                     if (answerReq.getOptionIds() != null && !answerReq.getOptionIds().isEmpty()) {
                         Long selectedId = answerReq.getOptionIds().get(0);
@@ -123,13 +119,12 @@ public class SubmissionService {
                     answer.setIsGraded(false);
                     allGraded = false;
                 } else if (question.getQuestionType() == QuestionType.MATCHING) {
-                    answer.setIsGraded(false); // Can be auto-graded if fully matched, leaving for manual/complex logic later
+                    answer.setIsGraded(false);
                     allGraded = false;
                     if (answerReq.getMatchingPairs() != null) {
                         try {
                             answer.setMatchingAnswerJson(objectMapper.writeValueAsString(answerReq.getMatchingPairs()));
                         } catch (JsonProcessingException e) {
-                            // Ignore or log
                         }
                     }
                 }
@@ -156,7 +151,6 @@ public class SubmissionService {
     }
 
     public List<SubmissionResponse> getExamSubmissions(Long examId, User teacher) {
-        // Here we could check if exam belongs to teacher
         return submissionRepository.findByExamId(examId).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
@@ -181,23 +175,19 @@ public class SubmissionService {
         submissionRepository.save(submission);
     }
 
-    public az.testup.dto.response.ExamStatisticsResponse getExamStatistics(Long examId, User teacher) {
+    public ExamStatisticsResponse getExamStatistics(Long examId, User teacher) {
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
-
-        // Optional: Verify teacher ownership
-        // if (!exam.getTeacher().getId().equals(teacher.getId())) throw new UnauthorizedException();
 
         List<Submission> submissions = submissionRepository.findByExamId(examId);
 
         double totalScoreSum = 0;
-        int maxScoreSum = 0;
         double totalRatingSum = 0;
         int ratingCount = 0;
         long totalDurationSeconds = 0;
         int completedSubmissions = 0;
 
-        List<az.testup.dto.response.ExamStatisticsResponse.TopStudentDTO> topList = new java.util.ArrayList<>();
+        List<ExamStatisticsResponse.TopStudentDTO> topList = new java.util.ArrayList<>();
 
         for (Submission sub : submissions) {
             if (sub.getSubmittedAt() != null) {
@@ -215,7 +205,7 @@ public class SubmissionService {
                 String durationFormatted = String.format("%02d:%02d", durationSec / 60, durationSec % 60);
                 String studentName = sub.getStudent() != null ? sub.getStudent().getFullName() : (sub.getGuestName() != null ? sub.getGuestName() : "Qonaq");
                 
-                topList.add(az.testup.dto.response.ExamStatisticsResponse.TopStudentDTO.builder()
+                topList.add(ExamStatisticsResponse.TopStudentDTO.builder()
                         .name(studentName)
                         .score(sub.getTotalScore())
                         .timeSpent(durationFormatted)
@@ -227,16 +217,14 @@ public class SubmissionService {
         double avgRating = ratingCount > 0 ? totalRatingSum / ratingCount : 0.0;
         int avgDurationMins = completedSubmissions > 0 ? (int) ((totalDurationSeconds / completedSubmissions) / 60) : 0;
         
-        // Max possible score for the exam
         double examMaxScore = exam.getQuestions().stream().mapToDouble(Question::getPoints).sum();
 
-        // Sort top list
         topList.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
         if (topList.size() > 5) {
             topList = topList.subList(0, 5);
         }
 
-        return az.testup.dto.response.ExamStatisticsResponse.builder()
+        return ExamStatisticsResponse.builder()
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
                 .totalParticipants(submissions.size())
@@ -263,11 +251,10 @@ public class SubmissionService {
                 .build();
     }
 
-    public az.testup.dto.response.SessionDetailsResponse getSessionDetails(Long submissionId, User student) {
+    public SessionDetailsResponse getSessionDetails(Long submissionId, User student) {
         Submission submission = submissionRepository.findById(submissionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
 
-        // Basic security check to ensure the student accessing this is the one who created it (guest or logged in)
         if (submission.getStudent() != null) {
             if (student == null || !submission.getStudent().getId().equals(student.getId())) {
                 throw new BadRequestException("Bu imtahana daxil olmaq hüququnuz yoxdur");
@@ -276,8 +263,8 @@ public class SubmissionService {
 
         Exam exam = submission.getExam();
         
-        List<az.testup.dto.response.ClientQuestionResponse> clientQuestions = exam.getQuestions().stream().map(q -> {
-            return az.testup.dto.response.ClientQuestionResponse.builder()
+        List<ClientQuestionResponse> clientQuestions = exam.getQuestions().stream().map(q -> {
+            return ClientQuestionResponse.builder()
                     .id(q.getId())
                     .content(q.getContent())
                     .attachedImage(q.getAttachedImage())
@@ -285,14 +272,14 @@ public class SubmissionService {
                     .points(q.getPoints())
                     .orderIndex(q.getOrderIndex())
                     .options(q.getOptions().stream().map(o -> 
-                        az.testup.dto.response.ClientOptionResponse.builder()
+                        ClientOptionResponse.builder()
                             .id(o.getId())
                             .content(o.getContent())
                             .attachedImage(o.getAttachedImage())
                             .build()
                     ).collect(Collectors.toList()))
                     .matchingPairs(q.getMatchingPairs().stream().map(m -> 
-                        az.testup.dto.response.ClientMatchingPairResponse.builder()
+                        ClientMatchingPairResponse.builder()
                             .id(m.getId())
                             .leftItem(m.getLeftItem())
                             .rightItem(m.getRightItem())
@@ -301,12 +288,77 @@ public class SubmissionService {
                     .build();
         }).collect(Collectors.toList());
 
-        return az.testup.dto.response.SessionDetailsResponse.builder()
+        return SessionDetailsResponse.builder()
                 .submissionId(submission.getId())
                 .examTitle(exam.getTitle())
                 .durationMinutes(exam.getDurationMinutes())
                 .startedAt(submission.getStartedAt())
                 .questions(clientQuestions)
+                .build();
+    }
+
+    public SubmissionReviewResponse getSubmissionReview(Long id, User student) {
+        Submission submission = submissionRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
+
+        if (submission.getStudent() != null) {
+            if (student == null || !submission.getStudent().getId().equals(student.getId())) {
+                throw new BadRequestException("Bu imtahana daxil olmaq hüququnuz yoxdur");
+            }
+        }
+
+        Exam exam = submission.getExam();
+        
+        List<QuestionReviewResponse> reviewQuestions = exam.getQuestions().stream().map(q -> {
+            Answer studentAnswer = submission.getAnswers().stream()
+                    .filter(a -> a.getQuestion().getId().equals(q.getId()))
+                    .findFirst()
+                    .orElse(null);
+
+            return QuestionReviewResponse.builder()
+                    .id(q.getId())
+                    .content(q.getContent())
+                    .attachedImage(q.getAttachedImage())
+                    .questionType(q.getQuestionType())
+                    .points(q.getPoints())
+                    .orderIndex(q.getOrderIndex())
+                    .studentAnswerText(studentAnswer != null ? studentAnswer.getAnswerText() : null)
+                    .studentSelectedOptionId(studentAnswer != null ? studentAnswer.getSelectedOptionId() : null)
+                    .studentMatchingAnswerJson(studentAnswer != null ? studentAnswer.getMatchingAnswerJson() : null)
+                    .awardedScore(studentAnswer != null ? studentAnswer.getScore() : 0.0)
+                    .isGraded(studentAnswer != null ? studentAnswer.getIsGraded() : true)
+                    .feedback(studentAnswer != null ? studentAnswer.getFeedback() : null)
+                    .correctAnswer(q.getCorrectAnswer())
+                    .options(q.getOptions().stream().map(o -> 
+                        OptionReviewResponse.builder()
+                            .id(o.getId())
+                            .content(o.getContent())
+                            .isCorrect(o.getIsCorrect())
+                            .orderIndex(o.getOrderIndex())
+                            .attachedImage(o.getAttachedImage())
+                            .build()
+                    ).collect(Collectors.toList()))
+                    .matchingPairs(q.getMatchingPairs().stream().map(m -> 
+                        ClientMatchingPairResponse.builder()
+                            .id(m.getId())
+                            .leftItem(m.getLeftItem())
+                            .rightItem(m.getRightItem())
+                            .build()
+                    ).collect(Collectors.toList()))
+                    .build();
+        }).collect(Collectors.toList());
+
+        return SubmissionReviewResponse.builder()
+                .id(submission.getId())
+                .examId(exam.getId())
+                .examTitle(exam.getTitle())
+                .totalScore(submission.getTotalScore())
+                .maxScore(submission.getMaxScore())
+                .startedAt(submission.getStartedAt())
+                .submittedAt(submission.getSubmittedAt())
+                .isFullyGraded(submission.getIsFullyGraded())
+                .rating(submission.getRating())
+                .questions(reviewQuestions)
                 .build();
     }
 }
