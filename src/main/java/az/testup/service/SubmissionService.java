@@ -1,6 +1,7 @@
 package az.testup.service;
 
 import az.testup.dto.request.AnswerRequest;
+import az.testup.dto.request.MatchingPairAnswerRequest;
 import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
@@ -119,14 +120,38 @@ public class SubmissionService {
                     answer.setIsGraded(false);
                     allGraded = false;
                 } else if (question.getQuestionType() == QuestionType.MATCHING) {
-                    answer.setIsGraded(false);
-                    allGraded = false;
                     if (answerReq.getMatchingPairs() != null) {
                         try {
                             answer.setMatchingAnswerJson(objectMapper.writeValueAsString(answerReq.getMatchingPairs()));
+                            
+                            // Auto-grading matching questions
+                            long correctCount = 0;
+                            List<MatchingPair> actualPairs = question.getMatchingPairs();
+                            
+                            if (!actualPairs.isEmpty()) {
+                                for (MatchingPairAnswerRequest reqPair : answerReq.getMatchingPairs()) {
+                                    // A match is correct if the leftItemId matches the correct rightItemId (which has same ID in our case)
+                                    // Actually, in our MatchingPair entity, leftItem and rightItem are strings, and they are stored in the same row.
+                                    // So leftItemId 1 corresponds to rightItemId 1.
+                                    if (reqPair.getLeftItemId() != null && reqPair.getLeftItemId().equals(reqPair.getRightItemId())) {
+                                        correctCount++;
+                                    }
+                                }
+                                
+                                double pointsPerMatch = question.getPoints() / actualPairs.size();
+                                double awarded = correctCount * pointsPerMatch;
+                                answer.setScore(awarded);
+                                totalScore += awarded;
+                            } else {
+                                answer.setScore(0.0);
+                            }
                         } catch (JsonProcessingException e) {
+                            answer.setScore(0.0);
                         }
+                    } else {
+                        answer.setScore(0.0);
                     }
+                    answer.setIsGraded(true);
                 }
             } else {
                 answer.setScore(0.0);
@@ -282,7 +307,9 @@ public class SubmissionService {
                         ClientMatchingPairResponse.builder()
                             .id(m.getId())
                             .leftItem(m.getLeftItem())
+                            .attachedImageLeft(m.getAttachedImageLeft())
                             .rightItem(m.getRightItem())
+                            .attachedImageRight(m.getAttachedImageRight())
                             .build()
                     ).collect(Collectors.toList()))
                     .build();
@@ -342,7 +369,9 @@ public class SubmissionService {
                         ClientMatchingPairResponse.builder()
                             .id(m.getId())
                             .leftItem(m.getLeftItem())
+                            .attachedImageLeft(m.getAttachedImageLeft())
                             .rightItem(m.getRightItem())
+                            .attachedImageRight(m.getAttachedImageRight())
                             .build()
                     ).collect(Collectors.toList()))
                     .build();

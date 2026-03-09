@@ -17,12 +17,18 @@ public class MatchingPair {
     private Long id;
 
     /** Left side item */
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String leftItem;
 
     /** Right side item (correct match) */
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String rightItem;
+
+    @Column(columnDefinition = "TEXT")
+    private String attachedImageLeft;
+
+    @Column(columnDefinition = "TEXT")
+    private String attachedImageRight;
 
     /** Display order */
     private Integer orderIndex;
