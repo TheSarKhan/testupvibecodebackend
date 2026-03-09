@@ -43,6 +43,9 @@ public class Submission {
     @Builder.Default
     private Boolean isFullyGraded = false;
 
+    /** 1-5 star rating given by the student after the exam */
+    private Integer rating;
+
     @OneToMany(mappedBy = "submission", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<Answer> answers = new ArrayList<>();
