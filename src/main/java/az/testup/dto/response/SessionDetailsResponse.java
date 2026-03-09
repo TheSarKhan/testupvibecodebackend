@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import az.testup.dto.request.AnswerRequest;
 
 @Data
 @Builder
@@ -18,4 +19,5 @@ public class SessionDetailsResponse {
     private Integer durationMinutes;
     private LocalDateTime startedAt;
     private List<ClientQuestionResponse> questions;
+    private List<AnswerRequest> savedAnswers;
 }

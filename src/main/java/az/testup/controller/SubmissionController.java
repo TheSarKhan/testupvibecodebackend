@@ -1,5 +1,6 @@
 package az.testup.controller;
 
+import az.testup.dto.request.AnswerRequest;
 import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
@@ -42,6 +43,24 @@ public class SubmissionController {
         return ResponseEntity.ok(submissionService.submitExam(id, request, student));
     }
 
+    @PostMapping("/{id}/save-answer")
+    public ResponseEntity<Void> saveAnswer(
+            @PathVariable Long id,
+            @Valid @RequestBody AnswerRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User student = getCurrentUserOrNull(userDetails);
+        submissionService.saveAnswer(id, request, student);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/{id}/finalize")
+    public ResponseEntity<SubmissionResponse> finalizeSubmission(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User student = getCurrentUserOrNull(userDetails);
+        return ResponseEntity.ok(submissionService.finalizeSubmission(id, student));
+    }
+
     @GetMapping("/{id}/session")
     public ResponseEntity<az.testup.dto.response.SessionDetailsResponse> getSessionDetails(
             @PathVariable Long id,
@@ -65,6 +84,13 @@ public class SubmissionController {
             @AuthenticationPrincipal UserDetails userDetails) {
         User student = getCurrentUser(userDetails);
         return ResponseEntity.ok(submissionService.getMySubmissions(student));
+    }
+
+    @GetMapping("/ongoing")
+    public ResponseEntity<List<SubmissionResponse>> getOngoingSubmissions(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User student = getCurrentUser(userDetails);
+        return ResponseEntity.ok(submissionService.getOngoingSubmissions(student));
     }
 
     @GetMapping("/exam/{examId}")

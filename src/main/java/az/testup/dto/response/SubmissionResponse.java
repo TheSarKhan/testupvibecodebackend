@@ -22,4 +22,5 @@ public class SubmissionResponse {
     private Integer rating;
     private LocalDateTime startedAt;
     private LocalDateTime submittedAt;
+    private Integer durationMinutes;
 }
