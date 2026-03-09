@@ -15,7 +15,17 @@ public enum Subject {
     TARIX("Tarix"),
     COGRAFIYA("Coğrafiya"),
     INFORMATIKA("Informatika"),
-    MANTIQ("Məntiq");
+    MANTIQ("Məntiq"),
+    EDEBIYYAT("Ədəbiyyat"),
+    XARICI_DILL("Xarici dil"),
+    RUS_DILI("Rus dili"),
+    ALMAN_DILI("Alman dili"),
+    FRANSIZ_DILI("Fransız dili"),
+    HAYAT_BILGISI("Həyat bilgisi"),
+    INCASANAT("İncəsənət"),
+    MUSIQI("Musiqi"),
+    FIZIKI_TERBIYE("Fiziki tərbiyə"),
+    TEXNOLOGIYA("Texnologiya");
 
     private final String displayName;
 }

@@ -27,6 +27,10 @@ public class Option {
     /** Display order */
     private Integer orderIndex;
 
+    /** Optional image or PDF crop for the option */
+    @Column(columnDefinition = "TEXT")
+    private String attachedImage;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "question_id", nullable = false)
     private Question question;

@@ -148,6 +148,7 @@ public class ExamService {
                         .content(oReq.getContent())
                         .isCorrect(oReq.getIsCorrect())
                         .orderIndex(oReq.getOrderIndex())
+                        .attachedImage(oReq.getAttachedImage())
                         .question(question)
                         .build();
                 question.getOptions().add(option);
@@ -211,6 +212,7 @@ public class ExamService {
                 .content(o.getContent())
                 .isCorrect(o.getIsCorrect())
                 .orderIndex(o.getOrderIndex())
+                .attachedImage(o.getAttachedImage())
                 .build();
     }
 

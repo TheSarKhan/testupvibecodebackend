@@ -19,4 +19,6 @@ public class OptionRequest {
     private Boolean isCorrect;
 
     private Integer orderIndex;
+
+    private String attachedImage;
 }

@@ -14,4 +14,5 @@ public class OptionResponse {
     private String content;
     private Boolean isCorrect;
     private Integer orderIndex;
+    private String attachedImage;
 }
