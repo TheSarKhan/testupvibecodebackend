@@ -38,6 +38,7 @@ public class SubmissionService {
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
     private final ObjectMapper objectMapper;
+    private final NotificationService notificationService;
 
     @Transactional
     public SubmissionResponse startSubmission(String shareLink, StartSubmissionRequest request, User student) {
@@ -336,6 +337,24 @@ public class SubmissionService {
         submission.setIsFullyGraded(allGraded);
 
         submission = submissionRepository.save(submission);
+
+        // Notify teacher of new submission
+        User teacher = submission.getExam().getTeacher();
+        if (teacher != null) {
+            String studentName = submission.getStudent() != null
+                    ? submission.getStudent().getFullName() : submission.getGuestName();
+            notificationService.send(teacher,
+                    "Yeni göndəriş",
+                    studentName + " \"" + submission.getExam().getTitle() + "\" imtahanını təhvil verdi.");
+        }
+
+        // Notify student if auto-graded fully
+        if (allGraded && submission.getStudent() != null) {
+            notificationService.send(submission.getStudent(),
+                    "Nəticəniz hazırdır",
+                    "\"" + submission.getExam().getTitle() + "\" imtahanı yoxlandı. Nəticənizə baxa bilərsiniz.");
+        }
+
         return mapToResponse(submission);
     }
 
@@ -429,9 +448,19 @@ public class SubmissionService {
         long gradedCount = submission.getAnswers().stream()
                 .filter(a -> Boolean.TRUE.equals(a.getIsGraded()))
                 .count();
-        submission.setIsFullyGraded(gradedCount >= totalQuestions);
+        boolean wasFullyGraded = submission.getIsFullyGraded();
+        boolean nowFullyGraded = gradedCount >= totalQuestions;
+        submission.setIsFullyGraded(nowFullyGraded);
 
         submissionRepository.save(submission);
+
+        // Notify student when all manual answers are graded
+        if (!wasFullyGraded && nowFullyGraded && submission.getStudent() != null) {
+            notificationService.send(submission.getStudent(),
+                    "Nəticəniz hazırdır",
+                    "\"" + submission.getExam().getTitle() + "\" imtahanı tam yoxlandı. Nəticənizə baxa bilərsiniz.");
+        }
+
         return mapToResponse(submission);
     }
 
