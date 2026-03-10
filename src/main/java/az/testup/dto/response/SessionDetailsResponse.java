@@ -18,6 +18,9 @@ public class SessionDetailsResponse {
     private String examTitle;
     private Integer durationMinutes;
     private LocalDateTime startedAt;
+    /** Standalone questions (no passage) */
     private List<ClientQuestionResponse> questions;
+    /** Passage groups with their questions embedded */
+    private List<ClientPassageResponse> passages;
     private List<AnswerRequest> savedAnswers;
 }

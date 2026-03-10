@@ -41,5 +41,9 @@ public class ExamRequest {
 
     private List<String> tags;
 
+    /** Standalone questions (not belonging to any passage) */
     private List<QuestionRequest> questions;
+
+    /** Passage groups (TEXT or LISTENING), each containing their own questions */
+    private List<PassageRequest> passages;
 }

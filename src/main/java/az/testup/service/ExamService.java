@@ -3,11 +3,9 @@ package az.testup.service;
 import az.testup.dto.request.ExamRequest;
 import az.testup.dto.request.MatchingPairRequest;
 import az.testup.dto.request.OptionRequest;
+import az.testup.dto.request.PassageRequest;
 import az.testup.dto.request.QuestionRequest;
-import az.testup.dto.response.ExamResponse;
-import az.testup.dto.response.MatchingPairResponse;
-import az.testup.dto.response.OptionResponse;
-import az.testup.dto.response.QuestionResponse;
+import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.enums.ExamStatus;
 import az.testup.exception.ResourceNotFoundException;
@@ -18,9 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -53,8 +49,13 @@ public class ExamService {
 
         if (request.getQuestions() != null) {
             for (QuestionRequest qReq : request.getQuestions()) {
-                Question question = mapToQuestion(qReq, exam);
-                exam.getQuestions().add(question);
+                exam.getQuestions().add(mapToQuestion(qReq, exam, null));
+            }
+        }
+
+        if (request.getPassages() != null) {
+            for (PassageRequest pReq : request.getPassages()) {
+                addPassageToExam(pReq, exam);
             }
         }
 
@@ -82,11 +83,11 @@ public class ExamService {
     public ExamResponse getExamById(Long id, User teacher) {
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
-        
+
         if (!exam.getTeacher().getId().equals(teacher.getId())) {
             throw new RuntimeException("Bu imtahana giriş icazəniz yoxdur");
         }
-        
+
         return mapToResponse(exam);
     }
 
@@ -106,43 +107,143 @@ public class ExamService {
         exam.setExamType(request.getExamType());
         exam.setStatus(request.getStatus());
         exam.setDurationMinutes(request.getDurationMinutes());
-        
+
         exam.getTags().clear();
         if (request.getTags() != null) {
             exam.getTags().addAll(request.getTags());
         }
 
-        // Handle questions update using ID matching to avoid DataIntegrityViolation
+        // --- Handle standalone questions ---
         if (request.getQuestions() != null) {
             List<Long> requestQuestionIds = request.getQuestions().stream()
                     .map(QuestionRequest::getId)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
-            
-            // Remove questions that are no longer in the request
-            exam.getQuestions().removeIf(q -> !requestQuestionIds.contains(q.getId()));
+
+            // Remove standalone questions no longer in the request
+            exam.getQuestions().removeIf(q -> q.getPassage() == null && !requestQuestionIds.contains(q.getId()));
 
             for (QuestionRequest qReq : request.getQuestions()) {
                 if (qReq.getId() != null) {
                     Question existing = exam.getQuestions().stream()
                             .filter(q -> q.getId().equals(qReq.getId()))
-                            .findFirst()
-                            .orElse(null);
+                            .findFirst().orElse(null);
                     if (existing != null) {
                         updateQuestionFromRequest(existing, qReq);
                     } else {
-                        exam.getQuestions().add(mapToQuestion(qReq, exam));
+                        exam.getQuestions().add(mapToQuestion(qReq, exam, null));
                     }
                 } else {
-                    exam.getQuestions().add(mapToQuestion(qReq, exam));
+                    exam.getQuestions().add(mapToQuestion(qReq, exam, null));
                 }
             }
         } else {
-            exam.getQuestions().clear();
+            exam.getQuestions().removeIf(q -> q.getPassage() == null);
+        }
+
+        // --- Handle passages ---
+        if (request.getPassages() != null) {
+            List<Long> requestPassageIds = request.getPassages().stream()
+                    .map(PassageRequest::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            // Remove passages not in request (also remove their questions from exam.questions)
+            List<Passage> passagesToRemove = exam.getPassages().stream()
+                    .filter(p -> !requestPassageIds.contains(p.getId()))
+                    .collect(Collectors.toList());
+            for (Passage p : passagesToRemove) {
+                final Long passageId = p.getId();
+                exam.getQuestions().removeIf(q -> q.getPassage() != null && q.getPassage().getId().equals(passageId));
+                exam.getPassages().remove(p);
+            }
+
+            for (PassageRequest pReq : request.getPassages()) {
+                if (pReq.getId() != null) {
+                    Passage existing = exam.getPassages().stream()
+                            .filter(p -> p.getId().equals(pReq.getId()))
+                            .findFirst().orElse(null);
+                    if (existing != null) {
+                        updatePassageFromRequest(existing, pReq, exam);
+                    } else {
+                        addPassageToExam(pReq, exam);
+                    }
+                } else {
+                    addPassageToExam(pReq, exam);
+                }
+            }
+        } else {
+            // Remove all passages and their questions
+            for (Passage p : new ArrayList<>(exam.getPassages())) {
+                final Long passageId = p.getId();
+                exam.getQuestions().removeIf(q -> q.getPassage() != null && q.getPassage().getId().equals(passageId));
+            }
+            exam.getPassages().clear();
         }
 
         Exam savedExam = examRepository.save(exam);
         return mapToResponse(savedExam);
+    }
+
+    private void addPassageToExam(PassageRequest req, Exam exam) {
+        Passage passage = Passage.builder()
+                .passageType(req.getPassageType())
+                .title(req.getTitle())
+                .textContent(req.getTextContent())
+                .attachedImage(req.getAttachedImage())
+                .audioContent(req.getAudioContent())
+                .listenLimit(req.getListenLimit())
+                .orderIndex(req.getOrderIndex())
+                .exam(exam)
+                .build();
+        exam.getPassages().add(passage);
+
+        if (req.getQuestions() != null) {
+            for (QuestionRequest qReq : req.getQuestions()) {
+                exam.getQuestions().add(mapToQuestion(qReq, exam, passage));
+            }
+        }
+    }
+
+    private void updatePassageFromRequest(Passage passage, PassageRequest req, Exam exam) {
+        passage.setPassageType(req.getPassageType());
+        passage.setTitle(req.getTitle());
+        passage.setTextContent(req.getTextContent());
+        passage.setAttachedImage(req.getAttachedImage());
+        passage.setAudioContent(req.getAudioContent());
+        passage.setListenLimit(req.getListenLimit());
+        passage.setOrderIndex(req.getOrderIndex());
+
+        if (req.getQuestions() != null) {
+            List<Long> reqQuestionIds = req.getQuestions().stream()
+                    .map(QuestionRequest::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            // Remove passage questions no longer in the request
+            final Long passageId = passage.getId();
+            exam.getQuestions().removeIf(q -> q.getPassage() != null
+                    && q.getPassage().getId().equals(passageId)
+                    && !reqQuestionIds.contains(q.getId()));
+
+            for (QuestionRequest qReq : req.getQuestions()) {
+                if (qReq.getId() != null) {
+                    Question existing = exam.getQuestions().stream()
+                            .filter(q -> q.getId().equals(qReq.getId()))
+                            .findFirst().orElse(null);
+                    if (existing != null) {
+                        updateQuestionFromRequest(existing, qReq);
+                    } else {
+                        exam.getQuestions().add(mapToQuestion(qReq, exam, passage));
+                    }
+                } else {
+                    exam.getQuestions().add(mapToQuestion(qReq, exam, passage));
+                }
+            }
+        } else {
+            final Long passageId = passage.getId();
+            exam.getQuestions().removeIf(q -> q.getPassage() != null && q.getPassage().getId().equals(passageId));
+        }
     }
 
     private void updateQuestionFromRequest(Question question, QuestionRequest req) {
@@ -159,7 +260,7 @@ public class ExamService {
                     .map(OptionRequest::getId)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
-            
+
             question.getOptions().removeIf(o -> !reqOptionIds.contains(o.getId()));
 
             for (OptionRequest oReq : req.getOptions()) {
@@ -189,7 +290,7 @@ public class ExamService {
                     .map(MatchingPairRequest::getId)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
-            
+
             question.getMatchingPairs().removeIf(p -> !reqPairIds.contains(p.getId()));
 
             for (MatchingPairRequest pReq : req.getMatchingPairs()) {
@@ -242,15 +343,15 @@ public class ExamService {
     public void deleteExam(Long id, User teacher) {
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
-        
+
         if (!exam.getTeacher().getId().equals(teacher.getId())) {
              throw new RuntimeException("Bu əməliyyat üçün icazəniz yoxdur");
         }
-        
+
         examRepository.delete(exam);
     }
 
-    private Question mapToQuestion(QuestionRequest req, Exam exam) {
+    private Question mapToQuestion(QuestionRequest req, Exam exam, Passage passage) {
         Question question = Question.builder()
                 .content(req.getContent())
                 .attachedImage(req.getAttachedImage())
@@ -259,6 +360,7 @@ public class ExamService {
                 .orderIndex(req.getOrderIndex())
                 .correctAnswer(req.getCorrectAnswer())
                 .exam(exam)
+                .passage(passage)
                 .build();
 
         if (req.getOptions() != null) {
@@ -277,6 +379,33 @@ public class ExamService {
     }
 
     private ExamResponse mapToResponse(Exam exam) {
+        // Split questions into standalone vs. by-passage
+        Map<Long, List<QuestionResponse>> byPassage = exam.getQuestions().stream()
+                .filter(q -> q.getPassage() != null)
+                .collect(Collectors.groupingBy(
+                        q -> q.getPassage().getId(),
+                        Collectors.mapping(this::mapToQuestionResponse, Collectors.toList())
+                ));
+
+        List<QuestionResponse> standaloneQuestions = exam.getQuestions().stream()
+                .filter(q -> q.getPassage() == null)
+                .map(this::mapToQuestionResponse)
+                .collect(Collectors.toList());
+
+        List<PassageResponse> passages = exam.getPassages().stream()
+                .map(p -> PassageResponse.builder()
+                        .id(p.getId())
+                        .passageType(p.getPassageType())
+                        .title(p.getTitle())
+                        .textContent(p.getTextContent())
+                        .attachedImage(p.getAttachedImage())
+                        .audioContent(p.getAudioContent())
+                        .listenLimit(p.getListenLimit())
+                        .orderIndex(p.getOrderIndex())
+                        .questions(byPassage.getOrDefault(p.getId(), new ArrayList<>()))
+                        .build())
+                .collect(Collectors.toList());
+
         return ExamResponse.builder()
                 .id(exam.getId())
                 .title(exam.getTitle())
@@ -291,7 +420,8 @@ public class ExamService {
                 .teacherId(exam.getTeacher().getId())
                 .teacherName(exam.getTeacher().getFullName())
                 .templateId(exam.getTemplate() != null ? exam.getTemplate().getId() : null)
-                .questions(exam.getQuestions().stream().map(this::mapToQuestionResponse).collect(Collectors.toList()))
+                .questions(standaloneQuestions)
+                .passages(passages)
                 .createdAt(exam.getCreatedAt())
                 .updatedAt(exam.getUpdatedAt())
                 .tags(exam.getTags())
@@ -331,4 +461,3 @@ public class ExamService {
                 .build();
     }
 }
-

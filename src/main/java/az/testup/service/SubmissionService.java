@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -90,12 +91,12 @@ public class SubmissionService {
         for (AnswerRequest answerReq : request.getAnswers()) {
             Question question = questionRepository.findById(answerReq.getQuestionId())
                     .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı: " + answerReq.getQuestionId()));
-            
+
             Answer answer = Answer.builder()
                     .submission(submission)
                     .question(question)
                     .build();
-            
+
             updateAnswerData(answer, answerReq);
             gradeAnswer(answer);
             // Snapshot the question for versioning
@@ -142,8 +143,8 @@ public class SubmissionService {
             return mapToResponse(submission);
         }
 
-        // Grade all current answers
-        for (Question question : submission.getExam().getQuestions()) {
+        // Grade all current answers — includes both standalone and passage questions
+        for (Question question : getAllExamQuestions(submission.getExam())) {
             Answer answer = submission.getAnswers().stream()
                     .filter(a -> a.getQuestion().getId().equals(question.getId()))
                     .findFirst()
@@ -163,6 +164,11 @@ public class SubmissionService {
         }
 
         return finalizeAndSave(submission);
+    }
+
+    /** Returns ALL questions in an exam — both standalone and passage questions */
+    private List<Question> getAllExamQuestions(Exam exam) {
+        return exam.getQuestions(); // exam.questions includes ALL (standalone + passage) mapped by exam_id
     }
 
     private void updateAnswerData(Answer answer, AnswerRequest request) {
@@ -228,8 +234,8 @@ public class SubmissionService {
                         .filter(Option::getIsCorrect)
                         .map(Option::getId)
                         .collect(Collectors.toList());
-                    
-                    if (studentOptionIds.size() == correctOptionIds.size() && 
+
+                    if (studentOptionIds.size() == correctOptionIds.size() &&
                         studentOptionIds.containsAll(correctOptionIds)) {
                         answer.setScore(question.getPoints());
                     } else {
@@ -249,7 +255,7 @@ public class SubmissionService {
             if (answer.getMatchingAnswerJson() != null) {
                 try {
                     List<MatchingPairAnswerRequest> pairs = objectMapper.readValue(
-                        answer.getMatchingAnswerJson(), 
+                        answer.getMatchingAnswerJson(),
                         objectMapper.getTypeFactory().constructCollectionType(List.class, MatchingPairAnswerRequest.class)
                     );
                     long correctCount = 0;
@@ -280,15 +286,16 @@ public class SubmissionService {
                 .filter(a -> a.getScore() != null)
                 .mapToDouble(Answer::getScore)
                 .sum();
-        
-        long questionCount = submission.getExam().getQuestions().size();
+
+        List<Question> allQuestions = getAllExamQuestions(submission.getExam());
+        long questionCount = allQuestions.size();
         long gradedAnswerCount = submission.getAnswers().stream()
                 .filter(a -> Boolean.TRUE.equals(a.getIsGraded()))
                 .count();
-        
+
         boolean allGraded = (gradedAnswerCount == questionCount);
 
-        double examMaxScore = submission.getExam().getQuestions().stream()
+        double examMaxScore = allQuestions.stream()
                 .mapToDouble(Question::getPoints)
                 .sum();
 
@@ -359,7 +366,7 @@ public class SubmissionService {
             if (sub.getSubmittedAt() != null) {
                 totalScoreSum += sub.getTotalScore();
                 completedSubmissions++;
-                
+
                 long durationSec = java.time.Duration.between(sub.getStartedAt(), sub.getSubmittedAt()).getSeconds();
                 totalDurationSeconds += durationSec;
 
@@ -370,7 +377,7 @@ public class SubmissionService {
 
                 String durationFormatted = String.format("%02d:%02d", durationSec / 60, durationSec % 60);
                 String studentName = sub.getStudent() != null ? sub.getStudent().getFullName() : (sub.getGuestName() != null ? sub.getGuestName() : "Qonaq");
-                
+
                 topList.add(ExamStatisticsResponse.TopStudentDTO.builder()
                         .name(studentName)
                         .score(sub.getTotalScore())
@@ -382,8 +389,8 @@ public class SubmissionService {
         double avgScore = completedSubmissions > 0 ? totalScoreSum / completedSubmissions : 0.0;
         double avgRating = ratingCount > 0 ? totalRatingSum / ratingCount : 0.0;
         int avgDurationMins = completedSubmissions > 0 ? (int) ((totalDurationSeconds / completedSubmissions) / 60) : 0;
-        
-        double examMaxScore = exam.getQuestions().stream().mapToDouble(Question::getPoints).sum();
+
+        double examMaxScore = getAllExamQuestions(exam).stream().mapToDouble(Question::getPoints).sum();
 
         topList.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
         if (topList.size() > 5) {
@@ -430,41 +437,44 @@ public class SubmissionService {
         }
 
         Exam exam = submission.getExam();
-        
-        List<ClientQuestionResponse> clientQuestions = exam.getQuestions().stream().map(q -> 
-            ClientQuestionResponse.builder()
-                    .id(q.getId())
-                    .content(q.getContent())
-                    .attachedImage(q.getAttachedImage())
-                    .questionType(q.getQuestionType())
-                    .points(q.getPoints())
-                    .orderIndex(q.getOrderIndex())
-                    .options(q.getOptions().stream().map(o -> 
-                        ClientOptionResponse.builder()
-                            .id(o.getId())
-                            .content(o.getContent())
-                            .attachedImage(o.getAttachedImage())
-                            .build()
-                    ).collect(Collectors.toList()))
-                    .matchingPairs(q.getMatchingPairs().stream().map(m -> 
-                        ClientMatchingPairResponse.builder()
-                            .id(m.getId())
-                            .leftItem(m.getLeftItem())
-                            .attachedImageLeft(m.getAttachedImageLeft())
-                            .rightItem(m.getRightItem())
-                            .attachedImageRight(m.getAttachedImageRight())
-                            .build()
-                    ).collect(Collectors.toList()))
-                    .build()
-        ).collect(Collectors.toList());
 
+        // Group passage questions by passage id
+        Map<Long, List<ClientQuestionResponse>> questionsByPassage = exam.getQuestions().stream()
+                .filter(q -> q.getPassage() != null)
+                .collect(Collectors.groupingBy(
+                        q -> q.getPassage().getId(),
+                        Collectors.mapping(this::mapToClientQuestion, Collectors.toList())
+                ));
+
+        // Standalone questions (no passage)
+        List<ClientQuestionResponse> standaloneQuestions = exam.getQuestions().stream()
+                .filter(q -> q.getPassage() == null)
+                .map(this::mapToClientQuestion)
+                .collect(Collectors.toList());
+
+        // Passage groups
+        List<ClientPassageResponse> clientPassages = exam.getPassages().stream()
+                .map(p -> ClientPassageResponse.builder()
+                        .id(p.getId())
+                        .passageType(p.getPassageType())
+                        .title(p.getTitle())
+                        .textContent(p.getTextContent())
+                        .attachedImage(p.getAttachedImage())
+                        .audioContent(p.getAudioContent())
+                        .listenLimit(p.getListenLimit())
+                        .orderIndex(p.getOrderIndex())
+                        .questions(questionsByPassage.getOrDefault(p.getId(), new ArrayList<>()))
+                        .build())
+                .collect(Collectors.toList());
+
+        // Build saved answers for all questions (standalone + passage)
         List<AnswerRequest> savedAnswers = submission.getAnswers().stream().map(a -> {
             List<MatchingPairAnswerRequest> mps = null;
             List<Long> optionIds = new ArrayList<>();
-            
+
             if (a.getQuestion().getQuestionType() == QuestionType.MATCHING && a.getMatchingAnswerJson() != null) {
                 try {
-                    mps = objectMapper.readValue(a.getMatchingAnswerJson(), 
+                    mps = objectMapper.readValue(a.getMatchingAnswerJson(),
                         objectMapper.getTypeFactory().constructCollectionType(List.class, MatchingPairAnswerRequest.class));
                 } catch (Exception e) {}
             } else if (a.getQuestion().getQuestionType() == QuestionType.MULTI_SELECT && a.getSelectedOptionIdsJson() != null) {
@@ -489,8 +499,36 @@ public class SubmissionService {
                 .examTitle(exam.getTitle())
                 .durationMinutes(exam.getDurationMinutes())
                 .startedAt(submission.getStartedAt())
-                .questions(clientQuestions)
+                .questions(standaloneQuestions)
+                .passages(clientPassages)
                 .savedAnswers(savedAnswers)
+                .build();
+    }
+
+    private ClientQuestionResponse mapToClientQuestion(Question q) {
+        return ClientQuestionResponse.builder()
+                .id(q.getId())
+                .content(q.getContent())
+                .attachedImage(q.getAttachedImage())
+                .questionType(q.getQuestionType())
+                .points(q.getPoints())
+                .orderIndex(q.getOrderIndex())
+                .options(q.getOptions().stream().map(o ->
+                    ClientOptionResponse.builder()
+                        .id(o.getId())
+                        .content(o.getContent())
+                        .attachedImage(o.getAttachedImage())
+                        .build()
+                ).collect(Collectors.toList()))
+                .matchingPairs(q.getMatchingPairs().stream().map(m ->
+                    ClientMatchingPairResponse.builder()
+                        .id(m.getId())
+                        .leftItem(m.getLeftItem())
+                        .attachedImageLeft(m.getAttachedImageLeft())
+                        .rightItem(m.getRightItem())
+                        .attachedImageRight(m.getAttachedImageRight())
+                        .build()
+                ).collect(Collectors.toList()))
                 .build();
     }
 
@@ -502,7 +540,7 @@ public class SubmissionService {
         if (submission.getStudent() != null) {
             boolean isStudent = student != null && submission.getStudent().getId().equals(student.getId());
             boolean isTeacher = student != null && submission.getExam().getTeacher().getId().equals(student.getId());
-            
+
             if (!isStudent && !isTeacher) {
                 throw new BadRequestException("Bu imtahan nəticəsinə baxmaq hüququnuz yoxdur");
             }
@@ -512,7 +550,6 @@ public class SubmissionService {
 
         List<QuestionReviewResponse> reviewQuestions = submission.getAnswers().stream()
                 .sorted(java.util.Comparator.comparing(a -> {
-                    // Try to get order from snapshot for consistency
                     if (a.getQuestionSnapshot() != null) {
                         try {
                             QuestionSnapshot snapshot = objectMapper.readValue(a.getQuestionSnapshot(), QuestionSnapshot.class);
@@ -524,7 +561,8 @@ public class SubmissionService {
                 .map(studentAnswer -> {
                     Question q = studentAnswer.getQuestion();
                     QuestionReviewResponse.QuestionReviewResponseBuilder qBuilder = QuestionReviewResponse.builder()
-                            .id(q.getId());
+                            .id(q.getId())
+                            .passageId(q.getPassage() != null ? q.getPassage().getId() : null);
 
                     if (studentAnswer.getQuestionSnapshot() != null) {
                         try {
@@ -535,7 +573,7 @@ public class SubmissionService {
                                     .points(snapshot.getPoints())
                                     .orderIndex(snapshot.getOrderIndex())
                                     .correctAnswer(snapshot.getCorrectAnswer())
-                                    .options(snapshot.getOptions().stream().map(o -> 
+                                    .options(snapshot.getOptions().stream().map(o ->
                                         OptionReviewResponse.builder()
                                             .id(o.getId())
                                             .content(o.getContent())
@@ -597,7 +635,7 @@ public class SubmissionService {
                     .points(q.getPoints())
                     .orderIndex(q.getOrderIndex())
                     .correctAnswer(q.getCorrectAnswer())
-                    .options(q.getOptions().stream().map(o -> 
+                    .options(q.getOptions().stream().map(o ->
                         OptionSnapshot.builder()
                             .id(o.getId())
                             .content(o.getContent())
@@ -606,7 +644,7 @@ public class SubmissionService {
                             .attachedImage(o.getAttachedImage())
                             .build()
                     ).collect(Collectors.toList()))
-                    .matchingPairs(q.getMatchingPairs().stream().map(m -> 
+                    .matchingPairs(q.getMatchingPairs().stream().map(m ->
                         ClientMatchingPairResponse.builder()
                             .id(m.getId())
                             .leftItem(m.getLeftItem())
@@ -630,7 +668,7 @@ public class SubmissionService {
                 .points(q.getPoints())
                 .orderIndex(q.getOrderIndex())
                 .correctAnswer(q.getCorrectAnswer())
-                .options(q.getOptions().stream().map(o -> 
+                .options(q.getOptions().stream().map(o ->
                     OptionReviewResponse.builder()
                         .id(o.getId())
                         .content(o.getContent())
@@ -639,7 +677,7 @@ public class SubmissionService {
                         .attachedImage(o.getAttachedImage())
                         .build()
                 ).collect(Collectors.toList()))
-                .matchingPairs(q.getMatchingPairs().stream().map(m -> 
+                .matchingPairs(q.getMatchingPairs().stream().map(m ->
                     ClientMatchingPairResponse.builder()
                         .id(m.getId())
                         .leftItem(m.getLeftItem())

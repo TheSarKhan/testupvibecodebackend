@@ -32,6 +32,7 @@ public class ExamResponse {
     private Long templateId;
     private List<String> tags;
     private List<QuestionResponse> questions;
+    private List<PassageResponse> passages;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

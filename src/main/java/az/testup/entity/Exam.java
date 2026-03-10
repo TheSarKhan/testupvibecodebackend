@@ -73,6 +73,10 @@ public class Exam {
     @Builder.Default
     private List<Question> questions = new ArrayList<>();
 
+    @OneToMany(mappedBy = "exam", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<Passage> passages = new ArrayList<>();
+
     @Column(updatable = false)
     private LocalDateTime createdAt;
 

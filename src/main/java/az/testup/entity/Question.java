@@ -46,6 +46,12 @@ public class Question {
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;
 
+    /** Null for standalone questions; non-null when question belongs to a passage group */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "passage_id")
+    @org.hibernate.annotations.OnDelete(action = org.hibernate.annotations.OnDeleteAction.SET_NULL)
+    private Passage passage;
+
     /** Options for MCQ / True-False questions */
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
