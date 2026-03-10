@@ -19,7 +19,10 @@ public class AnswerRequest {
     
     // For open-ended
     private String textAnswer;
-    
+
+    // For open-ended image upload (base64)
+    private String answerImage;
+
     // For matching
     private List<MatchingPairAnswerRequest> matchingPairs;
 }

@@ -1,6 +1,7 @@
 package az.testup.controller;
 
 import az.testup.dto.request.AnswerRequest;
+import az.testup.dto.request.GradeManualAnswerRequest;
 import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
@@ -126,6 +127,15 @@ public class SubmissionController {
     public ResponseEntity<SubmissionResponse> getSubmissionById(@PathVariable Long id) {
         // ... (can implement if needed, for now using existing mapToResponse logic likely)
         return ResponseEntity.notFound().build();
+    }
+
+    @PostMapping("/{id}/grade-answer")
+    public ResponseEntity<SubmissionResponse> gradeManualAnswer(
+            @PathVariable Long id,
+            @RequestBody GradeManualAnswerRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User teacher = getCurrentUser(userDetails);
+        return ResponseEntity.ok(submissionService.gradeManualAnswer(id, request, teacher));
     }
 
     @GetMapping("/{id}/review")

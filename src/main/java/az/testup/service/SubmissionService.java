@@ -181,6 +181,7 @@ public class SubmissionService {
             }
         } else if (question.getQuestionType() == QuestionType.OPEN_AUTO || question.getQuestionType() == QuestionType.OPEN_MANUAL) {
             answer.setAnswerText(request.getTextAnswer());
+            answer.setAnswerImage(request.getAnswerImage());
         } else if (question.getQuestionType() == QuestionType.MULTI_SELECT) {
             try {
                 answer.setSelectedOptionIdsJson(objectMapper.writeValueAsString(request.getOptionIds()));
@@ -346,6 +347,51 @@ public class SubmissionService {
 
         submission.setRating(rating);
         submissionRepository.save(submission);
+    }
+
+    @Transactional
+    public SubmissionResponse gradeManualAnswer(Long submissionId, az.testup.dto.request.GradeManualAnswerRequest request, User teacher) {
+        Submission submission = submissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
+
+        if (submission.getSubmittedAt() == null) {
+            throw new BadRequestException("İmtahan hələ bitməyib");
+        }
+
+        Answer answer = submission.getAnswers().stream()
+                .filter(a -> a.getQuestion().getId().equals(request.getQuestionId()))
+                .findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Bu suala cavab tapılmadı"));
+
+        if (answer.getQuestion().getQuestionType() != QuestionType.OPEN_MANUAL) {
+            throw new BadRequestException("Bu sual tipi manuel yoxlama tələb etmir");
+        }
+
+        double fraction = request.getFraction() != null ? request.getFraction() : 0.0;
+        fraction = Math.max(0.0, Math.min(1.0, fraction));
+        double rawScore = fraction * answer.getQuestion().getPoints();
+        answer.setScore(Math.round(rawScore * 100.0) / 100.0);
+        answer.setIsGraded(true);
+        if (request.getFeedback() != null) {
+            answer.setFeedback(request.getFeedback());
+        }
+
+        // Recalculate total score (rounded to 2 dp)
+        double totalScore = Math.round(submission.getAnswers().stream()
+                .filter(a -> a.getScore() != null)
+                .mapToDouble(Answer::getScore)
+                .sum() * 100.0) / 100.0;
+        submission.setTotalScore(totalScore);
+
+        // Check if all answers are now graded
+        long totalQuestions = getAllExamQuestions(submission.getExam()).size();
+        long gradedCount = submission.getAnswers().stream()
+                .filter(a -> Boolean.TRUE.equals(a.getIsGraded()))
+                .count();
+        submission.setIsFullyGraded(gradedCount >= totalQuestions);
+
+        submissionRepository.save(submission);
+        return mapToResponse(submission);
     }
 
     public ExamStatisticsResponse getExamStatistics(Long examId, User teacher) {
@@ -602,6 +648,7 @@ public class SubmissionService {
 
                     return qBuilder
                             .studentAnswerText(studentAnswer.getAnswerText())
+                            .studentAnswerImage(studentAnswer.getAnswerImage())
                             .studentSelectedOptionId(studentAnswer.getSelectedOptionId())
                             .studentSelectedOptionIds(selectedOptionIds)
                             .studentMatchingAnswerJson(studentAnswer.getMatchingAnswerJson())
@@ -610,6 +657,10 @@ public class SubmissionService {
                             .feedback(studentAnswer.getFeedback())
                             .build();
                 }).collect(Collectors.toList());
+
+        int ungradedCount = (int) submission.getAnswers().stream()
+                .filter(a -> Boolean.FALSE.equals(a.getIsGraded()))
+                .count();
 
         return SubmissionReviewResponse.builder()
                 .id(submission.getId())
@@ -620,6 +671,7 @@ public class SubmissionService {
                 .startedAt(submission.getStartedAt())
                 .submittedAt(submission.getSubmittedAt())
                 .isFullyGraded(submission.getIsFullyGraded())
+                .ungradedCount(ungradedCount)
                 .rating(submission.getRating())
                 .questions(reviewQuestions)
                 .build();

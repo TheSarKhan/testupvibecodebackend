@@ -24,6 +24,7 @@ public class QuestionReviewResponse {
     
     // Student's data
     private String studentAnswerText;
+    private String studentAnswerImage;
     private Long studentSelectedOptionId;
     private List<Long> studentSelectedOptionIds;
     private String studentMatchingAnswerJson;

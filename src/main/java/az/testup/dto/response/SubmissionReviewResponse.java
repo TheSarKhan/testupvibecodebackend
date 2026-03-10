@@ -21,6 +21,7 @@ public class SubmissionReviewResponse {
     private LocalDateTime startedAt;
     private LocalDateTime submittedAt;
     private Boolean isFullyGraded;
+    private Integer ungradedCount;
     private Integer rating;
     private List<QuestionReviewResponse> questions;
 }

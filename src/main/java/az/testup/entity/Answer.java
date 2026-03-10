@@ -54,5 +54,9 @@ public class Answer {
     /** Teacher feedback for manual grading */
     @Column(columnDefinition = "TEXT")
     private String feedback;
+
+    /** Student-uploaded image for open question answers (base64) */
+    @Column(columnDefinition = "TEXT")
+    private String answerImage;
 }
 
