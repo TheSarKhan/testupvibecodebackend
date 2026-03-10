@@ -1,14 +1,14 @@
 server:
-  port: 8080
+  port: 8081               # 8080 dolu, 8081 kullan
 
 spring:
   application:
-    name: testup-backend
+    name: yeniproje-backend
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/testup_db
-    username: testup_user
-    password: testup_pass
+    url: jdbc:postgresql://localhost:5433/yeniproje_db
+    username: yeniproje_user
+    password: yeniproje_pass
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -23,9 +23,9 @@ spring:
   data:
     redis:
       host: localhost
-      port: 6379
+      port: 6380             # 6379 dolu, 6380 kullan
 
 jwt:
-  secret: dGVzdHVwLWF6LXN1cGVyLXNlY3JldC1rZXktZm9yLWp3dC10b2tlbi1nZW5lcmF0aW9uLTIwMjQ=
-  access-token-expiration: 86400000      # 1 day (24 hours)
-  refresh-token-expiration: 2592000000   # 30 days (1 month)
+  secret: BURAYA_YENI_SECRET_KOY
+  access-token-expiration: 86400000
+  refresh-token-expiration: 2592000000

@@ -3,29 +3,29 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16
-    container_name: testup-postgres
+    container_name: yeniproje-postgres
     environment:
-      POSTGRES_DB: testup_db
-      POSTGRES_USER: testup_user
-      POSTGRES_PASSWORD: testup_pass
+      POSTGRES_DB: yeniproje_db
+      POSTGRES_USER: yeniproje_user
+      POSTGRES_PASSWORD: yeniproje_pass
     ports:
-      - "5432:5432"
+      - "5433:5432"        # 5432 dolu, 5433 kullan
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - yeniproje_postgres_data:/var/lib/postgresql/data
     networks:
-      - testup-network
+      - yeniproje-network
 
   redis:
     image: redis:7-alpine
-    container_name: testup-redis
+    container_name: yeniproje-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"        # 6379 dolu, 6380 kullan
     networks:
-      - testup-network
+      - yeniproje-network
 
 volumes:
-  postgres_data:
+  yeniproje_postgres_data:
 
 networks:
-  testup-network:
+  yeniproje-network:
     driver: bridge
