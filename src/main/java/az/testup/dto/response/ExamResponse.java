@@ -25,6 +25,7 @@ public class ExamResponse {
     private ExamType examType;
     private ExamStatus status;
     private String accessCode;
+    private LocalDateTime accessCodeExpiresAt;
     private String shareLink;
     private Integer durationMinutes;
     private Long teacherId;

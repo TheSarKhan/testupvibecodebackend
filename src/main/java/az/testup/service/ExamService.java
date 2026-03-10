@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -340,6 +341,25 @@ public class ExamService {
     }
 
     @Transactional
+    public Map<String, Object> generateAccessCode(Long examId, User teacher) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+
+        if (!exam.getTeacher().getId().equals(teacher.getId())) {
+            throw new RuntimeException("Bu əməliyyat üçün icazəniz yoxdur");
+        }
+
+        String code = CodeGenerator.generateAccessCode();
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(12);
+
+        exam.setAccessCode(code);
+        exam.setAccessCodeExpiresAt(expiresAt);
+        examRepository.save(exam);
+
+        return Map.of("accessCode", code, "expiresAt", expiresAt.toString());
+    }
+
+    @Transactional
     public void deleteExam(Long id, User teacher) {
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
@@ -415,6 +435,7 @@ public class ExamService {
                 .examType(exam.getExamType())
                 .status(exam.getStatus())
                 .accessCode(exam.getAccessCode())
+                .accessCodeExpiresAt(exam.getAccessCodeExpiresAt())
                 .shareLink(exam.getShareLink())
                 .durationMinutes(exam.getDurationMinutes())
                 .teacherId(exam.getTeacher().getId())

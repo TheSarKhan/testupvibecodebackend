@@ -14,6 +14,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/exams")
@@ -62,6 +63,14 @@ public class ExamController {
     @GetMapping("/{shareLink}")
     public ResponseEntity<ExamResponse> getExamByShareLink(@PathVariable String shareLink) {
         return ResponseEntity.ok(examService.getExamByShareLink(shareLink));
+    }
+
+    @PostMapping("/{id}/generate-code")
+    public ResponseEntity<Map<String, Object>> generateAccessCode(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User teacher = getCurrentUser(userDetails);
+        return ResponseEntity.ok(examService.generateAccessCode(id, teacher));
     }
 
     @DeleteMapping("/{id}")

@@ -49,6 +49,9 @@ public class SubmissionService {
             if (request.getAccessCode() == null || !request.getAccessCode().equals(exam.getAccessCode())) {
                 throw new BadRequestException("Keçid kodu yanlışdır");
             }
+            if (exam.getAccessCodeExpiresAt() == null || exam.getAccessCodeExpiresAt().isBefore(LocalDateTime.now())) {
+                throw new BadRequestException("Keçid kodunun müddəti bitib. Müəllimdən yeni kod istəyin");
+            }
         }
 
         // Check if there is already an ongoing submission for this exam and student
