@@ -145,4 +145,11 @@ public class SubmissionController {
         User student = userDetails != null ? userRepository.findByEmail(userDetails.getUsername()).orElse(null) : null;
         return ResponseEntity.ok(submissionService.getSubmissionReview(id, student));
     }
+
+    @GetMapping("/teacher/pending")
+    public ResponseEntity<List<SubmissionResponse>> getTeacherPendingGradings(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User teacher = getCurrentUser(userDetails);
+        return ResponseEntity.ok(submissionService.getTeacherPendingGradings(teacher));
+    }
 }

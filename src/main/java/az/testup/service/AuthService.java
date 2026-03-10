@@ -1,5 +1,6 @@
 package az.testup.service;
 
+import az.testup.dto.request.ChangePasswordRequest;
 import az.testup.dto.request.LoginRequest;
 import az.testup.dto.request.RegisterRequest;
 import az.testup.dto.response.AuthResponse;
@@ -74,6 +75,14 @@ public class AuthService {
                 .fullName(user.getFullName())
                 .email(user.getEmail())
                 .build();
+    }
+
+    public void changePassword(User user, ChangePasswordRequest request) {
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPassword())) {
+            throw new BadRequestException("Cari şifrə yanlışdır");
+        }
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
     }
 
     public AuthResponse refreshToken(String refreshToken) {

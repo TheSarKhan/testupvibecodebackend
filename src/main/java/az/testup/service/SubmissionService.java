@@ -182,6 +182,8 @@ public class SubmissionService {
         } else if (question.getQuestionType() == QuestionType.OPEN_AUTO || question.getQuestionType() == QuestionType.OPEN_MANUAL) {
             answer.setAnswerText(request.getTextAnswer());
             answer.setAnswerImage(request.getAnswerImage());
+        } else if (question.getQuestionType() == QuestionType.FILL_IN_THE_BLANK) {
+            answer.setAnswerText(request.getTextAnswer());
         } else if (question.getQuestionType() == QuestionType.MULTI_SELECT) {
             try {
                 answer.setSelectedOptionIdsJson(objectMapper.writeValueAsString(request.getOptionIds()));
@@ -252,6 +254,34 @@ public class SubmissionService {
         } else if (question.getQuestionType() == QuestionType.OPEN_MANUAL) {
             answer.setScore(0.0);
             answer.setIsGraded(false);
+        } else if (question.getQuestionType() == QuestionType.FILL_IN_THE_BLANK) {
+            String correctJson = question.getCorrectAnswer();
+            String studentJson = answer.getAnswerText();
+            if (correctJson != null && !correctJson.isBlank() && studentJson != null && !studentJson.isBlank()) {
+                try {
+                    List<String> correctAnswers = objectMapper.readValue(correctJson,
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                    List<String> studentAnswers = objectMapper.readValue(studentJson,
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                    int correct = 0;
+                    for (int i = 0; i < correctAnswers.size(); i++) {
+                        if (i < studentAnswers.size()
+                                && correctAnswers.get(i) != null
+                                && studentAnswers.get(i) != null
+                                && correctAnswers.get(i).trim().equalsIgnoreCase(studentAnswers.get(i).trim())) {
+                            correct++;
+                        }
+                    }
+                    double raw = correctAnswers.isEmpty() ? 0.0
+                        : ((double) correct / correctAnswers.size()) * question.getPoints();
+                    answer.setScore(Math.round(raw * 100.0) / 100.0);
+                } catch (Exception e) {
+                    answer.setScore(0.0);
+                }
+            } else {
+                answer.setScore(0.0);
+            }
+            answer.setIsGraded(true);
         } else if (question.getQuestionType() == QuestionType.MATCHING) {
             if (answer.getMatchingAnswerJson() != null) {
                 try {
@@ -326,6 +356,17 @@ public class SubmissionService {
     @Transactional(readOnly = true)
     public List<SubmissionResponse> getExamSubmissions(Long examId, User teacher) {
         return submissionRepository.findByExamId(examId).stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<SubmissionResponse> getTeacherPendingGradings(User teacher) {
+        List<Long> examIds = examRepository.findByTeacher(teacher).stream()
+                .map(exam -> exam.getId())
+                .collect(Collectors.toList());
+        if (examIds.isEmpty()) return List.of();
+        return submissionRepository.findByExamIdInAndSubmittedAtIsNotNullAndIsFullyGradedFalse(examIds).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }

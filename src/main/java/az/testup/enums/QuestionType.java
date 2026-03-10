@@ -6,5 +6,6 @@ public enum QuestionType {
     MATCHING,        // Uyğunlaşdırma — Avtomatik
     OPEN_AUTO,       // Açıq — avtomatik yoxlanılan
     OPEN_MANUAL,     // Açıq — manual yoxlanılan (müəllim yoxlayır)
-    MULTI_SELECT     // Çox seçimli — Avtomatik
+    MULTI_SELECT,    // Çox seçimli — Avtomatik
+    FILL_IN_THE_BLANK // Boşluq doldurma — Avtomatik
 }
