@@ -11,6 +11,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class MatchingPairRequest {
+    private Long id;
+
     @NotBlank(message = "Left item is required")
     private String leftItem;
 
@@ -19,3 +21,4 @@ public class MatchingPairRequest {
 
     private Integer orderIndex;
 }
+

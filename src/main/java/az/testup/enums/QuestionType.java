@@ -5,5 +5,6 @@ public enum QuestionType {
     MCQ,             // Çoxlu seçim — Avtomatik
     MATCHING,        // Uyğunlaşdırma — Avtomatik
     OPEN_AUTO,       // Açıq — avtomatik yoxlanılan
-    OPEN_MANUAL      // Açıq — manual yoxlanılan (müəllim yoxlayır)
+    OPEN_MANUAL,     // Açıq — manual yoxlanılan (müəllim yoxlayır)
+    MULTI_SELECT     // Çox seçimli — Avtomatik
 }

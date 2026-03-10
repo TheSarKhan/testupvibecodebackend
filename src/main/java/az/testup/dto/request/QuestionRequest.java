@@ -15,6 +15,8 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class QuestionRequest {
+    private Long id;
+
     @NotBlank(message = "Content is required")
     private String content;
 
@@ -34,3 +36,4 @@ public class QuestionRequest {
 
     private List<MatchingPairRequest> matchingPairs;
 }
+

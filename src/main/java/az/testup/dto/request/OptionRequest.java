@@ -12,6 +12,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class OptionRequest {
+    private Long id;
+
     @NotBlank(message = "Content is required")
     private String content;
 
@@ -22,3 +24,4 @@ public class OptionRequest {
 
     private String attachedImage;
 }
+

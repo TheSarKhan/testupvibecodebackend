@@ -35,6 +35,14 @@ public class Answer {
     @Column(columnDefinition = "TEXT")
     private String matchingAnswerJson;
 
+    /** JSON storing multiple selected option IDs (for MULTI_SELECT) */
+    @Column(columnDefinition = "TEXT")
+    private String selectedOptionIdsJson;
+
+    /** JSON snapshot of the question at the time of submission (for versioning) */
+    @Column(columnDefinition = "TEXT")
+    private String questionSnapshot;
+
     /** Score awarded for this answer */
     private Double score;
 
@@ -47,3 +55,4 @@ public class Answer {
     @Column(columnDefinition = "TEXT")
     private String feedback;
 }
+

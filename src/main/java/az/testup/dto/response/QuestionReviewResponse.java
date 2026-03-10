@@ -23,6 +23,7 @@ public class QuestionReviewResponse {
     // Student's data
     private String studentAnswerText;
     private Long studentSelectedOptionId;
+    private List<Long> studentSelectedOptionIds;
     private String studentMatchingAnswerJson;
     private Double awardedScore;
     private Boolean isGraded;

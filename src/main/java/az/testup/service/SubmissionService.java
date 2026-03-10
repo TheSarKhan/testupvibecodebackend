@@ -17,6 +17,7 @@ import az.testup.repository.SubmissionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SubmissionService {
 
     private final SubmissionRepository submissionRepository;
@@ -96,6 +98,8 @@ public class SubmissionService {
             
             updateAnswerData(answer, answerReq);
             gradeAnswer(answer);
+            // Snapshot the question for versioning
+            answer.setQuestionSnapshot(createQuestionSnapshot(question));
             submission.getAnswers().add(answer);
         }
 
@@ -154,6 +158,8 @@ public class SubmissionService {
                         return newAns;
                     });
             gradeAnswer(answer);
+            // Snapshot the question for versioning
+            answer.setQuestionSnapshot(createQuestionSnapshot(question));
         }
 
         return finalizeAndSave(submission);
@@ -169,6 +175,12 @@ public class SubmissionService {
             }
         } else if (question.getQuestionType() == QuestionType.OPEN_AUTO || question.getQuestionType() == QuestionType.OPEN_MANUAL) {
             answer.setAnswerText(request.getTextAnswer());
+        } else if (question.getQuestionType() == QuestionType.MULTI_SELECT) {
+            try {
+                answer.setSelectedOptionIdsJson(objectMapper.writeValueAsString(request.getOptionIds()));
+            } catch (JsonProcessingException e) {
+                answer.setSelectedOptionIdsJson("[]");
+            }
         } else if (question.getQuestionType() == QuestionType.MATCHING) {
             try {
                 answer.setMatchingAnswerJson(objectMapper.writeValueAsString(request.getMatchingPairs()));
@@ -201,6 +213,31 @@ public class SubmissionService {
             if (correctText != null && answer.getAnswerText() != null &&
                     correctText.trim().equalsIgnoreCase(answer.getAnswerText().trim())) {
                 answer.setScore(question.getPoints());
+            } else {
+                answer.setScore(0.0);
+            }
+            answer.setIsGraded(true);
+        } else if (question.getQuestionType() == QuestionType.MULTI_SELECT) {
+            if (answer.getSelectedOptionIdsJson() != null) {
+                try {
+                    List<Long> studentOptionIds = objectMapper.readValue(
+                        answer.getSelectedOptionIdsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class)
+                    );
+                    List<Long> correctOptionIds = question.getOptions().stream()
+                        .filter(Option::getIsCorrect)
+                        .map(Option::getId)
+                        .collect(Collectors.toList());
+                    
+                    if (studentOptionIds.size() == correctOptionIds.size() && 
+                        studentOptionIds.containsAll(correctOptionIds)) {
+                        answer.setScore(question.getPoints());
+                    } else {
+                        answer.setScore(0.0);
+                    }
+                } catch (Exception e) {
+                    answer.setScore(0.0);
+                }
             } else {
                 answer.setScore(0.0);
             }
@@ -423,15 +460,25 @@ public class SubmissionService {
 
         List<AnswerRequest> savedAnswers = submission.getAnswers().stream().map(a -> {
             List<MatchingPairAnswerRequest> mps = null;
+            List<Long> optionIds = new ArrayList<>();
+            
             if (a.getQuestion().getQuestionType() == QuestionType.MATCHING && a.getMatchingAnswerJson() != null) {
                 try {
                     mps = objectMapper.readValue(a.getMatchingAnswerJson(), 
                         objectMapper.getTypeFactory().constructCollectionType(List.class, MatchingPairAnswerRequest.class));
                 } catch (Exception e) {}
+            } else if (a.getQuestion().getQuestionType() == QuestionType.MULTI_SELECT && a.getSelectedOptionIdsJson() != null) {
+                try {
+                    optionIds = objectMapper.readValue(a.getSelectedOptionIdsJson(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class));
+                } catch (Exception e) {}
+            } else if (a.getSelectedOptionId() != null) {
+                optionIds.add(a.getSelectedOptionId());
             }
+
             return AnswerRequest.builder()
                     .questionId(a.getQuestion().getId())
-                    .optionIds(a.getSelectedOptionId() != null ? List.of(a.getSelectedOptionId()) : List.of())
+                    .optionIds(optionIds)
                     .textAnswer(a.getAnswerText())
                     .matchingPairs(mps)
                     .build();
@@ -453,35 +500,105 @@ public class SubmissionService {
                 .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
 
         if (submission.getStudent() != null) {
-            if (student == null || !submission.getStudent().getId().equals(student.getId())) {
-                throw new BadRequestException("Bu imtahana daxil olmaq hüququnuz yoxdur");
+            boolean isStudent = student != null && submission.getStudent().getId().equals(student.getId());
+            boolean isTeacher = student != null && submission.getExam().getTeacher().getId().equals(student.getId());
+            
+            if (!isStudent && !isTeacher) {
+                throw new BadRequestException("Bu imtahan nəticəsinə baxmaq hüququnuz yoxdur");
             }
         }
 
         Exam exam = submission.getExam();
-        
-        List<QuestionReviewResponse> reviewQuestions = exam.getQuestions().stream().map(q -> {
-            Answer studentAnswer = submission.getAnswers().stream()
-                    .filter(a -> a.getQuestion().getId().equals(q.getId()))
-                    .findFirst()
-                    .orElse(null);
 
-            return QuestionReviewResponse.builder()
+        List<QuestionReviewResponse> reviewQuestions = submission.getAnswers().stream()
+                .sorted(java.util.Comparator.comparing(a -> {
+                    // Try to get order from snapshot for consistency
+                    if (a.getQuestionSnapshot() != null) {
+                        try {
+                            QuestionSnapshot snapshot = objectMapper.readValue(a.getQuestionSnapshot(), QuestionSnapshot.class);
+                            return snapshot.getOrderIndex() != null ? snapshot.getOrderIndex() : 0;
+                        } catch (Exception e) {}
+                    }
+                    return a.getQuestion().getOrderIndex() != null ? a.getQuestion().getOrderIndex() : 0;
+                }))
+                .map(studentAnswer -> {
+                    Question q = studentAnswer.getQuestion();
+                    QuestionReviewResponse.QuestionReviewResponseBuilder qBuilder = QuestionReviewResponse.builder()
+                            .id(q.getId());
+
+                    if (studentAnswer.getQuestionSnapshot() != null) {
+                        try {
+                            QuestionSnapshot snapshot = objectMapper.readValue(studentAnswer.getQuestionSnapshot(), QuestionSnapshot.class);
+                            qBuilder.content(snapshot.getContent())
+                                    .attachedImage(snapshot.getAttachedImage())
+                                    .questionType(snapshot.getQuestionType())
+                                    .points(snapshot.getPoints())
+                                    .orderIndex(snapshot.getOrderIndex())
+                                    .correctAnswer(snapshot.getCorrectAnswer())
+                                    .options(snapshot.getOptions().stream().map(o -> 
+                                        OptionReviewResponse.builder()
+                                            .id(o.getId())
+                                            .content(o.getContent())
+                                            .isCorrect(o.getIsCorrect())
+                                            .orderIndex(o.getOrderIndex())
+                                            .attachedImage(o.getAttachedImage())
+                                            .build()
+                                    ).collect(Collectors.toList()))
+                                    .matchingPairs(snapshot.getMatchingPairs());
+                        } catch (Exception e) {
+                            fillBuilderWithLiveData(qBuilder, q);
+                        }
+                    } else {
+                        fillBuilderWithLiveData(qBuilder, q);
+                    }
+
+                    List<Long> selectedOptionIds = new ArrayList<>();
+                    if (q.getQuestionType() == QuestionType.MULTI_SELECT && studentAnswer.getSelectedOptionIdsJson() != null) {
+                        try {
+                            selectedOptionIds = objectMapper.readValue(studentAnswer.getSelectedOptionIdsJson(),
+                                objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class));
+                        } catch (Exception e) {}
+                    } else if (studentAnswer.getSelectedOptionId() != null) {
+                        selectedOptionIds.add(studentAnswer.getSelectedOptionId());
+                    }
+
+                    return qBuilder
+                            .studentAnswerText(studentAnswer.getAnswerText())
+                            .studentSelectedOptionId(studentAnswer.getSelectedOptionId())
+                            .studentSelectedOptionIds(selectedOptionIds)
+                            .studentMatchingAnswerJson(studentAnswer.getMatchingAnswerJson())
+                            .awardedScore(studentAnswer.getScore() != null ? studentAnswer.getScore() : 0.0)
+                            .isGraded(studentAnswer.getIsGraded() != null ? studentAnswer.getIsGraded() : true)
+                            .feedback(studentAnswer.getFeedback())
+                            .build();
+                }).collect(Collectors.toList());
+
+        return SubmissionReviewResponse.builder()
+                .id(submission.getId())
+                .examId(exam.getId())
+                .examTitle(exam.getTitle())
+                .totalScore(submission.getTotalScore())
+                .maxScore(submission.getMaxScore())
+                .startedAt(submission.getStartedAt())
+                .submittedAt(submission.getSubmittedAt())
+                .isFullyGraded(submission.getIsFullyGraded())
+                .rating(submission.getRating())
+                .questions(reviewQuestions)
+                .build();
+    }
+
+    private String createQuestionSnapshot(Question q) {
+        try {
+            QuestionSnapshot snapshot = QuestionSnapshot.builder()
                     .id(q.getId())
                     .content(q.getContent())
                     .attachedImage(q.getAttachedImage())
                     .questionType(q.getQuestionType())
                     .points(q.getPoints())
                     .orderIndex(q.getOrderIndex())
-                    .studentAnswerText(studentAnswer != null ? studentAnswer.getAnswerText() : null)
-                    .studentSelectedOptionId(studentAnswer != null ? studentAnswer.getSelectedOptionId() : null)
-                    .studentMatchingAnswerJson(studentAnswer != null ? studentAnswer.getMatchingAnswerJson() : null)
-                    .awardedScore(studentAnswer != null && studentAnswer.getScore() != null ? studentAnswer.getScore() : 0.0)
-                    .isGraded(studentAnswer != null && studentAnswer.getIsGraded() != null ? studentAnswer.getIsGraded() : true)
-                    .feedback(studentAnswer != null ? studentAnswer.getFeedback() : null)
                     .correctAnswer(q.getCorrectAnswer())
                     .options(q.getOptions().stream().map(o -> 
-                        OptionReviewResponse.builder()
+                        OptionSnapshot.builder()
                             .id(o.getId())
                             .content(o.getContent())
                             .isCorrect(o.getIsCorrect())
@@ -499,19 +616,65 @@ public class SubmissionService {
                             .build()
                     ).collect(Collectors.toList()))
                     .build();
-        }).collect(Collectors.toList());
+            return objectMapper.writeValueAsString(snapshot);
+        } catch (Exception e) {
+            log.error("Failed to create question snapshot", e);
+            return null;
+        }
+    }
 
-        return SubmissionReviewResponse.builder()
-                .id(submission.getId())
-                .examId(exam.getId())
-                .examTitle(exam.getTitle())
-                .totalScore(submission.getTotalScore())
-                .maxScore(submission.getMaxScore())
-                .startedAt(submission.getStartedAt())
-                .submittedAt(submission.getSubmittedAt())
-                .isFullyGraded(submission.getIsFullyGraded())
-                .rating(submission.getRating())
-                .questions(reviewQuestions)
-                .build();
+    private void fillBuilderWithLiveData(QuestionReviewResponse.QuestionReviewResponseBuilder builder, Question q) {
+        builder.content(q.getContent())
+                .attachedImage(q.getAttachedImage())
+                .questionType(q.getQuestionType())
+                .points(q.getPoints())
+                .orderIndex(q.getOrderIndex())
+                .correctAnswer(q.getCorrectAnswer())
+                .options(q.getOptions().stream().map(o -> 
+                    OptionReviewResponse.builder()
+                        .id(o.getId())
+                        .content(o.getContent())
+                        .isCorrect(o.getIsCorrect())
+                        .orderIndex(o.getOrderIndex())
+                        .attachedImage(o.getAttachedImage())
+                        .build()
+                ).collect(Collectors.toList()))
+                .matchingPairs(q.getMatchingPairs().stream().map(m -> 
+                    ClientMatchingPairResponse.builder()
+                        .id(m.getId())
+                        .leftItem(m.getLeftItem())
+                        .attachedImageLeft(m.getAttachedImageLeft())
+                        .rightItem(m.getRightItem())
+                        .attachedImageRight(m.getAttachedImageRight())
+                        .build()
+                ).collect(Collectors.toList()));
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class QuestionSnapshot {
+        private Long id;
+        private String content;
+        private String attachedImage;
+        private QuestionType questionType;
+        private Double points;
+        private Integer orderIndex;
+        private String correctAnswer;
+        private List<OptionSnapshot> options;
+        private List<ClientMatchingPairResponse> matchingPairs;
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class OptionSnapshot {
+        private Long id;
+        private String content;
+        private Boolean isCorrect;
+        private Integer orderIndex;
+        private String attachedImage;
     }
 }

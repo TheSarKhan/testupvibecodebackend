@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -105,23 +106,130 @@ public class ExamService {
         exam.setExamType(request.getExamType());
         exam.setStatus(request.getStatus());
         exam.setDurationMinutes(request.getDurationMinutes());
+        
         exam.getTags().clear();
         if (request.getTags() != null) {
             exam.getTags().addAll(request.getTags());
         }
 
-        // Handle questions update (simplest way: clear and recreate, or more complex matching)
-        // For now, let's clear and recreate to ensure consistency with the request payload
-        exam.getQuestions().clear();
+        // Handle questions update using ID matching to avoid DataIntegrityViolation
         if (request.getQuestions() != null) {
+            List<Long> requestQuestionIds = request.getQuestions().stream()
+                    .map(QuestionRequest::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            
+            // Remove questions that are no longer in the request
+            exam.getQuestions().removeIf(q -> !requestQuestionIds.contains(q.getId()));
+
             for (QuestionRequest qReq : request.getQuestions()) {
-                Question question = mapToQuestion(qReq, exam);
-                exam.getQuestions().add(question);
+                if (qReq.getId() != null) {
+                    Question existing = exam.getQuestions().stream()
+                            .filter(q -> q.getId().equals(qReq.getId()))
+                            .findFirst()
+                            .orElse(null);
+                    if (existing != null) {
+                        updateQuestionFromRequest(existing, qReq);
+                    } else {
+                        exam.getQuestions().add(mapToQuestion(qReq, exam));
+                    }
+                } else {
+                    exam.getQuestions().add(mapToQuestion(qReq, exam));
+                }
             }
+        } else {
+            exam.getQuestions().clear();
         }
 
         Exam savedExam = examRepository.save(exam);
         return mapToResponse(savedExam);
+    }
+
+    private void updateQuestionFromRequest(Question question, QuestionRequest req) {
+        question.setContent(req.getContent());
+        question.setAttachedImage(req.getAttachedImage());
+        question.setQuestionType(req.getQuestionType());
+        question.setPoints(req.getPoints());
+        question.setOrderIndex(req.getOrderIndex());
+        question.setCorrectAnswer(req.getCorrectAnswer());
+
+        // Update options
+        if (req.getOptions() != null) {
+            List<Long> reqOptionIds = req.getOptions().stream()
+                    .map(OptionRequest::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            
+            question.getOptions().removeIf(o -> !reqOptionIds.contains(o.getId()));
+
+            for (OptionRequest oReq : req.getOptions()) {
+                if (oReq.getId() != null) {
+                    Option existingOpt = question.getOptions().stream()
+                            .filter(o -> o.getId().equals(oReq.getId()))
+                            .findFirst().orElse(null);
+                    if (existingOpt != null) {
+                        existingOpt.setContent(oReq.getContent());
+                        existingOpt.setIsCorrect(oReq.getIsCorrect());
+                        existingOpt.setOrderIndex(oReq.getOrderIndex());
+                        existingOpt.setAttachedImage(oReq.getAttachedImage());
+                    } else {
+                        question.getOptions().add(mapToOption(oReq, question));
+                    }
+                } else {
+                    question.getOptions().add(mapToOption(oReq, question));
+                }
+            }
+        } else {
+            question.getOptions().clear();
+        }
+
+        // Update matching pairs
+        if (req.getMatchingPairs() != null) {
+            List<Long> reqPairIds = req.getMatchingPairs().stream()
+                    .map(MatchingPairRequest::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+            
+            question.getMatchingPairs().removeIf(p -> !reqPairIds.contains(p.getId()));
+
+            for (MatchingPairRequest pReq : req.getMatchingPairs()) {
+                if (pReq.getId() != null) {
+                    MatchingPair existingPair = question.getMatchingPairs().stream()
+                            .filter(p -> p.getId().equals(pReq.getId()))
+                            .findFirst().orElse(null);
+                    if (existingPair != null) {
+                        existingPair.setLeftItem(pReq.getLeftItem());
+                        existingPair.setRightItem(pReq.getRightItem());
+                        existingPair.setOrderIndex(pReq.getOrderIndex());
+                    } else {
+                        question.getMatchingPairs().add(mapToPair(pReq, question));
+                    }
+                } else {
+                    question.getMatchingPairs().add(mapToPair(pReq, question));
+                }
+            }
+        } else {
+            question.getMatchingPairs().clear();
+        }
+    }
+
+    private Option mapToOption(OptionRequest oReq, Question question) {
+        return Option.builder()
+                .content(oReq.getContent())
+                .isCorrect(oReq.getIsCorrect())
+                .orderIndex(oReq.getOrderIndex())
+                .attachedImage(oReq.getAttachedImage())
+                .question(question)
+                .build();
+    }
+
+    private MatchingPair mapToPair(MatchingPairRequest pReq, Question question) {
+        return MatchingPair.builder()
+                .leftItem(pReq.getLeftItem())
+                .rightItem(pReq.getRightItem())
+                .orderIndex(pReq.getOrderIndex())
+                .question(question)
+                .build();
     }
 
     public ExamResponse getExamByShareLink(String shareLink) {
@@ -155,26 +263,13 @@ public class ExamService {
 
         if (req.getOptions() != null) {
             for (OptionRequest oReq : req.getOptions()) {
-                Option option = Option.builder()
-                        .content(oReq.getContent())
-                        .isCorrect(oReq.getIsCorrect())
-                        .orderIndex(oReq.getOrderIndex())
-                        .attachedImage(oReq.getAttachedImage())
-                        .question(question)
-                        .build();
-                question.getOptions().add(option);
+                question.getOptions().add(mapToOption(oReq, question));
             }
         }
 
         if (req.getMatchingPairs() != null) {
             for (MatchingPairRequest pReq : req.getMatchingPairs()) {
-                MatchingPair pair = MatchingPair.builder()
-                        .leftItem(pReq.getLeftItem())
-                        .rightItem(pReq.getRightItem())
-                        .orderIndex(pReq.getOrderIndex())
-                        .question(question)
-                        .build();
-                question.getMatchingPairs().add(pair);
+                question.getMatchingPairs().add(mapToPair(pReq, question));
             }
         }
 
@@ -236,3 +331,4 @@ public class ExamService {
                 .build();
     }
 }
+
