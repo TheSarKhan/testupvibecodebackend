@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Data
@@ -14,6 +15,7 @@ import java.util.List;
 public class ExamStatisticsResponse {
     private Long examId;
     private String examTitle;
+    private BigDecimal examPrice;
     private Integer totalParticipants;
     private Double averageScore;
     private Double maximumScore;

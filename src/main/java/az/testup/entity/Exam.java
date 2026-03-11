@@ -58,6 +58,14 @@ public class Exam {
     /** Duration in minutes (nullable = unlimited) */
     private Integer durationMinutes;
 
+    /** Price in AZN (null = free) */
+    private java.math.BigDecimal price;
+
+    /** Whether this exam is published to the public site catalog by admin */
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
+    @Builder.Default
+    private boolean sitePublished = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "teacher_id", nullable = false)
     private User teacher;

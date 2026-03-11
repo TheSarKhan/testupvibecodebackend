@@ -7,11 +7,15 @@ import az.testup.dto.request.PassageRequest;
 import az.testup.dto.request.QuestionRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
+import az.testup.entity.ExamPurchase;
+import az.testup.entity.StudentSavedExam;
 import az.testup.enums.ExamStatus;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.exception.UnauthorizedException;
+import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
+import az.testup.repository.StudentSavedExamRepository;
 import az.testup.repository.TemplateRepository;
 import az.testup.util.CodeGenerator;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +32,8 @@ public class ExamService {
 
     private final ExamRepository examRepository;
     private final TemplateRepository templateRepository;
+    private final ExamPurchaseRepository examPurchaseRepository;
+    private final StudentSavedExamRepository studentSavedExamRepository;
 
     @Transactional
     public ExamResponse createExam(ExamRequest request, User teacher) {
@@ -73,14 +79,59 @@ public class ExamService {
     }
 
     /**
-     * Returns all ACTIVE exams created by ADMIN users — visible to students on the main exam listing.
+     * Returns all exams published to the site catalog by admin (sitePublished=true, not cancelled/draft).
      */
     public List<ExamResponse> getPublicExams() {
         return examRepository.findAll().stream()
-                .filter(e -> e.getStatus() == ExamStatus.ACTIVE
-                        && e.getTeacher().getRole().name().equals("ADMIN"))
+                .filter(e -> e.isSitePublished()
+                        && e.getStatus() != ExamStatus.CANCELLED
+                        && e.getStatus() != ExamStatus.DRAFT)
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Records a purchase of a paid exam by a student.
+     * In this implementation, payment is assumed to have been completed externally.
+     */
+    @Transactional
+    public void purchaseExam(String shareLink, User student) {
+        Exam exam = examRepository.findByShareLink(shareLink)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+
+        if (examPurchaseRepository.existsByUserIdAndExamId(student.getId(), exam.getId())) {
+            return; // already purchased — idempotent
+        }
+
+        java.math.BigDecimal amount = exam.getPrice() != null ? exam.getPrice() : java.math.BigDecimal.ZERO;
+
+        ExamPurchase purchase = ExamPurchase.builder()
+                .user(student)
+                .exam(exam)
+                .amountPaid(amount)
+                .build();
+        examPurchaseRepository.save(purchase);
+
+        // Auto-save to student depot on purchase
+        if (!studentSavedExamRepository.existsByStudentIdAndExamId(student.getId(), exam.getId())) {
+            studentSavedExamRepository.save(StudentSavedExam.builder()
+                    .student(student)
+                    .exam(exam)
+                    .build());
+        }
+    }
+
+    /**
+     * Returns whether the given user has purchased a specific exam.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasPurchased(String shareLink, User user) {
+        Exam exam = examRepository.findByShareLink(shareLink)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        if (exam.getPrice() == null || exam.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0) {
+            return true; // free exam
+        }
+        return examPurchaseRepository.existsByUserIdAndExamId(user.getId(), exam.getId());
     }
 
     public ExamResponse getExamById(Long id, User teacher) {
@@ -457,6 +508,8 @@ public class ExamService {
                 .teacherId(exam.getTeacher().getId())
                 .teacherName(exam.getTeacher().getFullName())
                 .templateId(exam.getTemplate() != null ? exam.getTemplate().getId() : null)
+                .price(exam.getPrice())
+                .sitePublished(exam.isSitePublished())
                 .questions(standaloneQuestions)
                 .passages(passages)
                 .createdAt(exam.getCreatedAt())

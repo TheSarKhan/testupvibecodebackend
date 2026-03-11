@@ -12,6 +12,7 @@ import az.testup.enums.QuestionType;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.AnswerRepository;
+import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.QuestionRepository;
 import az.testup.repository.SubmissionRepository;
@@ -38,6 +39,7 @@ public class SubmissionService {
     private final ExamRepository examRepository;
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
+    private final ExamPurchaseRepository examPurchaseRepository;
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
 
@@ -382,8 +384,36 @@ public class SubmissionService {
 
     @Transactional(readOnly = true)
     public List<SubmissionResponse> getExamSubmissions(Long examId, User teacher) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        boolean isPaidExam = exam.getPrice() != null && exam.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0;
+
+        // Build a purchase map: userId -> amountPaid for quick lookup
+        Map<Long, java.math.BigDecimal> purchaseMap = isPaidExam
+                ? examPurchaseRepository.findByExamId(examId).stream()
+                    .filter(p -> p.getUser() != null)
+                    .collect(Collectors.toMap(
+                        p -> p.getUser().getId(),
+                        az.testup.entity.ExamPurchase::getAmountPaid,
+                        (a, b) -> a
+                    ))
+                : Map.of();
+
         return submissionRepository.findByExamId(examId).stream()
-                .map(this::mapToResponse)
+                .map(sub -> {
+                    SubmissionResponse resp = mapToResponse(sub);
+                    if (isPaidExam) {
+                        Long studentId = sub.getStudent() != null ? sub.getStudent().getId() : null;
+                        if (studentId != null && purchaseMap.containsKey(studentId)) {
+                            resp.setHasPaid(true);
+                            resp.setAmountPaid(purchaseMap.get(studentId));
+                        } else {
+                            resp.setHasPaid(false);
+                            resp.setAmountPaid(null);
+                        }
+                    }
+                    return resp;
+                })
                 .collect(Collectors.toList());
     }
 
@@ -524,6 +554,7 @@ public class SubmissionService {
         return ExamStatisticsResponse.builder()
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
+                .examPrice(exam.getPrice())
                 .totalParticipants(submissions.size())
                 .averageScore(avgScore)
                 .maximumScore(examMaxScore)

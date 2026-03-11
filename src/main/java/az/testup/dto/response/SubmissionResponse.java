@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
@@ -23,4 +24,8 @@ public class SubmissionResponse {
     private LocalDateTime startedAt;
     private LocalDateTime submittedAt;
     private Integer durationMinutes;
+    /** Whether the student paid for this exam (null if exam is free) */
+    private Boolean hasPaid;
+    /** Amount the student paid (null if exam is free) */
+    private BigDecimal amountPaid;
 }

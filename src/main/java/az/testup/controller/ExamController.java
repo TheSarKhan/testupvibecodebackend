@@ -81,6 +81,15 @@ public class ExamController {
         return ResponseEntity.ok(examService.toggleStatus(id, teacher));
     }
 
+    @PostMapping("/{shareLink}/purchase")
+    public ResponseEntity<Map<String, Object>> purchaseExam(
+            @PathVariable String shareLink,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User student = getCurrentUser(userDetails);
+        examService.purchaseExam(shareLink, student);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteExam(
             @PathVariable Long id,

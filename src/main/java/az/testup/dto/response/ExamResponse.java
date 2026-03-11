@@ -9,6 +9,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -30,6 +31,8 @@ public class ExamResponse {
     private Integer durationMinutes;
     private Long teacherId;
     private String teacherName;
+    private BigDecimal price;
+    private boolean sitePublished;
     private Long templateId;
     private List<String> tags;
     private List<QuestionResponse> questions;
