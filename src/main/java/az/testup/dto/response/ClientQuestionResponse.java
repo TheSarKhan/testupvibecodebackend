@@ -19,6 +19,7 @@ public class ClientQuestionResponse {
     private QuestionType questionType;
     private Double points;
     private Integer orderIndex;
+    private String subjectGroup;
     private List<ClientOptionResponse> options;
     private List<ClientMatchingPairResponse> matchingPairs;
 }

@@ -42,6 +42,10 @@ public class Question {
     @Column(columnDefinition = "TEXT")
     private String correctAnswer;
 
+    /** Subject section this question belongs to (null = first/main section) */
+    @Column(name = "subject_group")
+    private String subjectGroup;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;

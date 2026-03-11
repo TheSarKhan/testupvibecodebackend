@@ -41,6 +41,10 @@ public class Passage {
     /** Display order within the exam (interleaved with standalone questions) */
     private Integer orderIndex;
 
+    /** Subject section this passage belongs to (null = first/main section) */
+    @Column(name = "subject_group")
+    private String subjectGroup;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;

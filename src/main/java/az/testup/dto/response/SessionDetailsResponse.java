@@ -18,6 +18,8 @@ public class SessionDetailsResponse {
     private String examTitle;
     private Integer durationMinutes;
     private LocalDateTime startedAt;
+    /** Ordered list of exam subjects (first = main section, rest = extra sections) */
+    private List<String> subjects;
     /** Standalone questions (no passage) */
     private List<ClientQuestionResponse> questions;
     /** Passage groups with their questions embedded */

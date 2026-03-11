@@ -3,7 +3,6 @@ package az.testup.dto.request;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.ExamType;
 import az.testup.enums.ExamVisibility;
-import az.testup.enums.Subject;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -23,8 +22,7 @@ public class ExamRequest {
 
     private String description;
 
-    @NotNull(message = "Subject is required")
-    private Subject subject;
+    private List<String> subjects;
 
     @NotNull(message = "Visibility is required")
     private ExamVisibility visibility;

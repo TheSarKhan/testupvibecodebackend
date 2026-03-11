@@ -65,7 +65,7 @@ public class DepotService {
                 exam.getId(),
                 exam.getTitle(),
                 exam.getDescription(),
-                exam.getSubject(),
+                exam.getSubjects(),
                 exam.getShareLink(),
                 exam.getQuestions().size(),
                 exam.getDurationMinutes(),

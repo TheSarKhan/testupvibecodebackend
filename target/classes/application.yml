@@ -4,13 +4,11 @@ server:
 spring:
   application:
     name: testup-backend
-
   datasource:
-    url: jdbc:postgresql://localhost:5434/testup_db
+    url: jdbc:postgresql://localhost:5433/testup_db
     username: testup_user
     password: testup_pass
     driver-class-name: org.postgresql.Driver
-
   jpa:
     hibernate:
       ddl-auto: update
@@ -19,13 +17,12 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
-
   data:
     redis:
       host: localhost
       port: 6380
 
 jwt:
-  secret: dGVzdHVwLWF6LXN1cGVyLXNlY3JldC1rZXktZm9yLWp3dC10b2tlbi1nZW5lcmF0aW9uLTIwMjQ=
-  access-token-expiration: 86400000      # 1 day (24 hours)
-  refresh-token-expiration: 2592000000   # 30 days (1 month)
+  secret: dGVzdHVwLWF6LXN1cGVyLXNlY3JldC1rZXktZm9yLWp3dC10b2tlbg==
+  access-token-expiration: 86400000
+  refresh-token-expiration: 2592000000

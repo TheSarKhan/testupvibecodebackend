@@ -30,5 +30,7 @@ public class PassageRequest {
 
     private Integer orderIndex;
 
+    private String subjectGroup;
+
     private List<QuestionRequest> questions;
 }

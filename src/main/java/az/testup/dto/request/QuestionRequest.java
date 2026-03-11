@@ -32,6 +32,8 @@ public class QuestionRequest {
 
     private String correctAnswer;
 
+    private String subjectGroup;
+
     private List<OptionRequest> options;
 
     private List<MatchingPairRequest> matchingPairs;

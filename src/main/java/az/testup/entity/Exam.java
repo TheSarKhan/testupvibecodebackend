@@ -3,7 +3,6 @@ package az.testup.entity;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.ExamType;
 import az.testup.enums.ExamVisibility;
-import az.testup.enums.Subject;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -29,9 +28,11 @@ public class Exam {
 
     private String description;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Subject subject;
+    @ElementCollection
+    @CollectionTable(name = "exam_subject_list", joinColumns = @JoinColumn(name = "exam_id"))
+    @Column(name = "subject")
+    @Builder.Default
+    private List<String> subjects = new ArrayList<>();
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

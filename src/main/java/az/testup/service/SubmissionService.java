@@ -618,6 +618,7 @@ public class SubmissionService {
                         .audioContent(p.getAudioContent())
                         .listenLimit(p.getListenLimit())
                         .orderIndex(p.getOrderIndex())
+                        .subjectGroup(p.getSubjectGroup())
                         .questions(questionsByPassage.getOrDefault(p.getId(), new ArrayList<>()))
                         .build())
                 .collect(Collectors.toList());
@@ -654,6 +655,7 @@ public class SubmissionService {
                 .examTitle(exam.getTitle())
                 .durationMinutes(exam.getDurationMinutes())
                 .startedAt(submission.getStartedAt())
+                .subjects(exam.getSubjects())
                 .questions(standaloneQuestions)
                 .passages(clientPassages)
                 .savedAnswers(savedAnswers)
@@ -668,6 +670,7 @@ public class SubmissionService {
                 .questionType(q.getQuestionType())
                 .points(q.getPoints())
                 .orderIndex(q.getOrderIndex())
+                .subjectGroup(q.getSubjectGroup())
                 .options(q.getOptions().stream().map(o ->
                     ClientOptionResponse.builder()
                         .id(o.getId())

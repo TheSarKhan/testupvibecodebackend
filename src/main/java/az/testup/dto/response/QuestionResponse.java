@@ -20,6 +20,7 @@ public class QuestionResponse {
     private Double points;
     private Integer orderIndex;
     private String correctAnswer;
+    private String subjectGroup;
     private List<OptionResponse> options;
     private List<MatchingPairResponse> matchingPairs;
 }

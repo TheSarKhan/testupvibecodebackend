@@ -40,7 +40,7 @@ public class ExamService {
         Exam exam = Exam.builder()
                 .title(request.getTitle())
                 .description(request.getDescription())
-                .subject(request.getSubject())
+                .subjects(request.getSubjects() != null ? new ArrayList<>(request.getSubjects()) : new ArrayList<>())
                 .visibility(request.getVisibility())
                 .examType(request.getExamType())
                 .status(request.getStatus())
@@ -156,7 +156,8 @@ public class ExamService {
 
         exam.setTitle(request.getTitle());
         exam.setDescription(request.getDescription());
-        exam.setSubject(request.getSubject());
+        exam.getSubjects().clear();
+        if (request.getSubjects() != null) exam.getSubjects().addAll(request.getSubjects());
         exam.setVisibility(request.getVisibility());
         exam.setExamType(request.getExamType());
         exam.setStatus(request.getStatus());
@@ -248,6 +249,7 @@ public class ExamService {
                 .audioContent(req.getAudioContent())
                 .listenLimit(req.getListenLimit())
                 .orderIndex(req.getOrderIndex())
+                .subjectGroup(req.getSubjectGroup())
                 .exam(exam)
                 .build();
         exam.getPassages().add(passage);
@@ -267,6 +269,7 @@ public class ExamService {
         passage.setAudioContent(req.getAudioContent());
         passage.setListenLimit(req.getListenLimit());
         passage.setOrderIndex(req.getOrderIndex());
+        passage.setSubjectGroup(req.getSubjectGroup());
 
         if (req.getQuestions() != null) {
             List<Long> reqQuestionIds = req.getQuestions().stream()
@@ -307,6 +310,7 @@ public class ExamService {
         question.setPoints(req.getPoints());
         question.setOrderIndex(req.getOrderIndex());
         question.setCorrectAnswer(req.getCorrectAnswer());
+        question.setSubjectGroup(req.getSubjectGroup());
 
         // Update options
         if (req.getOptions() != null) {
@@ -446,6 +450,7 @@ public class ExamService {
                 .points(req.getPoints())
                 .orderIndex(req.getOrderIndex())
                 .correctAnswer(req.getCorrectAnswer())
+                .subjectGroup(req.getSubjectGroup())
                 .exam(exam)
                 .passage(passage)
                 .build();
@@ -489,6 +494,7 @@ public class ExamService {
                         .audioContent(p.getAudioContent())
                         .listenLimit(p.getListenLimit())
                         .orderIndex(p.getOrderIndex())
+                        .subjectGroup(p.getSubjectGroup())
                         .questions(byPassage.getOrDefault(p.getId(), new ArrayList<>()))
                         .build())
                 .collect(Collectors.toList());
@@ -497,7 +503,7 @@ public class ExamService {
                 .id(exam.getId())
                 .title(exam.getTitle())
                 .description(exam.getDescription())
-                .subject(exam.getSubject())
+                .subjects(exam.getSubjects())
                 .visibility(exam.getVisibility())
                 .examType(exam.getExamType())
                 .status(exam.getStatus())
@@ -527,6 +533,7 @@ public class ExamService {
                 .points(q.getPoints())
                 .orderIndex(q.getOrderIndex())
                 .correctAnswer(q.getCorrectAnswer())
+                .subjectGroup(q.getSubjectGroup())
                 .options(q.getOptions().stream().map(this::mapToOptionResponse).collect(Collectors.toList()))
                 .matchingPairs(q.getMatchingPairs().stream().map(this::mapToPairResponse).collect(Collectors.toList()))
                 .build();

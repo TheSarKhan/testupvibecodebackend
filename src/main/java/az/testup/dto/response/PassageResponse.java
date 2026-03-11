@@ -21,5 +21,6 @@ public class PassageResponse {
     private String audioContent;
     private Integer listenLimit;
     private Integer orderIndex;
+    private String subjectGroup;
     private List<QuestionResponse> questions;
 }

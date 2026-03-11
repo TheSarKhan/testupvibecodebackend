@@ -22,5 +22,6 @@ public class ClientPassageResponse {
     private String audioContent;
     private Integer listenLimit;
     private Integer orderIndex;
+    private String subjectGroup;
     private List<ClientQuestionResponse> questions;
 }

@@ -3,7 +3,6 @@ package az.testup.dto.response;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.ExamType;
 import az.testup.enums.ExamVisibility;
-import az.testup.enums.Subject;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -21,7 +20,7 @@ public class ExamResponse {
     private Long id;
     private String title;
     private String description;
-    private Subject subject;
+    private List<String> subjects;
     private ExamVisibility visibility;
     private ExamType examType;
     private ExamStatus status;

@@ -4,12 +4,14 @@ import az.testup.dto.response.AdminExamResponse;
 import az.testup.dto.response.AdminStatsResponse;
 import az.testup.dto.response.AdminUserResponse;
 import az.testup.entity.Exam;
+import az.testup.entity.ExamSubject;
 import az.testup.entity.User;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.Role;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.ExamRepository;
+import az.testup.repository.ExamSubjectRepository;
 import az.testup.repository.SubmissionRepository;
 import az.testup.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +30,7 @@ public class AdminService {
     private final UserRepository userRepository;
     private final ExamRepository examRepository;
     private final SubmissionRepository submissionRepository;
+    private final ExamSubjectRepository subjectRepository;
 
     public AdminStatsResponse getStats() {
         long totalUsers = userRepository.count();
@@ -105,13 +109,44 @@ public class AdminService {
         examRepository.deleteById(examId);
     }
 
+    // ───────── Subject management ─────────
+
+    public List<ExamSubject> getSubjects() {
+        return subjectRepository.findAllByOrderByNameAsc();
+    }
+
+    @Transactional
+    public ExamSubject addSubject(String name) {
+        String trimmed = name.trim();
+        if (trimmed.isEmpty()) throw new BadRequestException("Fənn adı boş ola bilməz");
+        if (subjectRepository.existsByName(trimmed)) {
+            throw new BadRequestException("Bu fənn artıq mövcuddur");
+        }
+        return subjectRepository.save(ExamSubject.builder()
+                .name(trimmed)
+                .isDefault(false)
+                .build());
+    }
+
+    @Transactional
+    public void deleteSubject(Long id) {
+        ExamSubject subject = subjectRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
+        if (subject.isDefault()) {
+            throw new BadRequestException("Default fənnlər silinə bilməz");
+        }
+        subjectRepository.deleteById(id);
+    }
+
+    // ───────── Mappers ─────────
+
     private AdminExamResponse mapToExamResponse(Exam exam) {
         return new AdminExamResponse(
                 exam.getId(),
                 exam.getTitle(),
                 exam.getTeacher().getFullName(),
                 exam.getTeacher().getEmail(),
-                exam.getSubject(),
+                exam.getSubjects(),
                 exam.getStatus(),
                 exam.isSitePublished(),
                 exam.getPrice(),
@@ -120,8 +155,6 @@ public class AdminService {
                 exam.getCreatedAt()
         );
     }
-
-    // ───────── User management ─────────
 
     private AdminUserResponse mapToResponse(User user) {
         return new AdminUserResponse(

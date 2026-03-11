@@ -5,6 +5,7 @@ import az.testup.dto.request.SetExamPriceRequest;
 import az.testup.dto.response.AdminExamResponse;
 import az.testup.dto.response.AdminStatsResponse;
 import az.testup.dto.response.AdminUserResponse;
+import az.testup.entity.ExamSubject;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.Role;
 import az.testup.service.AdminService;
@@ -14,6 +15,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -87,6 +91,24 @@ public class AdminController {
     @DeleteMapping("/exams/{id}")
     public ResponseEntity<Void> deleteExam(@PathVariable Long id) {
         adminService.deleteExam(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ───── Subjects ─────
+
+    @GetMapping("/subjects")
+    public ResponseEntity<List<ExamSubject>> getSubjects() {
+        return ResponseEntity.ok(adminService.getSubjects());
+    }
+
+    @PostMapping("/subjects")
+    public ResponseEntity<ExamSubject> addSubject(@RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(adminService.addSubject(body.getOrDefault("name", "")));
+    }
+
+    @DeleteMapping("/subjects/{id}")
+    public ResponseEntity<Void> deleteSubject(@PathVariable Long id) {
+        adminService.deleteSubject(id);
         return ResponseEntity.noContent().build();
     }
 }
