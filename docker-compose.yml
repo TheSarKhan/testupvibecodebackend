@@ -9,9 +9,9 @@ services:
       POSTGRES_USER: testup_user
       POSTGRES_PASSWORD: testup_pass
     ports:
-      - "5434:5432"
+      - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - testup_postgres_data:/var/lib/postgresql/data
     networks:
       - testup-network
 
@@ -24,7 +24,7 @@ services:
       - testup-network
 
 volumes:
-  postgres_data:
+  testup_postgres_data:
 
 networks:
   testup-network:
