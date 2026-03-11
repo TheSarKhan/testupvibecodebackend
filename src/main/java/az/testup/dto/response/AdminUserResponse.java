@@ -9,5 +9,6 @@ public record AdminUserResponse(
         String email,
         Role role,
         String profilePicture,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        boolean enabled
 ) {}

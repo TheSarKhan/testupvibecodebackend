@@ -35,6 +35,9 @@ public class User {
     @Column(columnDefinition = "TEXT")
     private String profilePicture;
 
+    @Column(nullable = false)
+    private boolean enabled = true;
+
     @Column(updatable = false)
     private LocalDateTime createdAt;
 

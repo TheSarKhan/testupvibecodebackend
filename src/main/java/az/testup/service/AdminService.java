@@ -20,8 +20,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import az.testup.dto.response.MonthlyStatPoint;
+
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -41,8 +47,18 @@ public class AdminService {
         var recentUsers = userRepository.findTop5ByOrderByCreatedAtDesc()
                 .stream().map(this::mapToResponse).toList();
 
+        LocalDateTime since = LocalDateTime.now().minusMonths(5).withDayOfMonth(1).withHour(0).withMinute(0).withSecond(0).withNano(0);
+        List<MonthlyStatPoint> monthlyRegistrations = toMonthlyPoints(userRepository.countRegistrationsByMonth(since));
+        List<MonthlyStatPoint> monthlySubmissions = toMonthlyPoints(submissionRepository.countSubmissionsByMonth(since));
+
         return new AdminStatsResponse(totalUsers, totalTeachers, totalStudents,
-                totalExams, totalSubmissions, recentUsers);
+                totalExams, totalSubmissions, recentUsers, monthlyRegistrations, monthlySubmissions);
+    }
+
+    private List<MonthlyStatPoint> toMonthlyPoints(List<Object[]> rows) {
+        return rows.stream()
+                .map(r -> new MonthlyStatPoint((String) r[0], ((Number) r[1]).longValue()))
+                .collect(Collectors.toList());
     }
 
     public Page<AdminUserResponse> getUsers(String search, Role role, Pageable pageable) {
@@ -62,6 +78,14 @@ public class AdminService {
         } catch (IllegalArgumentException e) {
             throw new BadRequestException("Yanlış rol: " + roleStr);
         }
+        return mapToResponse(userRepository.save(user));
+    }
+
+    @Transactional
+    public AdminUserResponse toggleEnabled(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("İstifadəçi tapılmadı"));
+        user.setEnabled(!user.isEnabled());
         return mapToResponse(userRepository.save(user));
     }
 
@@ -163,7 +187,8 @@ public class AdminService {
                 user.getEmail(),
                 user.getRole(),
                 user.getProfilePicture(),
-                user.getCreatedAt()
+                user.getCreatedAt(),
+                user.isEnabled()
         );
     }
 }

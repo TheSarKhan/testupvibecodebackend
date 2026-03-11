@@ -53,6 +53,11 @@ public class AdminController {
         return ResponseEntity.ok(adminService.changeRole(id, request.role()));
     }
 
+    @PatchMapping("/users/{id}/toggle-status")
+    public ResponseEntity<AdminUserResponse> toggleUserStatus(@PathVariable Long id) {
+        return ResponseEntity.ok(adminService.toggleEnabled(id));
+    }
+
     @DeleteMapping("/users/{id}")
     public ResponseEntity<Void> deleteUser(@PathVariable Long id) {
         adminService.deleteUser(id);

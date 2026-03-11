@@ -8,5 +8,7 @@ public record AdminStatsResponse(
         long totalStudents,
         long totalExams,
         long totalSubmissions,
-        List<AdminUserResponse> recentUsers
+        List<AdminUserResponse> recentUsers,
+        List<MonthlyStatPoint> monthlyRegistrations,
+        List<MonthlyStatPoint> monthlySubmissions
 ) {}
