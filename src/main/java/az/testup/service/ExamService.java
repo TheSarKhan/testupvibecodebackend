@@ -8,7 +8,9 @@ import az.testup.dto.request.QuestionRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.enums.ExamStatus;
+import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
+import az.testup.exception.UnauthorizedException;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.TemplateRepository;
 import az.testup.util.CodeGenerator;
@@ -357,6 +359,20 @@ public class ExamService {
         examRepository.save(exam);
 
         return Map.of("accessCode", code, "expiresAt", expiresAt.toString());
+    }
+
+    @Transactional
+    public ExamResponse toggleStatus(Long id, User teacher) {
+        Exam exam = examRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        if (!exam.getTeacher().getId().equals(teacher.getId())) {
+            throw new UnauthorizedException("Bu əməliyyat üçün icazəniz yoxdur");
+        }
+        if (exam.getStatus() == ExamStatus.DRAFT) {
+            throw new BadRequestException("Qaralama imtahanını birbaşa aça bilməzsiniz. Əvvəlcə yayımlayın.");
+        }
+        exam.setStatus(exam.getStatus() == ExamStatus.PUBLISHED ? ExamStatus.CANCELLED : ExamStatus.PUBLISHED);
+        return mapToResponse(examRepository.save(exam));
     }
 
     @Transactional

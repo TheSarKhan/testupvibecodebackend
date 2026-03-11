@@ -6,6 +6,7 @@ import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
+import az.testup.enums.ExamStatus;
 import az.testup.enums.ExamVisibility;
 import az.testup.enums.QuestionType;
 import az.testup.exception.BadRequestException;
@@ -44,6 +45,10 @@ public class SubmissionService {
     public SubmissionResponse startSubmission(String shareLink, StartSubmissionRequest request, User student) {
         Exam exam = examRepository.findByShareLink(shareLink)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+
+        if (exam.getStatus() == ExamStatus.CANCELLED || exam.getStatus() == ExamStatus.DRAFT) {
+            throw new BadRequestException("Bu imtahan hazırda bağlıdır. Müəllimlə əlaqə saxlayın.");
+        }
 
         if (exam.getVisibility() == ExamVisibility.PRIVATE) {
             if (request.getAccessCode() == null || !request.getAccessCode().equals(exam.getAccessCode())) {

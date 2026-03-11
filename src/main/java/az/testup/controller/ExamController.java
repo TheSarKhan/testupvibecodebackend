@@ -73,6 +73,14 @@ public class ExamController {
         return ResponseEntity.ok(examService.generateAccessCode(id, teacher));
     }
 
+    @PatchMapping("/{id}/toggle-status")
+    public ResponseEntity<ExamResponse> toggleStatus(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User teacher = getCurrentUser(userDetails);
+        return ResponseEntity.ok(examService.toggleStatus(id, teacher));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteExam(
             @PathVariable Long id,
