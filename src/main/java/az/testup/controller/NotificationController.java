@@ -44,6 +44,15 @@ public class NotificationController {
         return ResponseEntity.ok().build();
     }
 
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = getUser(userDetails);
+        notificationService.delete(id, user);
+        return ResponseEntity.ok().build();
+    }
+
     @PostMapping("/read-all")
     public ResponseEntity<Void> markAllRead(
             @AuthenticationPrincipal UserDetails userDetails) {

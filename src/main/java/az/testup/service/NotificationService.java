@@ -55,6 +55,15 @@ public class NotificationService {
     }
 
     @Transactional
+    public void delete(Long notificationId, User user) {
+        notificationRepository.findById(notificationId).ifPresent(n -> {
+            if (n.getUser().getId().equals(user.getId())) {
+                notificationRepository.delete(n);
+            }
+        });
+    }
+
+    @Transactional
     public void markAllRead(User user) {
         List<Notification> unread = notificationRepository.findByUserIdOrderByCreatedAtDesc(user.getId())
                 .stream().filter(n -> !n.getIsRead()).toList();
