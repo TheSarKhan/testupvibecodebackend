@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: testup_user
       POSTGRES_PASSWORD: testup_pass
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -19,7 +19,7 @@ services:
     image: redis:7-alpine
     container_name: testup-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     networks:
       - testup-network
 
