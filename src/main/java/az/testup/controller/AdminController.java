@@ -1,6 +1,13 @@
 package az.testup.controller;
 
 import az.testup.dto.request.ChangeRoleRequest;
+import az.testup.dto.request.TemplateRequest;
+import az.testup.dto.request.TemplateSubtitleRequest;
+import az.testup.dto.request.TemplateSectionRequest;
+import az.testup.dto.response.TemplateResponse;
+import az.testup.dto.response.TemplateSubtitleResponse;
+import az.testup.dto.response.TemplateSectionResponse;
+import az.testup.service.TemplateService;
 import az.testup.dto.request.SetExamPriceRequest;
 import az.testup.dto.response.AdminExamResponse;
 import az.testup.dto.response.AdminStatsResponse;
@@ -25,6 +32,7 @@ import java.util.Map;
 public class AdminController {
 
     private final AdminService adminService;
+    private final TemplateService templateService;
 
     // ───── Stats ─────
 
@@ -114,6 +122,85 @@ public class AdminController {
     @DeleteMapping("/subjects/{id}")
     public ResponseEntity<Void> deleteSubject(@PathVariable Long id) {
         adminService.deleteSubject(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ───── Templates ─────
+
+    @GetMapping("/templates")
+    public ResponseEntity<List<TemplateResponse>> getTemplates() {
+        return ResponseEntity.ok(templateService.getAllTemplates());
+    }
+
+    @PostMapping("/templates")
+    public ResponseEntity<TemplateResponse> createTemplate(@RequestBody TemplateRequest request) {
+        return ResponseEntity.ok(templateService.createTemplate(request, null));
+    }
+
+    @PutMapping("/templates/{id}")
+    public ResponseEntity<TemplateResponse> updateTemplate(
+            @PathVariable Long id,
+            @RequestBody TemplateRequest request) {
+        return ResponseEntity.ok(templateService.updateTemplate(id, request));
+    }
+
+    @DeleteMapping("/templates/{id}")
+    public ResponseEntity<Void> deleteTemplate(@PathVariable Long id) {
+        templateService.deleteTemplate(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ───── Subtitles ─────
+
+    @GetMapping("/templates/{templateId}/subtitles")
+    public ResponseEntity<List<TemplateSubtitleResponse>> getSubtitles(@PathVariable Long templateId) {
+        return ResponseEntity.ok(templateService.getSubtitlesByTemplate(templateId));
+    }
+
+    @PostMapping("/templates/{templateId}/subtitles")
+    public ResponseEntity<TemplateSubtitleResponse> createSubtitle(
+            @PathVariable Long templateId,
+            @RequestBody TemplateSubtitleRequest request) {
+        return ResponseEntity.ok(templateService.createSubtitle(templateId, request));
+    }
+
+    @PutMapping("/subtitles/{id}")
+    public ResponseEntity<TemplateSubtitleResponse> updateSubtitle(
+            @PathVariable Long id,
+            @RequestBody TemplateSubtitleRequest request) {
+        return ResponseEntity.ok(templateService.updateSubtitle(id, request));
+    }
+
+    @DeleteMapping("/subtitles/{id}")
+    public ResponseEntity<Void> deleteSubtitle(@PathVariable Long id) {
+        templateService.deleteSubtitle(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ───── Sections ─────
+
+    @GetMapping("/subtitles/{subtitleId}/sections")
+    public ResponseEntity<List<TemplateSectionResponse>> getSections(@PathVariable Long subtitleId) {
+        return ResponseEntity.ok(templateService.getSectionsBySubtitle(subtitleId));
+    }
+
+    @PostMapping("/subtitles/{subtitleId}/sections")
+    public ResponseEntity<TemplateSectionResponse> createSection(
+            @PathVariable Long subtitleId,
+            @RequestBody TemplateSectionRequest request) {
+        return ResponseEntity.ok(templateService.createSection(subtitleId, request));
+    }
+
+    @PutMapping("/sections/{id}")
+    public ResponseEntity<TemplateSectionResponse> updateSection(
+            @PathVariable Long id,
+            @RequestBody TemplateSectionRequest request) {
+        return ResponseEntity.ok(templateService.updateSection(id, request));
+    }
+
+    @DeleteMapping("/sections/{id}")
+    public ResponseEntity<Void> deleteSection(@PathVariable Long id) {
+        templateService.deleteSection(id);
         return ResponseEntity.noContent().build();
     }
 }

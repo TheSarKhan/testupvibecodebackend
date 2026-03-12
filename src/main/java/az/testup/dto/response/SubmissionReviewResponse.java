@@ -24,4 +24,5 @@ public class SubmissionReviewResponse {
     private Integer ungradedCount;
     private Integer rating;
     private List<QuestionReviewResponse> questions;
+    private Double templateScorePercent;
 }

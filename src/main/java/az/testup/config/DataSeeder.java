@@ -1,10 +1,9 @@
 package az.testup.config;
 
-import az.testup.entity.ExamSubject;
-import az.testup.entity.User;
+import az.testup.entity.*;
+import az.testup.enums.QuestionType;
 import az.testup.enums.Role;
-import az.testup.repository.ExamSubjectRepository;
-import az.testup.repository.UserRepository;
+import az.testup.repository.*;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +24,9 @@ public class DataSeeder implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final ExamSubjectRepository subjectRepository;
     private final EntityManager entityManager;
+    private final TemplateRepository templateRepository;
+    private final TemplateSubtitleRepository subtitleRepository;
+    private final TemplateSectionRepository sectionRepository;
 
     private static final List<String> DEFAULT_SUBJECTS = List.of(
             "Riyaziyyat", "Fizika", "Kimya", "Biologiya",
@@ -62,8 +64,11 @@ public class DataSeeder implements CommandLineRunner {
     @Transactional
     public void run(String... args) {
         seedAdmin();
+        seedTeacher();
+        seedStudent();
         seedSubjects();
         migrateExamSubjectsToList();
+        seedDimTemplate();
     }
 
     private void seedAdmin() {
@@ -77,6 +82,32 @@ public class DataSeeder implements CommandLineRunner {
                     .build();
             userRepository.save(admin);
             log.info("Admin istifadəçisi yaradıldı: {}", adminEmail);
+        }
+    }
+
+    private void seedTeacher() {
+        String email = "serxan.babayev.06@gmail.com";
+        if (!userRepository.existsByEmail(email)) {
+            userRepository.save(User.builder()
+                    .fullName("Sərxan Babayev")
+                    .email(email)
+                    .password(passwordEncoder.encode("salam123"))
+                    .role(Role.TEACHER)
+                    .build());
+            log.info("Müəllim hesabı yaradıldı: {}", email);
+        }
+    }
+
+    private void seedStudent() {
+        String email = "serxanbabayev614@gmail.com";
+        if (!userRepository.existsByEmail(email)) {
+            userRepository.save(User.builder()
+                    .fullName("Sərxan Babayev")
+                    .email(email)
+                    .password(passwordEncoder.encode("salam123"))
+                    .role(Role.STUDENT)
+                    .build());
+            log.info("Şagird hesabı yaradıldı: {}", email);
         }
     }
 
@@ -132,5 +163,74 @@ public class DataSeeder implements CommandLineRunner {
         if (inserted > 0) {
             log.info("Migrated {} exam(s) subjects to exam_subject_list", inserted);
         }
+    }
+
+    private void seedDimTemplate() {
+        if (templateRepository.findByTitle("DİM Buraxılış").isPresent()) {
+            log.debug("DİM Buraxılış şablonu artıq mövcuddur, keçilir");
+            return;
+        }
+
+        Template template = Template.builder()
+                .title("DİM Buraxılış")
+                .build();
+        template = templateRepository.save(template);
+
+        TemplateSubtitle subtitle = TemplateSubtitle.builder()
+                .template(template)
+                .subtitle("11-ci sinif")
+                .orderIndex(0)
+                .build();
+        subtitle = subtitleRepository.save(subtitle);
+
+        // İngilis dili: MCQ=23, OPEN_MANUAL=7
+        TemplateSection ingilis = TemplateSection.builder()
+                .subtitle(subtitle)
+                .subjectName("İngilis dili")
+                .questionCount(30)
+                .formula("(100.0/37.0)*(2*l+a)")
+                .orderIndex(0)
+                .build();
+        ingilis = sectionRepository.save(ingilis);
+        addTypeCount(ingilis, QuestionType.MCQ, 23, 0);
+        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 7, 1);
+
+        // Az dili: MCQ=20, OPEN_MANUAL=10
+        TemplateSection azDili = TemplateSection.builder()
+                .subtitle(subtitle)
+                .subjectName("Azərbaycan dili")
+                .questionCount(30)
+                .formula("(5.0/2.0)*(2*l+a)")
+                .orderIndex(1)
+                .build();
+        azDili = sectionRepository.save(azDili);
+        addTypeCount(azDili, QuestionType.MCQ, 20, 0);
+        addTypeCount(azDili, QuestionType.OPEN_MANUAL, 10, 1);
+
+        // Riyaziyyat: MCQ=13, OPEN_AUTO=5, OPEN_MANUAL=7
+        TemplateSection riyaziyyat = TemplateSection.builder()
+                .subtitle(subtitle)
+                .subjectName("Riyaziyyat")
+                .questionCount(25)
+                .formula("(25.0/8.0)*(2*l+f+a)")
+                .orderIndex(2)
+                .build();
+        riyaziyyat = sectionRepository.save(riyaziyyat);
+        addTypeCount(riyaziyyat, QuestionType.MCQ, 13, 0);
+        addTypeCount(riyaziyyat, QuestionType.OPEN_AUTO, 5, 1);
+        addTypeCount(riyaziyyat, QuestionType.OPEN_MANUAL, 7, 2);
+
+        log.info("DİM Buraxılış şablonu uğurla yaradıldı");
+    }
+
+    private void addTypeCount(TemplateSection section, QuestionType type, int count, int order) {
+        TemplateSectionTypeCount tc = TemplateSectionTypeCount.builder()
+                .section(section)
+                .questionType(type)
+                .count(count)
+                .orderIndex(order)
+                .build();
+        section.getTypeCounts().add(tc);
+        sectionRepository.save(section);
     }
 }

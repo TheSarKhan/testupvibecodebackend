@@ -37,6 +37,8 @@ public class ExamRequest {
 
     private Long templateId;
 
+    private Long templateSectionId;
+
     private List<String> tags;
 
     /** Standalone questions (not belonging to any passage) */

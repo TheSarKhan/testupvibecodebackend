@@ -75,6 +75,11 @@ public class Exam {
     @JoinColumn(name = "template_id")
     private Template template;
 
+    /** Which template section (subject) this exam fulfills */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "template_section_id")
+    private TemplateSection templateSection;
+
     @ElementCollection
     @CollectionTable(name = "exam_tags", joinColumns = @JoinColumn(name = "exam_id"))
     @Column(name = "tag")

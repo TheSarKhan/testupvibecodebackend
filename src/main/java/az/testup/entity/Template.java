@@ -20,22 +20,18 @@ public class Template {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private String name;
-
-    private String description;
-
-    /** Scoring formula defined by admin (e.g., mathematical expression) */
-    @Column(columnDefinition = "TEXT")
-    private String scoringFormula;
+    /** Template title, e.g. "DIM" */
+    @Column(name = "title", nullable = false)
+    private String title;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by", nullable = false)
+    @JoinColumn(name = "created_by")
     private User createdBy;
 
     @OneToMany(mappedBy = "template", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("orderIndex ASC")
     @Builder.Default
-    private List<TemplateSection> sections = new ArrayList<>();
+    private List<TemplateSubtitle> subtitles = new ArrayList<>();
 
     @Column(updatable = false)
     private LocalDateTime createdAt;

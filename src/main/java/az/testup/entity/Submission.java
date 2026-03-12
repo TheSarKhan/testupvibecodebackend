@@ -38,6 +38,9 @@ public class Submission {
     /** Maximum possible score */
     private Double maxScore;
 
+    /** Formula-based percentage score for template exams (0-100, null for non-template) */
+    private Double templateScorePercent;
+
     /** Whether all auto-graded + manual questions are graded */
     @Column(nullable = false)
     @Builder.Default

@@ -7,6 +7,7 @@ import az.testup.dto.request.PassageRequest;
 import az.testup.dto.request.QuestionRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
+import az.testup.entity.TemplateSection;
 import az.testup.entity.ExamPurchase;
 import az.testup.entity.StudentSavedExam;
 import az.testup.enums.ExamStatus;
@@ -16,6 +17,7 @@ import az.testup.exception.UnauthorizedException;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.StudentSavedExamRepository;
+import az.testup.repository.TemplateSectionRepository;
 import az.testup.repository.TemplateRepository;
 import az.testup.util.CodeGenerator;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +34,7 @@ public class ExamService {
 
     private final ExamRepository examRepository;
     private final TemplateRepository templateRepository;
+    private final TemplateSectionRepository templateSectionRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
     private final StudentSavedExamRepository studentSavedExamRepository;
 
@@ -54,6 +57,12 @@ public class ExamService {
             Template template = templateRepository.findById(request.getTemplateId())
                     .orElseThrow(() -> new ResourceNotFoundException("Template not found"));
             exam.setTemplate(template);
+        }
+
+        if (request.getTemplateSectionId() != null) {
+            TemplateSection section = templateSectionRepository.findById(request.getTemplateSectionId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Şablon bölməsi tapılmadı"));
+            exam.setTemplateSection(section);
         }
 
         if (request.getQuestions() != null) {
@@ -166,6 +175,14 @@ public class ExamService {
         exam.getTags().clear();
         if (request.getTags() != null) {
             exam.getTags().addAll(request.getTags());
+        }
+
+        if (request.getTemplateSectionId() != null) {
+            TemplateSection section = templateSectionRepository.findById(request.getTemplateSectionId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Şablon bölməsi tapılmadı"));
+            exam.setTemplateSection(section);
+        } else {
+            exam.setTemplateSection(null);
         }
 
         // --- Handle standalone questions ---
@@ -514,6 +531,7 @@ public class ExamService {
                 .teacherId(exam.getTeacher().getId())
                 .teacherName(exam.getTeacher().getFullName())
                 .templateId(exam.getTemplate() != null ? exam.getTemplate().getId() : null)
+                .templateSectionId(exam.getTemplateSection() != null ? exam.getTemplateSection().getId() : null)
                 .price(exam.getPrice())
                 .sitePublished(exam.isSitePublished())
                 .questions(standaloneQuestions)

@@ -7,6 +7,7 @@ import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.enums.ExamStatus;
+import az.testup.util.FormulaEvaluator;
 import az.testup.enums.ExamVisibility;
 import az.testup.enums.QuestionType;
 import az.testup.exception.BadRequestException;
@@ -25,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -346,6 +348,18 @@ public class SubmissionService {
         submission.setMaxScore(examMaxScore);
         submission.setIsFullyGraded(allGraded);
 
+        // Formula-based scoring for template exams
+        if (submission.getExam().getTemplateSection() != null) {
+            String formula = submission.getExam().getTemplateSection().getFormula();
+            int templateQuestionCount = submission.getExam().getTemplateSection().getQuestionCount();
+            Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
+            Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), templateQuestionCount);
+            double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
+            double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
+            double percent = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+            submission.setTemplateScorePercent(Math.round(percent * 100.0) / 100.0);
+        }
+
         submission = submissionRepository.save(submission);
 
         // Notify teacher of new submission
@@ -490,6 +504,18 @@ public class SubmissionService {
         boolean nowFullyGraded = gradedCount >= totalQuestions;
         submission.setIsFullyGraded(nowFullyGraded);
 
+        // Recalculate formula score for template exams
+        if (submission.getExam().getTemplateSection() != null) {
+            String formula = submission.getExam().getTemplateSection().getFormula();
+            int templateQuestionCount = submission.getExam().getTemplateSection().getQuestionCount();
+            Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
+            Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), templateQuestionCount);
+            double formulaRawScore = FormulaEvaluator.evaluate(formula, actualVars);
+            double formulaMaxRaw = FormulaEvaluator.evaluate(formula, maxVars);
+            double percent = formulaMaxRaw > 0 ? Math.max(0.0, formulaRawScore / formulaMaxRaw * 100.0) : 0.0;
+            submission.setTemplateScorePercent(Math.round(percent * 100.0) / 100.0);
+        }
+
         submissionRepository.save(submission);
 
         // Notify student when all manual answers are graded
@@ -564,6 +590,68 @@ public class SubmissionService {
                 .build();
     }
 
+    /** Counts answer outcomes per question type for formula evaluation. */
+    private Map<String, Double> buildFormulaVariables(List<Answer> answers, int totalQuestionCount) {
+        long mcq_correct = 0, mcq_wrong = 0, mcq_blank = 0;
+        long multi_correct = 0, multi_wrong = 0;
+        long open_correct = 0, open_wrong = 0;
+        double manual_correct = 0.0, manual_wrong = 0.0; // fractional for partial credit
+        long fill_correct = 0, fill_wrong = 0;
+        long match_correct = 0, match_wrong = 0;
+        for (Answer a : answers) {
+            QuestionType type = a.getQuestion().getQuestionType();
+            double pts = a.getQuestion().getPoints();
+            double score = a.getScore() != null ? a.getScore() : 0.0;
+            if (type == QuestionType.MCQ || type == QuestionType.TRUE_FALSE) {
+                if (a.getSelectedOptionId() == null) mcq_blank++;
+                else if (score >= pts) mcq_correct++;
+                else mcq_wrong++;
+            } else if (type == QuestionType.MULTI_SELECT) {
+                if (score >= pts) multi_correct++; else multi_wrong++;
+            } else if (type == QuestionType.OPEN_AUTO) {
+                if (score >= pts) open_correct++; else open_wrong++;
+            } else if (type == QuestionType.OPEN_MANUAL) {
+                // Use fractional counting so 1/3 and 2/3 partial credit is reflected in formula
+                double effectivePts = pts > 0 ? pts : 1.0;
+                double frac = Math.min(1.0, Math.max(0.0, score / effectivePts));
+                manual_correct += frac;
+                manual_wrong += (1.0 - frac);
+            } else if (type == QuestionType.FILL_IN_THE_BLANK) {
+                if (score >= pts) fill_correct++; else fill_wrong++;
+            } else if (type == QuestionType.MATCHING) {
+                if (score >= pts) match_correct++; else match_wrong++;
+            }
+        }
+        Map<String, Double> v = new HashMap<>();
+        v.put("a", (double) mcq_correct);    v.put("b", (double) mcq_wrong);    v.put("c", (double) mcq_blank);
+        v.put("d", (double) multi_correct);  v.put("e", (double) multi_wrong);
+        v.put("f", (double) open_correct);   v.put("g", (double) open_wrong);
+        v.put("l", manual_correct);          v.put("m", manual_wrong);
+        v.put("h", (double) fill_correct);   v.put("i", (double) fill_wrong);
+        v.put("j", (double) match_correct);  v.put("k", (double) match_wrong);
+        v.put("n", (double) totalQuestionCount);
+        return v;
+    }
+
+    /** Builds variable map for max-score scenario (all correct, none wrong/blank). */
+    private Map<String, Double> buildMaxFormulaVariables(List<Answer> answers, int totalQuestionCount) {
+        long mcq = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.MCQ || a.getQuestion().getQuestionType() == QuestionType.TRUE_FALSE).count();
+        long multi = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.MULTI_SELECT).count();
+        long open = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.OPEN_AUTO).count();
+        long manual = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.OPEN_MANUAL).count();
+        long fill = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.FILL_IN_THE_BLANK).count();
+        long match = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.MATCHING).count();
+        Map<String, Double> v = new HashMap<>();
+        v.put("a", (double) mcq);    v.put("b", 0.0); v.put("c", 0.0);
+        v.put("d", (double) multi);  v.put("e", 0.0);
+        v.put("f", (double) open);   v.put("g", 0.0);
+        v.put("l", (double) manual); v.put("m", 0.0);
+        v.put("h", (double) fill);   v.put("i", 0.0);
+        v.put("j", (double) match);  v.put("k", 0.0);
+        v.put("n", (double) totalQuestionCount);
+        return v;
+    }
+
     private SubmissionResponse mapToResponse(Submission submission) {
         return SubmissionResponse.builder()
                 .id(submission.getId())
@@ -577,6 +665,7 @@ public class SubmissionService {
                 .startedAt(submission.getStartedAt())
                 .submittedAt(submission.getSubmittedAt())
                 .durationMinutes(submission.getExam().getDurationMinutes())
+                .templateScorePercent(submission.getTemplateScorePercent())
                 .build();
     }
 
@@ -786,6 +875,7 @@ public class SubmissionService {
                 .ungradedCount(ungradedCount)
                 .rating(submission.getRating())
                 .questions(reviewQuestions)
+                .templateScorePercent(submission.getTemplateScorePercent())
                 .build();
     }
 

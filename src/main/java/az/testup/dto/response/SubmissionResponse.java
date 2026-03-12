@@ -28,4 +28,7 @@ public class SubmissionResponse {
     private Boolean hasPaid;
     /** Amount the student paid (null if exam is free) */
     private BigDecimal amountPaid;
+
+    /** Formula-based percentage score for template exams (null for non-template exams) */
+    private Double templateScorePercent;
 }
