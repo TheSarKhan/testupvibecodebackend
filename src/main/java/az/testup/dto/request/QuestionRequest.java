@@ -20,6 +20,10 @@ public class QuestionRequest {
     @NotBlank(message = "Content is required")
     private String content;
 
+    /** Compatibility for frontend which sometimes sends 'text' */
+    private String text;
+
+
     private String attachedImage;
 
     @NotNull(message = "Question type is required")

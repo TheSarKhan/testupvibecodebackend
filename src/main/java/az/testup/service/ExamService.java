@@ -35,6 +35,12 @@ public class ExamService {
     private final StudentSavedExamRepository studentSavedExamRepository;
     private final SubscriptionValidatorService subscriptionValidatorService;
 
+    public Exam getExamEntityById(Long id) {
+        return examRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+    }
+
+
     @Transactional
     public ExamResponse createExam(ExamRequest request, User teacher) {
         // Validate limits
@@ -379,7 +385,8 @@ public class ExamService {
     }
 
     private void updateQuestionFromRequest(Question question, QuestionRequest req) {
-        question.setContent(req.getContent());
+        String content = req.getContent() != null ? req.getContent() : req.getText();
+        question.setContent(content);
         question.setAttachedImage(req.getAttachedImage());
         question.setQuestionType(req.getQuestionType());
         question.setPoints(req.getPoints());
@@ -434,6 +441,8 @@ public class ExamService {
                     if (existingPair != null) {
                         existingPair.setLeftItem(pReq.getLeftItem());
                         existingPair.setRightItem(pReq.getRightItem());
+                        existingPair.setAttachedImageLeft(pReq.getAttachedImageLeft());
+                        existingPair.setAttachedImageRight(pReq.getAttachedImageRight());
                         existingPair.setOrderIndex(pReq.getOrderIndex());
                     } else {
                         question.getMatchingPairs().add(mapToPair(pReq, question));
@@ -461,6 +470,8 @@ public class ExamService {
         return MatchingPair.builder()
                 .leftItem(pReq.getLeftItem())
                 .rightItem(pReq.getRightItem())
+                .attachedImageLeft(pReq.getAttachedImageLeft())
+                .attachedImageRight(pReq.getAttachedImageRight())
                 .orderIndex(pReq.getOrderIndex())
                 .question(question)
                 .build();
@@ -518,8 +529,9 @@ public class ExamService {
     }
 
     private Question mapToQuestion(QuestionRequest req, Exam exam, Passage passage) {
+        String content = req.getContent() != null ? req.getContent() : req.getText();
         Question question = Question.builder()
-                .content(req.getContent())
+                .content(content)
                 .attachedImage(req.getAttachedImage())
                 .questionType(req.getQuestionType())
                 .points(req.getPoints())

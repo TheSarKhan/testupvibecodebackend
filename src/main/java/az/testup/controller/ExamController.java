@@ -2,10 +2,13 @@ package az.testup.controller;
 
 import az.testup.dto.request.ExamRequest;
 import az.testup.dto.response.ExamResponse;
+import az.testup.entity.Exam;
 import az.testup.entity.User;
 import az.testup.exception.UnauthorizedException;
 import az.testup.repository.UserRepository;
 import az.testup.service.ExamService;
+import az.testup.service.PdfService;
+import az.testup.service.SubscriptionValidatorService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +26,9 @@ public class ExamController {
 
     private final ExamService examService;
     private final UserRepository userRepository;
+    private final PdfService pdfService;
+    private final SubscriptionValidatorService subscriptionValidatorService;
+
 
     @PostMapping
     public ResponseEntity<ExamResponse> createExam(
@@ -98,6 +104,30 @@ public class ExamController {
         examService.deleteExam(id, teacher);
         return ResponseEntity.noContent().build();
     }
+
+    @GetMapping("/{id}/pdf")
+    public ResponseEntity<byte[]> downloadExamPdf(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) throws java.io.IOException {
+        User user = getCurrentUser(userDetails);
+        
+        // Admins can download any exam, teachers only their own + permission check
+        Exam exam = examService.getExamEntityById(id);
+        if (!user.getRole().name().equals("ADMIN")) {
+            if (!exam.getTeacher().getId().equals(user.getId())) {
+                throw new UnauthorizedException("Bu imtahanı yükləmək icazəniz yoxdur");
+            }
+            subscriptionValidatorService.validateDownloadAsPdf(user.getId());
+        }
+
+        byte[] pdfBytes = pdfService.generateExamPdf(exam);
+
+        return ResponseEntity.ok()
+                .header("Content-Type", "application/pdf")
+                .header("Content-Disposition", "attachment; filename=\"exam_" + id + ".pdf\"")
+                .body(pdfBytes);
+    }
+
 
     private User getCurrentUser(UserDetails userDetails) {
         if (userDetails == null) {

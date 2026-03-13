@@ -42,6 +42,10 @@ public class Question {
     @Column(columnDefinition = "TEXT")
     private String correctAnswer;
 
+    /** Sample answer or correct blanks JSON for Fill-in-the-blank */
+    @Column(columnDefinition = "TEXT")
+    private String sampleAnswer;
+
     /** Subject section this question belongs to (null = first/main section) */
     @Column(name = "subject_group")
     private String subjectGroup;

@@ -1,6 +1,5 @@
 package az.testup.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,12 +12,15 @@ import lombok.NoArgsConstructor;
 public class MatchingPairRequest {
     private Long id;
 
-    @NotBlank(message = "Left item is required")
     private String leftItem;
 
-    @NotBlank(message = "Right item is required")
     private String rightItem;
 
+    private String attachedImageLeft;
+
+    private String attachedImageRight;
+
     private Integer orderIndex;
+
 }
 
