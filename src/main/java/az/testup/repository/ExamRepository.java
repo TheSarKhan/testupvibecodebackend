@@ -28,4 +28,7 @@ public interface ExamRepository extends JpaRepository<Exam, Long> {
                            @Param("teacherId") Long teacherId,
                            @Param("teacherRoleName") String teacherRoleName,
                            Pageable pageable);
+
+    long countByTeacherId(Long teacherId);
 }
+

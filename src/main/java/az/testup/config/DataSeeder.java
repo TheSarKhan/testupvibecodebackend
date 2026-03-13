@@ -27,6 +27,8 @@ public class DataSeeder implements CommandLineRunner {
     private final TemplateRepository templateRepository;
     private final TemplateSubtitleRepository subtitleRepository;
     private final TemplateSectionRepository sectionRepository;
+    private final SubscriptionPlanRepository subscriptionPlanRepository;
+    private final UserSubscriptionRepository userSubscriptionRepository;
 
     private static final List<String> DEFAULT_SUBJECTS = List.of(
             "Riyaziyyat", "Fizika", "Kimya", "Biologiya",
@@ -63,12 +65,107 @@ public class DataSeeder implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        seedSubscriptionPlans();
         seedAdmin();
         seedTeacher();
         seedStudent();
         seedSubjects();
         migrateExamSubjectsToList();
         seedDimTemplate();
+    }
+
+    private void seedSubscriptionPlans() {
+        if (subscriptionPlanRepository.count() == 0) {
+            // Free Plan
+            SubscriptionPlan freePlan = SubscriptionPlan.builder()
+                    .name("Free")
+                    .price(0.0)
+                    .description("Platformamızla tanış olmaq üçün limitsiz müddətli pulsuz plan.")
+                    .monthlyExamLimit(2)
+                    .maxQuestionsPerExam(20)
+                    .maxSavedExamsLimit(5)
+                    .maxParticipantsPerExam(10)
+                    .studentResultAnalysis(false)
+                    .examEditing(false)
+                    .addImage(false)
+                    .addPassageQuestion(false)
+                    .downloadPastExams(false)
+                    .downloadAsPdf(false)
+                    .multipleSubjects(false)
+                    .useTemplateExams(false)
+                    .manualChecking(false)
+                    .selectExamDuration(false)
+                    .useQuestionBank(false)
+                    .createQuestionBank(false)
+                    .importQuestionsFromPdf(false)
+                    .build();
+
+            // Basic Plan
+            SubscriptionPlan basicPlan = SubscriptionPlan.builder()
+                    .name("Basic")
+                    .price(29.90)
+                    .description("Fərdi müəllimlər üçün nəzərdə tutulmuş orta səviyyəli plan.")
+                    .monthlyExamLimit(10)
+                    .maxQuestionsPerExam(100)
+                    .maxSavedExamsLimit(50)
+                    .maxParticipantsPerExam(50)
+                    .studentResultAnalysis(true)
+                    .examEditing(true)
+                    .addImage(true)
+                    .addPassageQuestion(true)
+                    .downloadPastExams(true)
+                    .downloadAsPdf(true)
+                    .multipleSubjects(true)
+                    .useTemplateExams(true)
+                    .manualChecking(false)
+                    .selectExamDuration(true)
+                    .useQuestionBank(true)
+                    .createQuestionBank(false)
+                    .importQuestionsFromPdf(false)
+                    .build();
+
+            // Unlimited Plan
+            SubscriptionPlan unlimitedPlan = SubscriptionPlan.builder()
+                    .name("Limitsiz")
+                    .price(59.90)
+                    .description("Bütün funksionallıqlardan və məhdudiyyətsiz limitlərdən faydalanın.")
+                    .monthlyExamLimit(-1)
+                    .maxQuestionsPerExam(-1)
+                    .maxSavedExamsLimit(-1)
+                    .maxParticipantsPerExam(-1)
+                    .studentResultAnalysis(true)
+                    .examEditing(true)
+                    .addImage(true)
+                    .addPassageQuestion(true)
+                    .downloadPastExams(true)
+                    .downloadAsPdf(true)
+                    .multipleSubjects(true)
+                    .useTemplateExams(true)
+                    .manualChecking(true)
+                    .selectExamDuration(true)
+                    .useQuestionBank(true)
+                    .createQuestionBank(true)
+                    .importQuestionsFromPdf(true)
+                    .build();
+
+            subscriptionPlanRepository.saveAll(List.of(freePlan, basicPlan, unlimitedPlan));
+            log.info("3 Subscription Plans (Free, Basic, Limitsiz) seeded successfully.");
+        }
+    }
+
+    private void assignUnlimitedPlanToUser(User user) {
+        SubscriptionPlan unlimitedPlan = subscriptionPlanRepository.findByName("Limitsiz")
+                .orElseThrow(() -> new RuntimeException("Limitsiz plan tapılmadı"));
+        
+        UserSubscription subscription = UserSubscription.builder()
+                .user(user)
+                .plan(unlimitedPlan)
+                .startDate(java.time.LocalDateTime.now())
+                .endDate(java.time.LocalDateTime.now().plusYears(100))
+                .isActive(true)
+                .paymentProvider("SYSTEM_SEED")
+                .build();
+        userSubscriptionRepository.save(subscription);
     }
 
     private void seedAdmin() {
@@ -81,6 +178,7 @@ public class DataSeeder implements CommandLineRunner {
                     .role(Role.ADMIN)
                     .build();
             userRepository.save(admin);
+            assignUnlimitedPlanToUser(admin);
             log.info("Admin istifadəçisi yaradıldı: {}", adminEmail);
         }
     }
@@ -88,12 +186,14 @@ public class DataSeeder implements CommandLineRunner {
     private void seedTeacher() {
         String email = "serxan.babayev.06@gmail.com";
         if (!userRepository.existsByEmail(email)) {
-            userRepository.save(User.builder()
+            User teacher = User.builder()
                     .fullName("Sərxan Babayev")
                     .email(email)
                     .password(passwordEncoder.encode("salam123"))
                     .role(Role.TEACHER)
-                    .build());
+                    .build();
+            userRepository.save(teacher);
+            assignUnlimitedPlanToUser(teacher);
             log.info("Müəllim hesabı yaradıldı: {}", email);
         }
     }

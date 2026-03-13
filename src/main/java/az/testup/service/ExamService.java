@@ -14,11 +14,7 @@ import az.testup.enums.ExamStatus;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.exception.UnauthorizedException;
-import az.testup.repository.ExamPurchaseRepository;
-import az.testup.repository.ExamRepository;
-import az.testup.repository.StudentSavedExamRepository;
-import az.testup.repository.TemplateSectionRepository;
-import az.testup.repository.TemplateRepository;
+import az.testup.repository.*;
 import az.testup.util.CodeGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -37,9 +33,65 @@ public class ExamService {
     private final TemplateSectionRepository templateSectionRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
     private final StudentSavedExamRepository studentSavedExamRepository;
+    private final SubscriptionValidatorService subscriptionValidatorService;
 
     @Transactional
     public ExamResponse createExam(ExamRequest request, User teacher) {
+        // Validate limits
+        subscriptionValidatorService.validateMonthlyExamCreation(teacher.getId());
+        subscriptionValidatorService.validateTotalSavedExams(teacher.getId());
+
+        int questionCount = 0;
+        boolean hasImages = false;
+
+        if (request.getQuestions() != null) {
+            questionCount += request.getQuestions().size();
+            for (QuestionRequest qr : request.getQuestions()) {
+                if (qr.getAttachedImage() != null && !qr.getAttachedImage().isEmpty()) {
+                    hasImages = true;
+                }
+            }
+        }
+
+        if (request.getPassages() != null && !request.getPassages().isEmpty()) {
+            subscriptionValidatorService.validateAddPassageQuestion(teacher.getId());
+            for (PassageRequest pr : request.getPassages()) {
+                if (pr.getAttachedImage() != null && !pr.getAttachedImage().isEmpty()) {
+                    hasImages = true;
+                }
+                if (pr.getQuestions() != null) {
+                    questionCount += pr.getQuestions().size();
+                    for (QuestionRequest qr : pr.getQuestions()) {
+                        if (qr.getAttachedImage() != null && !qr.getAttachedImage().isEmpty()) {
+                            hasImages = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        subscriptionValidatorService.validateMaxQuestionsPerExam(teacher.getId(), questionCount);
+
+        if (hasImages) {
+            subscriptionValidatorService.validateAddImage(teacher.getId());
+        }
+        if (request.getSubjects() != null && request.getSubjects().size() > 1) {
+            subscriptionValidatorService.validateMultipleSubjects(teacher.getId());
+        }
+        // If plan doesn't allow selecting duration, silently ignore the value (no error)
+        Integer effectiveDuration = request.getDurationMinutes();
+        try {
+            if (effectiveDuration != null && effectiveDuration > 0) {
+                subscriptionValidatorService.validateSelectExamDuration(teacher.getId());
+            }
+        } catch (az.testup.exception.SubscriptionLimitExceededException e) {
+            // Plan doesn't allow exam duration — silently set to no timer
+            effectiveDuration = null;
+        }
+        if (request.getTemplateId() != null || request.getTemplateSectionId() != null) {
+            subscriptionValidatorService.validateUseTemplateExams(teacher.getId());
+        }
+
         Exam exam = Exam.builder()
                 .title(request.getTitle())
                 .description(request.getDescription())
@@ -47,7 +99,7 @@ public class ExamService {
                 .visibility(request.getVisibility())
                 .examType(request.getExamType())
                 .status(request.getStatus())
-                .durationMinutes(request.getDurationMinutes())
+                .durationMinutes(effectiveDuration)
                 .teacher(teacher)
                 .shareLink(CodeGenerator.generateShareLink())
                 .tags(request.getTags() != null ? new ArrayList<>(request.getTags()) : new ArrayList<>())
@@ -78,6 +130,10 @@ public class ExamService {
         }
 
         Exam savedExam = examRepository.save(exam);
+        
+        // Record usage
+        subscriptionValidatorService.recordMonthlyExamCreated(teacher.getId());
+
         return mapToResponse(savedExam);
     }
 
@@ -156,6 +212,8 @@ public class ExamService {
 
     @Transactional
     public ExamResponse updateExam(Long id, ExamRequest request, User teacher) {
+        subscriptionValidatorService.validateExamEditing(teacher.getId());
+
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 

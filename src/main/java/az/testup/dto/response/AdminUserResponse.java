@@ -10,5 +10,7 @@ public record AdminUserResponse(
         Role role,
         String profilePicture,
         LocalDateTime createdAt,
-        boolean enabled
+        boolean enabled,
+        String activePlanName
 ) {}
+

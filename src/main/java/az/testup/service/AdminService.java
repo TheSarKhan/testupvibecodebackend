@@ -14,7 +14,9 @@ import az.testup.repository.ExamRepository;
 import az.testup.repository.ExamSubjectRepository;
 import az.testup.repository.SubmissionRepository;
 import az.testup.repository.UserRepository;
+import az.testup.repository.UserSubscriptionRepository;
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -37,6 +39,8 @@ public class AdminService {
     private final ExamRepository examRepository;
     private final SubmissionRepository submissionRepository;
     private final ExamSubjectRepository subjectRepository;
+    private final UserSubscriptionRepository userSubscriptionRepository;
+
 
     public AdminStatsResponse getStats() {
         long totalUsers = userRepository.count();
@@ -181,6 +185,10 @@ public class AdminService {
     }
 
     private AdminUserResponse mapToResponse(User user) {
+        String activePlanName = userSubscriptionRepository.findActiveSubscriptionByUserIdAndDate(user.getId(), LocalDateTime.now())
+                .map(sub -> sub.getPlan().getName())
+                .orElse(null);
+
         return new AdminUserResponse(
                 user.getId(),
                 user.getFullName(),
@@ -188,7 +196,9 @@ public class AdminService {
                 user.getRole(),
                 user.getProfilePicture(),
                 user.getCreatedAt(),
-                user.isEnabled()
+                user.isEnabled(),
+                activePlanName
         );
     }
+
 }
