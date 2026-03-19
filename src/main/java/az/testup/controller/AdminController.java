@@ -10,11 +10,19 @@ import az.testup.dto.request.TemplateSectionRequest;
 import az.testup.dto.response.AuditLogResponse;
 import az.testup.dto.response.BannerResponse;
 import az.testup.dto.response.NotificationLogResponse;
+import az.testup.dto.response.RevenueStatsResponse;
 import az.testup.dto.response.SubjectStatsResponse;
 import az.testup.dto.response.TemplateResponse;
 import az.testup.dto.response.TemplateSubtitleResponse;
 import az.testup.dto.response.TemplateSectionResponse;
+import az.testup.dto.request.AssignSubscriptionRequest;
+import az.testup.entity.PayriffOrder;
+import az.testup.enums.AuditAction;
+import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.AuditLogService;
+import az.testup.service.PayriffService;
+import az.testup.service.UserSubscriptionService;
 import az.testup.entity.Banner;
 import az.testup.entity.ExamSubject;
 import az.testup.entity.SubjectTopic;
@@ -39,6 +47,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -51,12 +61,165 @@ public class AdminController {
     private final TemplateService templateService;
     private final BannerRepository bannerRepository;
     private final AuditLogService auditLogService;
+    private final PayriffOrderRepository payriffOrderRepository;
+    private final UserSubscriptionRepository userSubscriptionRepository;
+    private final PayriffService payriffService;
+    private final UserSubscriptionService userSubscriptionService;
 
     // ───── Stats ─────
 
     @GetMapping("/stats")
     public ResponseEntity<AdminStatsResponse> getStats() {
         return ResponseEntity.ok(adminService.getStats());
+    }
+
+    // ───── Revenue ─────
+
+    @GetMapping("/revenue")
+    public ResponseEntity<RevenueStatsResponse> getRevenue() {
+        double total = payriffOrderRepository.totalRevenue() != null ? payriffOrderRepository.totalRevenue() : 0.0;
+        double thisMonth = payriffOrderRepository.thisMonthRevenue() != null ? payriffOrderRepository.thisMonthRevenue() : 0.0;
+        double lastMonth = payriffOrderRepository.lastMonthRevenue() != null ? payriffOrderRepository.lastMonthRevenue() : 0.0;
+        double growth = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100.0 : (thisMonth > 0 ? 100.0 : 0.0);
+        long totalPaidOrders = payriffOrderRepository.countByStatus("PAID");
+        long activeSubscriptions = userSubscriptionRepository.countActiveSubscriptions();
+
+        List<RevenueStatsResponse.MonthlyItem> monthly = new ArrayList<>();
+        for (Object[] row : payriffOrderRepository.monthlyRevenue()) {
+            monthly.add(new RevenueStatsResponse.MonthlyItem(
+                    row[0].toString(),
+                    ((Number) row[1]).doubleValue(),
+                    ((Number) row[2]).longValue()
+            ));
+        }
+        Collections.reverse(monthly); // ascending order for chart
+
+        List<RevenueStatsResponse.PlanItem> byPlan = new ArrayList<>();
+        for (Object[] row : payriffOrderRepository.revenueByPlan()) {
+            byPlan.add(new RevenueStatsResponse.PlanItem(
+                    row[0].toString(),
+                    ((Number) row[1]).doubleValue(),
+                    ((Number) row[2]).longValue()
+            ));
+        }
+
+        List<RevenueStatsResponse.RecentPayment> recent = new ArrayList<>();
+        for (PayriffOrder o : payriffOrderRepository.findTop10ByStatusOrderByCreatedAtDesc("PAID")) {
+            recent.add(new RevenueStatsResponse.RecentPayment(
+                    o.getOrderId(),
+                    o.getUser().getEmail(),
+                    o.getUser().getFullName(),
+                    o.getPlan().getName(),
+                    o.getAmount(),
+                    o.getDurationDays(),
+                    o.getCreatedAt().toString()
+            ));
+        }
+
+        return ResponseEntity.ok(new RevenueStatsResponse(
+                total, thisMonth, lastMonth,
+                Math.round(growth * 10.0) / 10.0,
+                totalPaidOrders, activeSubscriptions,
+                monthly, byPlan, recent
+        ));
+    }
+
+    @GetMapping("/revenue/pending-orders")
+    public ResponseEntity<List<Map<String, Object>>> getPendingOrders() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (PayriffOrder o : payriffOrderRepository.findByStatusOrderByCreatedAtDesc("PENDING")) {
+            result.add(Map.of(
+                    "id", o.getId(),
+                    "orderId", o.getOrderId(),
+                    "userEmail", o.getUser().getEmail(),
+                    "userName", o.getUser().getFullName(),
+                    "planName", o.getPlan().getName(),
+                    "amount", o.getAmount(),
+                    "durationDays", o.getDurationDays(),
+                    "months", o.getMonths(),
+                    "createdAt", o.getCreatedAt().toString()
+            ));
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/revenue/verify-order/{orderId}")
+    public ResponseEntity<Map<String, Object>> adminVerifyOrder(@PathVariable String orderId) {
+        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "message", "Order tapılmadı"));
+        }
+        if ("PAID".equals(order.getStatus())) {
+            return ResponseEntity.ok(Map.of("success", true, "message", "Artıq işlənib", "alreadyPaid", true));
+        }
+
+        String payriffStatus = payriffService.getOrderStatus(orderId);
+        boolean isPaid = "PAID".equals(payriffStatus) || "APPROVED".equals(payriffStatus) || "SUCCESS".equals(payriffStatus);
+
+        if (isPaid) {
+            activateOrder(order, orderId, "Admin manual verify");
+            return ResponseEntity.ok(Map.of("success", true, "payriffStatus", payriffStatus));
+        }
+
+        if ("DECLINED".equals(payriffStatus) || "FAILED".equals(payriffStatus) || "CANCELLED".equals(payriffStatus)) {
+            order.setStatus("FAILED");
+            payriffOrderRepository.save(order);
+        }
+
+        return ResponseEntity.ok(Map.of("success", false, "payriffStatus", payriffStatus));
+    }
+
+    // Force-activate regardless of Payriff status (admin knows money came in externally)
+    @PostMapping("/revenue/force-activate/{orderId}")
+    public ResponseEntity<Map<String, Object>> adminForceActivate(
+            @PathVariable String orderId,
+            @AuthenticationPrincipal UserDetails principal) {
+        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "message", "Order tapılmadı"));
+        }
+        String adminEmail = principal != null ? principal.getUsername() : "admin";
+        activateOrder(order, orderId, "Admin force-activate. Admin: " + adminEmail);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Abunəlik aktivləşdirildi"));
+    }
+
+    // Cancel a pending order (mark as FAILED without activating)
+    @PostMapping("/revenue/cancel-order/{orderId}")
+    public ResponseEntity<Map<String, Object>> adminCancelOrder(
+            @PathVariable String orderId,
+            @AuthenticationPrincipal UserDetails principal) {
+        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "message", "Order tapılmadı"));
+        }
+        if ("PAID".equals(order.getStatus())) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "PAID order ləğv edilə bilməz"));
+        }
+        order.setStatus("FAILED");
+        payriffOrderRepository.save(order);
+        String adminEmail = principal != null ? principal.getUsername() : "admin";
+        auditLogService.log(AuditAction.SUBSCRIPTION_CANCELLED, adminEmail, adminEmail,
+                "SUBSCRIPTION", order.getPlan().getName(),
+                "Admin pending order ləğv etdi. İstifadəçi: " + order.getUser().getEmail());
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    private void activateOrder(PayriffOrder order, String orderId, String logNote) {
+        order.setStatus("PAID");
+        payriffOrderRepository.save(order);
+        double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
+        AssignSubscriptionRequest req = new AssignSubscriptionRequest();
+        req.setUserId(order.getUser().getId());
+        req.setPlanId(order.getPlan().getId());
+        req.setDurationMonths(order.getMonths());
+        req.setDurationDays(order.getDurationDays());
+        req.setPaymentProvider("PAYRIFF");
+        req.setTransactionId(orderId);
+        req.setAmountPaid(economicValue);
+        userSubscriptionService.assignSubscription(req);
+        auditLogService.log(AuditAction.SUBSCRIPTION_PURCHASED,
+                "admin@system", "Admin", "SUBSCRIPTION", order.getPlan().getName(),
+                logNote + ". İstifadəçi: " + order.getUser().getEmail() + ". Məbləğ: " + order.getAmount() + " AZN. Müddət: " + order.getDurationDays() + " gün");
     }
 
     // ───── Users ─────

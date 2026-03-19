@@ -39,6 +39,10 @@ public class AuditLogService {
         Map.entry("TOPIC_ADDED", "CONTENT"),
         Map.entry("TOPIC_DELETED", "CONTENT"),
         Map.entry("NOTIFICATION_SENT", "CONTENT"),
+        Map.entry("SUBSCRIPTION_PURCHASED", "PAYMENT"),
+        Map.entry("SUBSCRIPTION_SWITCHED", "PAYMENT"),
+        Map.entry("SUBSCRIPTION_ASSIGNED_MANUAL", "PAYMENT"),
+        Map.entry("SUBSCRIPTION_CANCELLED", "PAYMENT"),
         Map.entry("SYSTEM_ERROR", "SYSTEM")
     );
 

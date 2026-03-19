@@ -13,8 +13,9 @@ public class UserSubscriptionResponse {
     private LocalDateTime endDate;
     private boolean isActive;
     private String paymentProvider;
-    private int usedMonthlyExams; // current month usage
-    private long totalExamsCount; // total exams created by user
+    private double amountPaid;
+    private int usedMonthlyExams;
+    private long totalExamsCount;
 }
 
 

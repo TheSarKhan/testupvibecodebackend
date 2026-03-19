@@ -49,3 +49,9 @@ groq:
 
 google:
   client-id: ${GOOGLE_CLIENT_ID}
+
+payriff:
+  secret-key: ${PAYRIFF_SECRET_KEY}
+
+app:
+  base-url: ${APP_BASE_URL:https://testup.az}

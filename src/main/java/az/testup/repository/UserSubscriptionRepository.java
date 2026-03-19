@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -19,4 +20,7 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
     Optional<UserSubscription> findActiveSubscriptionByUserIdAndDate(Long userId, LocalDateTime now);
 
     void deleteByUserId(Long userId);
+
+    @Query("SELECT COUNT(us) FROM UserSubscription us WHERE us.isActive = true AND us.endDate >= current_timestamp")
+    long countActiveSubscriptions();
 }

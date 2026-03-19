@@ -41,21 +41,18 @@ public class UserSubscriptionService {
     }
 
     public UserSubscriptionResponse getActiveSubscription(Long userId) {
-        Optional<UserSubscription> sub = userSubscriptionRepository.findActiveSubscriptionByUserIdAndDate(userId, LocalDateTime.now());
+        Optional<UserSubscription> sub = userSubscriptionRepository
+                .findActiveSubscriptionByUserIdAndDate(userId, LocalDateTime.now());
         return sub.map(entity -> {
             UserSubscriptionResponse response = userSubscriptionMapper.toResponse(entity);
-            
-            // Populate current month usage
             String currentMonthYear = YearMonth.now().toString();
-            int usage = subscriptionUsageRepository.findByUserSubscriptionIdAndMonthYear(entity.getId(), currentMonthYear)
+            int usage = subscriptionUsageRepository
+                    .findByUserSubscriptionIdAndMonthYear(entity.getId(), currentMonthYear)
                     .map(SubscriptionUsage::getUsedMonthlyExams)
                     .orElse(0);
             response.setUsedMonthlyExams(usage);
-            
-            // Populate total exams count
             long totalExams = examRepository.countByTeacherId(entity.getUser().getId());
             response.setTotalExamsCount(totalExams);
-            
             return response;
         }).orElse(null);
     }
@@ -65,41 +62,63 @@ public class UserSubscriptionService {
         User user = userRepository.findById(request.getUserId())
                 .orElseThrow(() -> new RuntimeException("User not found: " + request.getUserId()));
 
-        SubscriptionPlan plan = subscriptionPlanRepository.findById(request.getPlanId())
+        SubscriptionPlan newPlan = subscriptionPlanRepository.findById(request.getPlanId())
                 .orElseThrow(() -> new RuntimeException("Plan not found: " + request.getPlanId()));
 
-        Optional<UserSubscription> currentActiveOpt = userSubscriptionRepository
-                .findActiveSubscriptionByUserIdAndDate(user.getId(), LocalDateTime.now());
-
-        currentActiveOpt.ifPresent(currentActive -> {
-            currentActive.setActive(false);
-            userSubscriptionRepository.save(currentActive);
-        });
+        int months = request.getDurationMonths() != null ? request.getDurationMonths() : 1;
+        long durationDays = request.getDurationDays() != null ? request.getDurationDays() : (long) months * 30;
+        String provider = request.getPaymentProvider() != null ? request.getPaymentProvider() : "MANUAL";
+        String txId = request.getTransactionId();
+        double amountPaid = request.getAmountPaid() != null ? request.getAmountPaid() : 0.0;
 
         LocalDateTime now = LocalDateTime.now();
-        LocalDateTime endDate = now.plusMonths(request.getDurationMonths());
 
-        UserSubscription userSubscription = UserSubscription.builder()
+        Optional<UserSubscription> currentOpt = userSubscriptionRepository
+                .findActiveSubscriptionByUserIdAndDate(user.getId(), now);
+
+        if (currentOpt.isEmpty()) {
+            return save(user, newPlan, now, now.plusDays(durationDays), provider, txId, amountPaid);
+        }
+
+        UserSubscription current = currentOpt.get();
+
+        if (current.getPlan().getId().equals(newPlan.getId())) {
+            // RENEWAL: same plan — extend end date by durationDays, accumulate amountPaid
+            current.setEndDate(current.getEndDate().plusDays(durationDays));
+            current.setPaymentProvider(provider);
+            current.setTransactionId(txId);
+            current.setAmountPaid(current.getAmountPaid() + amountPaid);
+            userSubscriptionRepository.save(current);
+            return userSubscriptionMapper.toResponse(current);
+        }
+
+        // PLAN SWITCH (any direction): immediate, duration from value wallet
+        current.setActive(false);
+        userSubscriptionRepository.save(current);
+        return save(user, newPlan, now, now.plusDays(durationDays), provider, txId, amountPaid);
+    }
+
+    private UserSubscriptionResponse save(User user, SubscriptionPlan plan,
+                                           LocalDateTime start, LocalDateTime end,
+                                           String provider, String txId, double amountPaid) {
+        UserSubscription sub = UserSubscription.builder()
                 .user(user)
                 .plan(plan)
-                .startDate(now)
-                .endDate(endDate)
+                .startDate(start)
+                .endDate(end)
                 .isActive(true)
-                .paymentProvider(request.getPaymentProvider() != null ? request.getPaymentProvider() : "MANUAL")
-                .transactionId(request.getTransactionId())
+                .paymentProvider(provider)
+                .transactionId(txId)
+                .amountPaid(amountPaid)
                 .build();
-
-        userSubscription = userSubscriptionRepository.save(userSubscription);
-
-        return userSubscriptionMapper.toResponse(userSubscription);
+        return userSubscriptionMapper.toResponse(userSubscriptionRepository.save(sub));
     }
 
     @Transactional
     public void cancelSubscription(Long subscriptionId) {
-        UserSubscription userSubscription = userSubscriptionRepository.findById(subscriptionId)
+        UserSubscription sub = userSubscriptionRepository.findById(subscriptionId)
                 .orElseThrow(() -> new RuntimeException("Subscription not found: " + subscriptionId));
-        
-        userSubscription.setActive(false);
-        userSubscriptionRepository.save(userSubscription);
+        sub.setActive(false);
+        userSubscriptionRepository.save(sub);
     }
 }

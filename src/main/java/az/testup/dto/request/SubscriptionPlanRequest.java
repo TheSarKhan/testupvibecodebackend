@@ -15,6 +15,9 @@ public class SubscriptionPlanRequest {
     @Min(value = 0, message = "Price cannot be negative")
     private Double price;
 
+    @Min(value = 0, message = "Level cannot be negative")
+    private Integer level = 0;
+
     private String description;
 
     // Limits

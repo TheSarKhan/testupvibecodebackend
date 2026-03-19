@@ -22,6 +22,9 @@ public class SubscriptionPlan {
     @Column(nullable = false)
     private Double price;
 
+    @Column(nullable = false)
+    private Integer level = 0; // 0=Free, 1=Basic, 2=Limitsiz, etc.
+
     @Column(columnDefinition = "TEXT")
     private String description;
 

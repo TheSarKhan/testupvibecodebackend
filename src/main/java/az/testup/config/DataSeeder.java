@@ -104,6 +104,7 @@ public class DataSeeder implements CommandLineRunner {
             SubscriptionPlan freePlan = SubscriptionPlan.builder()
                     .name("Free")
                     .price(0.0)
+                    .level(0)
                     .description("Platformamızla tanış olmaq üçün limitsiz müddətli pulsuz plan.")
                     .monthlyExamLimit(2)
                     .maxQuestionsPerExam(20)
@@ -128,6 +129,7 @@ public class DataSeeder implements CommandLineRunner {
             SubscriptionPlan basicPlan = SubscriptionPlan.builder()
                     .name("Basic")
                     .price(29.90)
+                    .level(1)
                     .description("Fərdi müəllimlər üçün nəzərdə tutulmuş orta səviyyəli plan.")
                     .monthlyExamLimit(10)
                     .maxQuestionsPerExam(100)
@@ -152,6 +154,7 @@ public class DataSeeder implements CommandLineRunner {
             SubscriptionPlan unlimitedPlan = SubscriptionPlan.builder()
                     .name("Limitsiz")
                     .price(59.90)
+                    .level(2)
                     .description("Bütün funksionallıqlardan və məhdudiyyətsiz limitlərdən faydalanın.")
                     .monthlyExamLimit(-1)
                     .maxQuestionsPerExam(-1)
@@ -174,6 +177,19 @@ public class DataSeeder implements CommandLineRunner {
 
             subscriptionPlanRepository.saveAll(List.of(freePlan, basicPlan, unlimitedPlan));
             log.info("3 Subscription Plans (Free, Basic, Limitsiz) seeded successfully.");
+        } else {
+            // Migrate existing plans: ensure level is set correctly
+            subscriptionPlanRepository.findAll().forEach(plan -> {
+                if (plan.getLevel() == null || plan.getLevel() == 0) {
+                    if ("Basic".equalsIgnoreCase(plan.getName()) && plan.getLevel() == 0) {
+                        plan.setLevel(1);
+                        subscriptionPlanRepository.save(plan);
+                    } else if ("Limitsiz".equalsIgnoreCase(plan.getName()) && plan.getLevel() == 0) {
+                        plan.setLevel(2);
+                        subscriptionPlanRepository.save(plan);
+                    }
+                }
+            });
         }
     }
 

@@ -17,4 +17,6 @@ public class AssignSubscriptionRequest {
 
     private String paymentProvider; // e.g. "MANUAL", "EPOINT"
     private String transactionId;
+    private Double amountPaid; // economic value (credit + cash) stored on subscription
+    private Long durationDays; // explicit subscription duration in days (takes priority over durationMonths)
 }

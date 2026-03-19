@@ -6,41 +6,40 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "user_subscriptions")
+@Table(name = "payriff_orders")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class UserSubscription {
+public class PayriffOrder {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(unique = true, nullable = false)
+    private String orderId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "plan_id", nullable = false)
     private SubscriptionPlan plan;
 
     @Column(nullable = false)
-    private LocalDateTime startDate;
+    private int months;
 
     @Column(nullable = false)
-    private LocalDateTime endDate;
+    private double amount;
+
+    private long durationDays; // explicit subscription duration in days
+
+    @Column(length = 20, nullable = false)
+    private String status; // PENDING, PAID, FAILED, CANCELLED
 
     @Column(nullable = false)
-    private boolean isActive;
-
-    @Column(length = 100)
-    private String paymentProvider;
-
-    @Column(length = 100)
-    private String transactionId;
-
-    @Column(nullable = false)
-    private double amountPaid = 0.0;
+    private LocalDateTime createdAt;
 }
