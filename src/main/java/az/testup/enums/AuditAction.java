@@ -1,0 +1,16 @@
+package az.testup.enums;
+
+public enum AuditAction {
+    // Auth
+    USER_LOGIN, USER_LOGIN_FAILED, USER_REGISTERED,
+    // User management
+    USER_ROLE_CHANGED, USER_DELETED, USER_TOGGLED, USER_EXAM_ASSIGNED,
+    // Exam
+    EXAM_CREATED, EXAM_DELETED, EXAM_SITE_PUBLISHED, EXAM_SITE_UNPUBLISHED,
+    // Subject/Content
+    SUBJECT_ADDED, SUBJECT_DELETED, TOPIC_ADDED, TOPIC_DELETED,
+    // Notification
+    NOTIFICATION_SENT,
+    // System
+    SYSTEM_ERROR
+}

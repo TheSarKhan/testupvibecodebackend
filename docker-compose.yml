@@ -1,0 +1,31 @@
+name: testup
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: testup-postgres
+    environment:
+      POSTGRES_DB: testup_db
+      POSTGRES_USER: testup_user
+      POSTGRES_PASSWORD: testup_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - testup_postgres_data:/var/lib/postgresql/data
+    networks:
+      - testup-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: testup-redis
+    ports:
+      - "6380:6379"
+    networks:
+      - testup-network
+
+volumes:
+  testup_postgres_data:
+
+networks:
+  testup-network:
+    driver: bridge
