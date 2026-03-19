@@ -47,4 +47,6 @@ public class ExamResponse {
     private Long collaborativeParentId;
     /** Subjects assigned to this teacher in the collaborative exam (only for drafts) */
     private List<String> collaborativeSubjects;
+    /** Number of submitted but not fully graded submissions (OPEN_MANUAL pending) */
+    private long pendingManualCount;
 }

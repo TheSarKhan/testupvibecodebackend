@@ -17,10 +17,13 @@ import az.testup.dto.response.TemplateSubtitleResponse;
 import az.testup.dto.response.TemplateSectionResponse;
 import az.testup.dto.request.AssignSubscriptionRequest;
 import az.testup.entity.PayriffOrder;
+import az.testup.entity.User;
 import az.testup.enums.AuditAction;
 import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.UserRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.AuditLogService;
+import az.testup.service.ExamService;
 import az.testup.service.PayriffService;
 import az.testup.service.UserSubscriptionService;
 import az.testup.entity.Banner;
@@ -65,6 +68,8 @@ public class AdminController {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final PayriffService payriffService;
     private final UserSubscriptionService userSubscriptionService;
+    private final ExamService examService;
+    private final UserRepository userRepository;
 
     // ───── Stats ─────
 
@@ -128,17 +133,19 @@ public class AdminController {
     public ResponseEntity<List<Map<String, Object>>> getPendingOrders() {
         List<Map<String, Object>> result = new ArrayList<>();
         for (PayriffOrder o : payriffOrderRepository.findByStatusOrderByCreatedAtDesc("PENDING")) {
-            result.add(Map.of(
-                    "id", o.getId(),
-                    "orderId", o.getOrderId(),
-                    "userEmail", o.getUser().getEmail(),
-                    "userName", o.getUser().getFullName(),
-                    "planName", o.getPlan().getName(),
-                    "amount", o.getAmount(),
-                    "durationDays", o.getDurationDays(),
-                    "months", o.getMonths(),
-                    "createdAt", o.getCreatedAt().toString()
-            ));
+            boolean isExam = o.getExam() != null;
+            java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("id", o.getId());
+            item.put("orderId", o.getOrderId());
+            item.put("userEmail", o.getUser().getEmail());
+            item.put("userName", o.getUser().getFullName());
+            item.put("planName", isExam ? ("İmtahan: " + o.getExam().getTitle()) : o.getPlan().getName());
+            item.put("amount", o.getAmount());
+            item.put("durationDays", o.getDurationDays());
+            item.put("months", o.getMonths());
+            item.put("createdAt", o.getCreatedAt().toString());
+            item.put("isExamOrder", isExam);
+            result.add(item);
         }
         return ResponseEntity.ok(result);
     }
@@ -198,8 +205,9 @@ public class AdminController {
         order.setStatus("FAILED");
         payriffOrderRepository.save(order);
         String adminEmail = principal != null ? principal.getUsername() : "admin";
+        String targetName = order.getExam() != null ? order.getExam().getTitle() : (order.getPlan() != null ? order.getPlan().getName() : "?");
         auditLogService.log(AuditAction.SUBSCRIPTION_CANCELLED, adminEmail, adminEmail,
-                "SUBSCRIPTION", order.getPlan().getName(),
+                "ORDER", targetName,
                 "Admin pending order ləğv etdi. İstifadəçi: " + order.getUser().getEmail());
         return ResponseEntity.ok(Map.of("success", true));
     }
@@ -207,19 +215,30 @@ public class AdminController {
     private void activateOrder(PayriffOrder order, String orderId, String logNote) {
         order.setStatus("PAID");
         payriffOrderRepository.save(order);
-        double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
-        AssignSubscriptionRequest req = new AssignSubscriptionRequest();
-        req.setUserId(order.getUser().getId());
-        req.setPlanId(order.getPlan().getId());
-        req.setDurationMonths(order.getMonths());
-        req.setDurationDays(order.getDurationDays());
-        req.setPaymentProvider("PAYRIFF");
-        req.setTransactionId(orderId);
-        req.setAmountPaid(economicValue);
-        userSubscriptionService.assignSubscription(req);
-        auditLogService.log(AuditAction.SUBSCRIPTION_PURCHASED,
-                "admin@system", "Admin", "SUBSCRIPTION", order.getPlan().getName(),
-                logNote + ". İstifadəçi: " + order.getUser().getEmail() + ". Məbləğ: " + order.getAmount() + " AZN. Müddət: " + order.getDurationDays() + " gün");
+
+        if (order.getExam() != null) {
+            // Exam purchase
+            User student = order.getUser();
+            examService.purchaseExam(order.getExam().getShareLink(), student);
+            auditLogService.log(AuditAction.SUBSCRIPTION_PURCHASED,
+                    "admin@system", "Admin", "EXAM", order.getExam().getTitle(),
+                    logNote + ". İstifadəçi: " + student.getEmail() + ". Məbləğ: " + order.getAmount() + " AZN");
+        } else {
+            // Subscription purchase
+            double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
+            AssignSubscriptionRequest req = new AssignSubscriptionRequest();
+            req.setUserId(order.getUser().getId());
+            req.setPlanId(order.getPlan().getId());
+            req.setDurationMonths(order.getMonths());
+            req.setDurationDays(order.getDurationDays());
+            req.setPaymentProvider("PAYRIFF");
+            req.setTransactionId(orderId);
+            req.setAmountPaid(economicValue);
+            userSubscriptionService.assignSubscription(req);
+            auditLogService.log(AuditAction.SUBSCRIPTION_PURCHASED,
+                    "admin@system", "Admin", "SUBSCRIPTION", order.getPlan().getName(),
+                    logNote + ". İstifadəçi: " + order.getUser().getEmail() + ". Məbləğ: " + order.getAmount() + " AZN. Müddət: " + order.getDurationDays() + " gün");
+        }
     }
 
     // ───── Users ─────

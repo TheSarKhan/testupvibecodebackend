@@ -736,6 +736,7 @@ public class ExamService {
                 .collaborativeParentId(exam.getCollaborativeParentId())
                 .collaborativeSubjects(collaborativeSubjects)
                 .collaborativeTemplateSections(collaborativeTemplateSections)
+                .pendingManualCount(submissionRepository.countByExamIdAndSubmittedAtIsNotNullAndIsFullyGradedFalse(exam.getId()))
                 .build();
     }
 

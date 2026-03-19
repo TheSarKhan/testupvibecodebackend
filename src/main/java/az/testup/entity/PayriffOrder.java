@@ -25,9 +25,15 @@ public class PayriffOrder {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /** Non-null for subscription purchases */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "plan_id", nullable = false)
+    @JoinColumn(name = "plan_id")
     private SubscriptionPlan plan;
+
+    /** Non-null for exam purchases */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "exam_id")
+    private Exam exam;
 
     @Column(nullable = false)
     private int months;

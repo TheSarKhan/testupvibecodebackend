@@ -1,16 +1,20 @@
 package az.testup.controller;
 
 import az.testup.dto.request.AssignSubscriptionRequest;
+import az.testup.entity.Exam;
 import az.testup.entity.PayriffOrder;
 import az.testup.entity.SubscriptionPlan;
 import az.testup.entity.User;
 import az.testup.entity.UserSubscription;
+import az.testup.repository.ExamPurchaseRepository;
+import az.testup.repository.ExamRepository;
 import az.testup.repository.PayriffOrderRepository;
 import az.testup.repository.SubscriptionPlanRepository;
 import az.testup.repository.UserRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.enums.AuditAction;
 import az.testup.service.AuditLogService;
+import az.testup.service.ExamService;
 import az.testup.service.PayriffService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +40,9 @@ public class PaymentController {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final UserSubscriptionService userSubscriptionService;
     private final AuditLogService auditLogService;
+    private final ExamRepository examRepository;
+    private final ExamPurchaseRepository examPurchaseRepository;
+    private final ExamService examService;
 
     @PostMapping("/initiate")
     public ResponseEntity<?> initiatePayment(
@@ -153,6 +160,9 @@ public class PaymentController {
         }
 
         if ("PAID".equals(order.getStatus())) {
+            if (order.getExam() != null) {
+                return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true, "examShareLink", order.getExam().getShareLink()));
+            }
             return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true));
         }
 
@@ -167,6 +177,13 @@ public class PaymentController {
             order.setStatus("PAID");
             payriffOrderRepository.save(order);
 
+            // Exam purchase
+            if (order.getExam() != null) {
+                examService.purchaseExam(order.getExam().getShareLink(), user);
+                return ResponseEntity.ok(Map.of("status", "PAID", "examShareLink", order.getExam().getShareLink()));
+            }
+
+            // Subscription purchase
             AssignSubscriptionRequest request = new AssignSubscriptionRequest();
             request.setUserId(user.getId());
             request.setPlanId(order.getPlan().getId());
@@ -174,7 +191,6 @@ public class PaymentController {
             request.setDurationDays(order.getDurationDays());
             request.setPaymentProvider("PAYRIFF");
             request.setTransactionId(orderId);
-            // amountPaid = economic value = durationDays × daily rate (used for future credit calculations)
             double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
             request.setAmountPaid(economicValue);
             boolean isSwitching = userSubscriptionRepository
@@ -196,5 +212,54 @@ public class PaymentController {
         }
 
         return ResponseEntity.ok(Map.of("status", payriffStatus));
+    }
+
+    @PostMapping("/initiate-exam")
+    public ResponseEntity<?> initiateExamPayment(
+            @AuthenticationPrincipal UserDetails principal,
+            @RequestBody Map<String, Object> body) {
+
+        if (principal == null) {
+            return ResponseEntity.status(401).body(Map.of("message", "Giriş tələb olunur"));
+        }
+
+        String shareLink = body.get("shareLink").toString();
+
+        User user = userRepository.findByEmail(principal.getUsername())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Exam exam = examRepository.findByShareLinkAndDeletedFalse(shareLink)
+                .orElseThrow(() -> new RuntimeException("Exam not found"));
+
+        if (exam.getPrice() == null || exam.getPrice().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Bu imtahan pulsuzdur"));
+        }
+
+        // Already purchased
+        if (examPurchaseRepository.existsByUserIdAndExamId(user.getId(), exam.getId())) {
+            return ResponseEntity.ok(Map.of("alreadyPurchased", true, "shareLink", shareLink));
+        }
+
+        double amount = exam.getPrice().doubleValue();
+        String description = exam.getTitle() + " — imtahan";
+        PayriffService.CreateInvoiceResult result = payriffService.createOrder(amount, description);
+
+        PayriffOrder order = PayriffOrder.builder()
+                .orderId(result.orderId())
+                .user(user)
+                .exam(exam)
+                .months(0)
+                .durationDays(0)
+                .amount(amount)
+                .status("PENDING")
+                .createdAt(LocalDateTime.now())
+                .build();
+        payriffOrderRepository.save(order);
+
+        return ResponseEntity.ok(Map.of(
+                "orderId", result.orderId(),
+                "paymentUrl", result.paymentUrl(),
+                "amount", amount
+        ));
     }
 }
