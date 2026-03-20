@@ -334,27 +334,19 @@ public class SubmissionService {
                                   && p.getRightItem() != null && !p.getRightItem().isBlank())
                         .collect(Collectors.toList());
                     if (!linkedPairs.isEmpty()) {
-                        // Text lookup maps: pairId → text content
-                        Map<Long, String> leftTextById = new HashMap<>();
-                        Map<Long, String> rightTextById = new HashMap<>();
-                        for (MatchingPair p : allPairs) {
-                            if (p.getLeftItem() != null) leftTextById.put(p.getId(), p.getLeftItem());
-                            if (p.getRightItem() != null) rightTextById.put(p.getId(), p.getRightItem());
-                        }
-                        // Set of valid correct connections by text: "leftText|||rightText"
-                        java.util.Set<String> correctConnections = new java.util.HashSet<>();
-                        for (MatchingPair lp : linkedPairs) {
-                            correctConnections.add(lp.getLeftItem() + "|||" + lp.getRightItem());
-                        }
-                        // Count unique correct student connections using text lookup
-                        java.util.Set<String> counted = new java.util.HashSet<>();
+                        // ID-based grading: a student answer is correct when leftItemId == rightItemId
+                        // and that pair is a linked pair. This is independent of text content,
+                        // so teacher edits to pair text do not affect past submission grades.
+                        java.util.Set<Long> linkedPairIds = linkedPairs.stream()
+                            .map(MatchingPair::getId)
+                            .collect(Collectors.toSet());
+                        java.util.Set<Long> counted = new java.util.HashSet<>();
                         for (MatchingPairAnswerRequest req : studentPairs) {
                             if (req.getLeftItemId() == null || req.getRightItemId() == null) continue;
-                            String leftText = leftTextById.get(req.getLeftItemId());
-                            String rightText = rightTextById.get(req.getRightItemId());
-                            if (leftText == null || rightText == null) continue;
-                            String key = leftText + "|||" + rightText;
-                            if (correctConnections.contains(key)) counted.add(key);
+                            if (req.getLeftItemId().equals(req.getRightItemId())
+                                    && linkedPairIds.contains(req.getLeftItemId())) {
+                                counted.add(req.getLeftItemId());
+                            }
                         }
                         long correctCount = counted.size();
                         if (isTemplateExam) {
