@@ -137,6 +137,26 @@ public class ExamController {
     }
 
 
+    @GetMapping("/my-purchased-exams")
+    public ResponseEntity<List<String>> getMyPurchasedExams(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) return ResponseEntity.ok(List.of());
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
+        if (user == null) return ResponseEntity.ok(List.of());
+        return ResponseEntity.ok(examService.getMyPurchasedExamShareLinks(user));
+    }
+
+    @GetMapping("/{shareLink}/my-status")
+    public ResponseEntity<Map<String, Object>> getMyExamStatus(
+            @PathVariable String shareLink,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) return ResponseEntity.ok(Map.of("hasUnusedPurchase", false));
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
+        if (user == null) return ResponseEntity.ok(Map.of("hasUnusedPurchase", false));
+        boolean hasUnused = examService.hasPurchasedByShareLink(shareLink, user);
+        return ResponseEntity.ok(Map.of("hasUnusedPurchase", hasUnused));
+    }
+
     private User getCurrentUser(UserDetails userDetails) {
         if (userDetails == null) {
             throw new UnauthorizedException("İstifadəçi tapılmadı");

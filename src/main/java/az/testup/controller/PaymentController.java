@@ -235,8 +235,8 @@ public class PaymentController {
             return ResponseEntity.badRequest().body(Map.of("message", "Bu imtahan pulsuzdur"));
         }
 
-        // Already purchased
-        if (examPurchaseRepository.existsByUserIdAndExamId(user.getId(), exam.getId())) {
+        // Has unused purchase (paid more times than submitted) — no need to pay again, just start
+        if (examService.hasUnusedPurchase(exam, user)) {
             return ResponseEntity.ok(Map.of("alreadyPurchased", true, "shareLink", shareLink));
         }
 

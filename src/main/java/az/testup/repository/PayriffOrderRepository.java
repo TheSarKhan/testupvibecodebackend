@@ -3,12 +3,17 @@ package az.testup.repository;
 import az.testup.entity.PayriffOrder;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
 
 public interface PayriffOrderRepository extends JpaRepository<PayriffOrder, Long> {
     Optional<PayriffOrder> findByOrderId(String orderId);
+    long countByUserIdAndExamIdAndStatus(Long userId, Long examId, String status);
+
+    @Query("SELECT o FROM PayriffOrder o JOIN FETCH o.exam e WHERE o.user.id = :userId AND o.exam IS NOT NULL AND o.status = :status AND e.deleted = false")
+    List<PayriffOrder> findPaidExamOrders(@Param("userId") Long userId, @Param("status") String status);
 
     long countByStatus(String status);
 

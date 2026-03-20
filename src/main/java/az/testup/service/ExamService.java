@@ -9,6 +9,7 @@ import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.entity.TemplateSection;
 import az.testup.entity.ExamPurchase;
+import az.testup.entity.PayriffOrder;
 import az.testup.entity.StudentSavedExam;
 import az.testup.enums.AuditAction;
 import az.testup.enums.ExamStatus;
@@ -38,6 +39,7 @@ public class ExamService {
     private final ExamCollaboratorRepository examCollaboratorRepository;
     private final SubmissionRepository submissionRepository;
     private final AuditLogService auditLogService;
+    private final PayriffOrderRepository payriffOrderRepository;
 
     public Exam getExamEntityById(Long id) {
         return examRepository.findById(id)
@@ -212,6 +214,45 @@ public class ExamService {
             return true; // free exam
         }
         return examPurchaseRepository.existsByUserIdAndExamId(user.getId(), exam.getId());
+    }
+
+    /**
+     * Returns true if the user has an unused exam purchase (paid more times than submitted).
+     * Each completed submission "consumes" one purchase.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasUnusedPurchase(Exam exam, User user) {
+        if (exam.getPrice() == null || exam.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0) {
+            return true; // free exam — always accessible
+        }
+        long paid = payriffOrderRepository.countByUserIdAndExamIdAndStatus(user.getId(), exam.getId(), "PAID");
+        long submitted = submissionRepository.countByExamIdAndStudentIdAndSubmittedAtIsNotNull(exam.getId(), user.getId());
+        return paid > submitted;
+    }
+
+    /**
+     * Returns true if the user has an unused purchase for the exam identified by shareLink.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasPurchasedByShareLink(String shareLink, User user) {
+        Exam exam = examRepository.findByShareLinkAndDeletedFalse(shareLink)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        return hasUnusedPurchase(exam, user);
+    }
+
+    /**
+     * Returns shareLinks of exams the user has an unused purchase for (can start right now).
+     */
+    @Transactional(readOnly = true)
+    public List<String> getMyPurchasedExamShareLinks(User user) {
+        return payriffOrderRepository.findPaidExamOrders(user.getId(), "PAID")
+                .stream()
+                .map(PayriffOrder::getExam)
+                .filter(Objects::nonNull)
+                .distinct()
+                .filter(e -> hasUnusedPurchase(e, user))
+                .map(Exam::getShareLink)
+                .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)

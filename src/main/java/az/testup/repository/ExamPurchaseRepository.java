@@ -10,4 +10,5 @@ public interface ExamPurchaseRepository extends JpaRepository<ExamPurchase, Long
     Optional<ExamPurchase> findByUserIdAndExamId(Long userId, Long examId);
     List<ExamPurchase> findByExamId(Long examId);
     boolean existsByUserIdAndExamId(Long userId, Long examId);
+    List<ExamPurchase> findByUserId(Long userId);
 }
