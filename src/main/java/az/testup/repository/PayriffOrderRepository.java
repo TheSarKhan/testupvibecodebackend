@@ -2,14 +2,32 @@ package az.testup.repository;
 
 import az.testup.entity.PayriffOrder;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 public interface PayriffOrderRepository extends JpaRepository<PayriffOrder, Long> {
     Optional<PayriffOrder> findByOrderId(String orderId);
+
+    /**
+     * Atomically transitions an order from PENDING to PROCESSING.
+     * Returns 1 if the update succeeded (this thread "won"), 0 if another thread
+     * already claimed the order. Prevents double-activation on concurrent verify calls.
+     */
+    @Modifying
+    @Query("UPDATE PayriffOrder o SET o.status = 'PROCESSING' WHERE o.orderId = :orderId AND o.status = 'PENDING'")
+    int claimForProcessing(@Param("orderId") String orderId);
+
+    /**
+     * Finds orders that have been stuck in PENDING or PROCESSING for longer than the
+     * given cutoff time, so the scheduler can recover abandoned payments.
+     */
+    @Query("SELECT o FROM PayriffOrder o WHERE o.status IN ('PENDING', 'PROCESSING') AND o.createdAt < :cutoff")
+    List<PayriffOrder> findStuckOrders(@Param("cutoff") LocalDateTime cutoff);
     long countByUserIdAndExamIdAndStatus(Long userId, Long examId, String status);
 
     @Query("SELECT o FROM PayriffOrder o JOIN FETCH o.exam e WHERE o.user.id = :userId AND o.exam IS NOT NULL AND o.status = :status AND e.deleted = false")

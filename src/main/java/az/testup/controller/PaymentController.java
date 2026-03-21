@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -137,6 +138,7 @@ public class PaymentController {
     }
 
     @PostMapping("/verify")
+    @Transactional
     public ResponseEntity<?> verifyPayment(
             @AuthenticationPrincipal UserDetails principal,
             @RequestBody Map<String, Object> body) {
@@ -159,11 +161,20 @@ public class PaymentController {
             return ResponseEntity.status(403).body(Map.of("message", "Bu əməliyyat üçün icazəniz yoxdur"));
         }
 
+        // Already fully processed — return early without hitting Payriff API
         if ("PAID".equals(order.getStatus())) {
             if (order.getExam() != null) {
                 return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true, "examShareLink", order.getExam().getShareLink()));
             }
             return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true));
+        }
+
+        // Atomically claim the order for processing (PENDING → PROCESSING).
+        // If 0 rows updated, another request is already handling it — return current status.
+        int claimed = payriffOrderRepository.claimForProcessing(orderId);
+        if (claimed == 0) {
+            // Either already PROCESSING (concurrent request) or FAILED — return current status
+            return ResponseEntity.ok(Map.of("status", order.getStatus()));
         }
 
         String payriffStatus = payriffService.getOrderStatus(orderId);
@@ -208,8 +219,11 @@ public class PaymentController {
 
         if ("DECLINED".equals(payriffStatus) || "FAILED".equals(payriffStatus) || "CANCELLED".equals(payriffStatus)) {
             order.setStatus("FAILED");
-            payriffOrderRepository.save(order);
+        } else {
+            // Unknown or still pending at Payriff — roll back to PENDING so it can be retried
+            order.setStatus("PENDING");
         }
+        payriffOrderRepository.save(order);
 
         return ResponseEntity.ok(Map.of("status", payriffStatus));
     }
