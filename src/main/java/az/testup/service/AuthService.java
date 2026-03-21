@@ -16,15 +16,21 @@ import az.testup.repository.UserRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    private static final String RESET_OTP_PREFIX = "pwd_reset:";
+    private static final long OTP_TTL_MINUTES = 15;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -32,6 +38,8 @@ public class AuthService {
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final AuditLogService auditLogService;
+    private final RedisTemplate<String, String> redisTemplate;
+    private final EmailService emailService;
 
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
@@ -130,6 +138,51 @@ public class AuthService {
         }
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+    }
+
+    /**
+     * Generates a 6-digit OTP, stores it in Redis for 15 minutes, and sends it to the user's email.
+     * Always returns silently even if the email is not found (prevents account enumeration).
+     */
+    public void sendPasswordResetOtp(String email) {
+        Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isEmpty()) return;
+        User user = userOpt.get();
+        if (user.getPassword() == null) return; // Google-only accounts cannot reset password
+
+        String otp = String.format("%06d", new Random().nextInt(1_000_000));
+        redisTemplate.opsForValue().set(RESET_OTP_PREFIX + email, otp, OTP_TTL_MINUTES, TimeUnit.MINUTES);
+
+        String body = "Şifrənizi sıfırlamaq üçün aşağıdakı kodu istifadə edin:"
+                + "<div style='font-size:36px;font-weight:bold;letter-spacing:10px;text-align:center;"
+                + "color:#4f46e5;padding:24px 0;'>" + otp + "</div>"
+                + "Bu kod <strong>" + OTP_TTL_MINUTES + " dəqiqə</strong> ərzində etibarlıdır.<br><br>"
+                + "Əgər bu sorğunu siz göndərməmisinizsə, bu mesajı nəzərə almayın.";
+        emailService.sendGmail(email, user.getFullName(),
+                "Şifrə Sıfırlama — testup.az",
+                emailService.buildHtml("Şifrə Sıfırlama Kodu", body),
+                null);
+    }
+
+    /**
+     * Verifies the OTP and sets a new password. Deletes the OTP from Redis on success.
+     */
+    public void resetPassword(String email, String otp, String newPassword) {
+        String stored = redisTemplate.opsForValue().get(RESET_OTP_PREFIX + email);
+        if (stored == null) {
+            throw new BadRequestException("Kodun müddəti bitib və ya etibarsızdır");
+        }
+        if (!stored.equals(otp)) {
+            throw new BadRequestException("Kod yanlışdır");
+        }
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("İstifadəçi tapılmadı"));
+        if (user.getPassword() == null) {
+            throw new BadRequestException("Google hesabı şifrə sıfırlamasını dəstəkləmir");
+        }
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+        redisTemplate.delete(RESET_OTP_PREFIX + email);
     }
 
     public AuthResponse refreshToken(String refreshToken) {

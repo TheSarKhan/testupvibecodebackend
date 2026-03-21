@@ -71,6 +71,22 @@ public class AuthController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    public record ForgotPasswordRequest(@NotBlank String email) {}
+    public record ResetPasswordRequest(@NotBlank String email, @NotBlank String otp, @NotBlank String newPassword) {}
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(@RequestBody ForgotPasswordRequest req) {
+        authService.sendPasswordResetOtp(req.email());
+        return ResponseEntity.ok(Map.of("message",
+                "Əgər bu e-poçt sistemdə mövcuddursa, şifrə sıfırlama kodu göndərildi"));
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(@RequestBody ResetPasswordRequest req) {
+        authService.resetPassword(req.email(), req.otp(), req.newPassword());
+        return ResponseEntity.ok(Map.of("message", "Şifrə uğurla yeniləndi"));
+    }
+
     @PostMapping("/change-password")
     public ResponseEntity<Void> changePassword(
             @Valid @RequestBody ChangePasswordRequest request,
