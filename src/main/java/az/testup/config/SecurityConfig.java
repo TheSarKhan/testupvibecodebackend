@@ -42,6 +42,7 @@ public class SecurityConfig {
                     "/api/health",
                     "/api/payment/initiate",
                     "/api/payment/verify",
+                    "/api/payment/callback",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html"

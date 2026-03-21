@@ -2,6 +2,8 @@ package az.testup.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -13,6 +15,8 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class PayriffService {
+
+    private static final Logger log = LoggerFactory.getLogger(PayriffService.class);
 
     private static final String V3_BASE = "https://api.payriff.com/api/v3";
 
@@ -80,12 +84,17 @@ public class PayriffService {
         );
 
         JsonNode json = response.getBody();
+        log.info("Payriff getOrderStatus raw response for {}: {}", orderId, json);
         if (json == null || !"00000".equals(json.path("code").asText())) {
+            log.warn("Payriff getOrderStatus bad code for {}: {}", orderId, json);
             return "UNKNOWN";
         }
 
-        return json.path("payload").path("paymentStatus").asText(
-                json.path("payload").path("status").asText("UNKNOWN")
+        JsonNode payload = json.path("payload");
+        String status = payload.path("paymentStatus").asText(
+                payload.path("status").asText("UNKNOWN")
         );
+        log.info("Payriff status for orderId {}: {}", orderId, status);
+        return status;
     }
 }
