@@ -3,8 +3,10 @@ package az.testup.controller;
 import az.testup.dto.request.ExamRequest;
 import az.testup.dto.response.ExamResponse;
 import az.testup.entity.Exam;
+import az.testup.entity.PayriffOrder;
 import az.testup.entity.User;
 import az.testup.exception.UnauthorizedException;
+import az.testup.repository.PayriffOrderRepository;
 import az.testup.repository.UserRepository;
 import az.testup.service.ExamService;
 import az.testup.service.PdfService;
@@ -16,8 +18,10 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/exams")
@@ -28,6 +32,7 @@ public class ExamController {
     private final UserRepository userRepository;
     private final PdfService pdfService;
     private final SubscriptionValidatorService subscriptionValidatorService;
+    private final PayriffOrderRepository payriffOrderRepository;
 
 
     @PostMapping
@@ -144,6 +149,37 @@ public class ExamController {
         User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
         if (user == null) return ResponseEntity.ok(List.of());
         return ResponseEntity.ok(examService.getMyPurchasedExamShareLinks(user));
+    }
+
+    @GetMapping("/my-purchased-exam-details")
+    public ResponseEntity<List<Map<String, Object>>> getMyPurchasedExamDetails(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) return ResponseEntity.ok(List.of());
+        User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
+        if (user == null) return ResponseEntity.ok(List.of());
+        List<PayriffOrder> orders = payriffOrderRepository.findPaidExamOrders(user.getId(), "PAID");
+        List<Map<String, Object>> result = orders.stream()
+            .filter(order -> order.getExam() != null && examService.hasUnusedPurchase(order.getExam(), user))
+            .collect(Collectors.toMap(
+                order -> order.getExam().getId(),
+                order -> order,
+                (existing, replacement) -> existing // keep first (earliest) order per exam
+            ))
+            .values().stream()
+            .map(order -> {
+                Exam exam = order.getExam();
+                Map<String, Object> item = new HashMap<>();
+                item.put("orderId", order.getOrderId());
+                item.put("purchasedAt", order.getCreatedAt());
+                item.put("amountPaid", order.getAmount());
+                item.put("examId", exam.getId());
+                item.put("title", exam.getTitle());
+                item.put("shareLink", exam.getShareLink());
+                item.put("durationMinutes", exam.getDurationMinutes());
+                item.put("description", exam.getDescription());
+                return item;
+            }).collect(Collectors.toList());
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/{shareLink}/my-status")
