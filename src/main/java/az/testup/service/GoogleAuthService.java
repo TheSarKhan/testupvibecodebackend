@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -37,22 +38,36 @@ public class GoogleAuthService {
     private String googleClientId;
 
     /**
-     * Verifies a Google ID token and returns user info from Google.
+     * Verifies a Google access token and returns user info (sub, email, name, picture).
      */
-    public Map<String, Object> verifyGoogleToken(String idToken) {
-        String url = "https://www.googleapis.com/oauth2/v3/tokeninfo?id_token=" + idToken;
+    public Map<String, Object> verifyGoogleToken(String accessToken) {
         try {
-            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
-            Map<String, Object> tokenInfo = response.getBody();
-            if (tokenInfo == null) {
+            // 1. Verify token via tokeninfo — checks azp (authorized party = client ID)
+            String tokenInfoUrl = "https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=" + accessToken;
+            ResponseEntity<Map> tokenInfoResp = restTemplate.getForEntity(tokenInfoUrl, Map.class);
+            Map<String, Object> tokenInfo = tokenInfoResp.getBody();
+            if (tokenInfo == null || tokenInfo.containsKey("error_description")) {
                 throw new UnauthorizedException("Google token doğrulaması uğursuz oldu");
             }
-            // Verify audience matches our client ID
-            String aud = (String) tokenInfo.get("aud");
-            if (!googleClientId.equals(aud)) {
+            String azp = (String) tokenInfo.get("azp");
+            if (!googleClientId.equals(azp)) {
                 throw new UnauthorizedException("Google token etibarsızdır");
             }
-            return tokenInfo;
+
+            // 2. Fetch user info (name, picture, sub, email)
+            String userInfoUrl = "https://www.googleapis.com/oauth2/v1/userinfo?access_token=" + accessToken;
+            ResponseEntity<Map> userInfoResp = restTemplate.getForEntity(userInfoUrl, Map.class);
+            Map<String, Object> userInfo = userInfoResp.getBody();
+            if (userInfo == null) {
+                throw new UnauthorizedException("İstifadəçi məlumatları alına bilmədi");
+            }
+
+            // Normalize: Google userinfo returns "id" but our code expects "sub"
+            Map<String, Object> result = new HashMap<>(userInfo);
+            if (userInfo.containsKey("id") && !userInfo.containsKey("sub")) {
+                result.put("sub", userInfo.get("id"));
+            }
+            return result;
         } catch (UnauthorizedException e) {
             throw e;
         } catch (Exception e) {
@@ -120,7 +135,7 @@ public class GoogleAuthService {
      * POST /api/auth/google/complete
      * Completes registration for a new Google user with chosen role.
      */
-    public AuthResponse completeGoogleRegistration(String idToken, String role, boolean termsAccepted) {
+    public AuthResponse completeGoogleRegistration(String idToken, String role, String phoneNumber, boolean termsAccepted) {
         if (!termsAccepted) {
             throw new BadRequestException("İstifadə şərtlərini qəbul etməlisiniz");
         }
@@ -152,6 +167,7 @@ public class GoogleAuthService {
                 .password(null)
                 .googleSub(googleSub)
                 .profilePicture(picture)
+                .phoneNumber(phoneNumber)
                 .role(userRole)
                 .build();
 

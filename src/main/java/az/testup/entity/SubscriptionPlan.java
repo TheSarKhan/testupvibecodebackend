@@ -48,4 +48,10 @@ public class SubscriptionPlan {
     private boolean useQuestionBank;
     private boolean createQuestionBank;
     private boolean importQuestionsFromPdf;
+
+    /** Monthly AI question generation limit. null/0 = disabled, -1 = unlimited */
+    private Integer monthlyAiQuestionLimit;
+
+    /** Whether AI exam generation is allowed */
+    private boolean useAiExamGeneration;
 }

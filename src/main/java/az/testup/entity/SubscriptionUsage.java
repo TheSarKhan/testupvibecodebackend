@@ -34,4 +34,8 @@ public class SubscriptionUsage {
     @Builder.Default
     @Column(nullable = false)
     private int usedSavedExams = 0;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private int usedAiQuestions = 0;
 }

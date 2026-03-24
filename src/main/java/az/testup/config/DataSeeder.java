@@ -85,7 +85,6 @@ public class DataSeeder implements CommandLineRunner {
     );
 
     @Override
-    @Transactional
     public void run(String... args) {
         seedSubscriptionPlans();
         seedAdmin();
@@ -98,7 +97,8 @@ public class DataSeeder implements CommandLineRunner {
         seedBanners();
     }
 
-    private void seedSubscriptionPlans() {
+    @Transactional
+    public void seedSubscriptionPlans() {
         if (subscriptionPlanRepository.count() == 0) {
             // Free Plan
             SubscriptionPlan freePlan = SubscriptionPlan.builder()
@@ -123,6 +123,8 @@ public class DataSeeder implements CommandLineRunner {
                     .useQuestionBank(false)
                     .createQuestionBank(false)
                     .importQuestionsFromPdf(false)
+                    .monthlyAiQuestionLimit(0)
+                    .useAiExamGeneration(false)
                     .build();
 
             // Basic Plan
@@ -148,6 +150,8 @@ public class DataSeeder implements CommandLineRunner {
                     .useQuestionBank(true)
                     .createQuestionBank(false)
                     .importQuestionsFromPdf(false)
+                    .monthlyAiQuestionLimit(30)
+                    .useAiExamGeneration(false)
                     .build();
 
             // Unlimited Plan
@@ -173,22 +177,41 @@ public class DataSeeder implements CommandLineRunner {
                     .useQuestionBank(true)
                     .createQuestionBank(true)
                     .importQuestionsFromPdf(true)
+                    .monthlyAiQuestionLimit(-1)
+                    .useAiExamGeneration(true)
                     .build();
 
             subscriptionPlanRepository.saveAll(List.of(freePlan, basicPlan, unlimitedPlan));
             log.info("3 Subscription Plans (Free, Basic, Limitsiz) seeded successfully.");
         } else {
-            // Migrate existing plans: ensure level is set correctly
+            // Migrate existing plans: ensure level and new AI fields are set correctly
             subscriptionPlanRepository.findAll().forEach(plan -> {
-                if (plan.getLevel() == null || plan.getLevel() == 0) {
-                    if ("Basic".equalsIgnoreCase(plan.getName()) && plan.getLevel() == 0) {
-                        plan.setLevel(1);
-                        subscriptionPlanRepository.save(plan);
-                    } else if ("Limitsiz".equalsIgnoreCase(plan.getName()) && plan.getLevel() == 0) {
-                        plan.setLevel(2);
-                        subscriptionPlanRepository.save(plan);
+                boolean changed = false;
+
+                if ("Free".equalsIgnoreCase(plan.getName())) {
+                    if (plan.getLevel() == null) { plan.setLevel(0); changed = true; }
+                    if (!Integer.valueOf(0).equals(plan.getMonthlyAiQuestionLimit()) || plan.isUseAiExamGeneration()) {
+                        plan.setMonthlyAiQuestionLimit(0);
+                        plan.setUseAiExamGeneration(false);
+                        changed = true;
+                    }
+                } else if ("Basic".equalsIgnoreCase(plan.getName())) {
+                    if (plan.getLevel() == null || plan.getLevel() != 1) { plan.setLevel(1); changed = true; }
+                    if (!Integer.valueOf(30).equals(plan.getMonthlyAiQuestionLimit()) || plan.isUseAiExamGeneration()) {
+                        plan.setMonthlyAiQuestionLimit(30);
+                        plan.setUseAiExamGeneration(false);
+                        changed = true;
+                    }
+                } else if ("Limitsiz".equalsIgnoreCase(plan.getName())) {
+                    if (plan.getLevel() == null || plan.getLevel() != 2) { plan.setLevel(2); changed = true; }
+                    if (!Integer.valueOf(-1).equals(plan.getMonthlyAiQuestionLimit()) || !plan.isUseAiExamGeneration()) {
+                        plan.setMonthlyAiQuestionLimit(-1);
+                        plan.setUseAiExamGeneration(true);
+                        changed = true;
                     }
                 }
+
+                if (changed) subscriptionPlanRepository.save(plan);
             });
         }
     }
@@ -293,8 +316,9 @@ public class DataSeeder implements CommandLineRunner {
      * Step 1: Normalize old enum values (RIYAZIYYAT → Riyaziyyat) in exams.subject column.
      * Step 2: Copy non-null subject values into exam_subject_list where not already present.
      */
+    @Transactional
     @SuppressWarnings("unchecked")
-    private void migrateExamSubjectsToList() {
+    public void migrateExamSubjectsToList() {
         // Guard: if 'subject' column was already dropped, migration is done
         Number colCount = (Number) entityManager.createNativeQuery(
                 "SELECT COUNT(*) FROM information_schema.columns " +

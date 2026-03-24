@@ -7,6 +7,7 @@ import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.enums.ExamStatus;
+import az.testup.enums.Role;
 import az.testup.util.FormulaEvaluator;
 import az.testup.enums.ExamVisibility;
 import az.testup.enums.QuestionType;
@@ -56,6 +57,11 @@ public class SubmissionService {
 
         if (exam.getStatus() == ExamStatus.CANCELLED || exam.getStatus() == ExamStatus.DRAFT) {
             throw new BadRequestException("Bu imtahan hazırda bağlıdır. Müəllimlə əlaqə saxlayın.");
+        }
+
+        // Teachers and admins cannot take exams
+        if (student != null && (student.getRole() == Role.TEACHER || student.getRole() == Role.ADMIN)) {
+            throw new BadRequestException("Müəllimlər və adminlər imtahan işləyə bilməz.");
         }
 
         if (exam.getVisibility() == ExamVisibility.PRIVATE) {

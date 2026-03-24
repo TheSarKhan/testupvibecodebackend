@@ -50,24 +50,25 @@ public class AuthController {
 
     // ── Google OAuth2 ──
 
-    public record GoogleAuthRequest(@NotBlank String googleToken) {}
+    public record GoogleAuthRequest(@NotBlank String accessToken) {}
 
     public record GoogleCompleteRequest(
-            @NotBlank String googleToken,
+            @NotBlank String accessToken,
             @NotBlank String role,
+            @NotBlank String phoneNumber,
             boolean termsAccepted
     ) {}
 
     @PostMapping("/google")
     public ResponseEntity<Map<String, Object>> googleAuth(@RequestBody GoogleAuthRequest req) {
-        Map<String, Object> result = googleAuthService.handleGoogleAuth(req.googleToken());
+        Map<String, Object> result = googleAuthService.handleGoogleAuth(req.accessToken());
         return ResponseEntity.ok(result);
     }
 
     @PostMapping("/google/complete")
     public ResponseEntity<AuthResponse> googleComplete(@RequestBody GoogleCompleteRequest req) {
         AuthResponse response = googleAuthService.completeGoogleRegistration(
-                req.googleToken(), req.role(), req.termsAccepted());
+                req.accessToken(), req.role(), req.phoneNumber(), req.termsAccepted());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

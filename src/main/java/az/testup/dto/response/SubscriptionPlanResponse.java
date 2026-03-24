@@ -31,4 +31,7 @@ public class SubscriptionPlanResponse {
     private boolean useQuestionBank;
     private boolean createQuestionBank;
     private boolean importQuestionsFromPdf;
+
+    private Integer monthlyAiQuestionLimit;
+    private boolean useAiExamGeneration;
 }

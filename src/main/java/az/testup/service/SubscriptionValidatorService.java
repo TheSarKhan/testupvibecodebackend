@@ -44,6 +44,7 @@ public class SubscriptionValidatorService {
                             .monthYear(currentMonthYear)
                             .usedMonthlyExams(0)
                             .usedSavedExams(0)
+                            .usedAiQuestions(0)
                             .build();
                     return subscriptionUsageRepository.save(newUsage);
                 });
@@ -204,5 +205,45 @@ public class SubscriptionValidatorService {
         if (!subscription.getPlan().isImportQuestionsFromPdf()) {
             throw new SubscriptionLimitExceededException("PDF-dən çoxlu sual əlavə etmək xüsusiyyəti cari planınızda mövcud deyil.");
         }
+    }
+
+    public void validateAiExamGeneration(Long userId) {
+        if (isAdmin(userId)) return;
+        UserSubscription subscription = getActiveSubscription(userId);
+        if (!subscription.getPlan().isUseAiExamGeneration()) {
+            throw new SubscriptionLimitExceededException("AI ilə imtahan yaratmaq xüsusiyyəti cari planınızda mövcud deyil.");
+        }
+    }
+
+    /** Checks monthly AI question limit (does NOT record — call recordAiQuestions after success). */
+    public void validateAiQuestions(Long userId, int count) {
+        if (isAdmin(userId)) return;
+        UserSubscription subscription = getActiveSubscription(userId);
+        SubscriptionPlan plan = subscription.getPlan();
+        Integer limit = plan.getMonthlyAiQuestionLimit();
+        if (limit == null || limit == 0) {
+            throw new SubscriptionLimitExceededException("AI ilə sual yaratmaq xüsusiyyəti cari planınızda mövcud deyil.");
+        }
+        if (limit != -1) {
+            SubscriptionUsage usage = getCurrentUsage(subscription);
+            if (usage.getUsedAiQuestions() + count > limit) {
+                int remaining = Math.max(0, limit - usage.getUsedAiQuestions());
+                throw new SubscriptionLimitExceededException(
+                        "Aylıq AI sual yaratma limitinizi aşırsınız. Limit: " + limit + ", qalan: " + remaining + ".");
+            }
+        }
+    }
+
+    /** Records AI question usage after successful generation. */
+    public void recordAiQuestions(Long userId, int count) {
+        if (isAdmin(userId)) return;
+        userSubscriptionRepository.findActiveSubscriptionByUserIdAndDate(userId, LocalDateTime.now()).ifPresent(subscription -> {
+            SubscriptionPlan plan = subscription.getPlan();
+            Integer limit = plan.getMonthlyAiQuestionLimit();
+            if (limit == null || limit == 0 || limit == -1) return; // unlimited or disabled — nothing to record
+            SubscriptionUsage usage = getCurrentUsage(subscription);
+            usage.setUsedAiQuestions(usage.getUsedAiQuestions() + count);
+            subscriptionUsageRepository.save(usage);
+        });
     }
 }
