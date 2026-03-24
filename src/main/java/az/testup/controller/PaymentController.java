@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -137,6 +138,7 @@ public class PaymentController {
     }
 
     @PostMapping("/verify")
+    @Transactional
     public ResponseEntity<?> verifyPayment(
             @AuthenticationPrincipal UserDetails principal,
             @RequestBody Map<String, Object> body) {
@@ -159,6 +161,7 @@ public class PaymentController {
             return ResponseEntity.status(403).body(Map.of("message", "Bu əməliyyat üçün icazəniz yoxdur"));
         }
 
+        // Already fully processed — return early without hitting Payriff API
         if ("PAID".equals(order.getStatus())) {
             if (order.getExam() != null) {
                 return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true, "examShareLink", order.getExam().getShareLink()));
@@ -166,52 +169,75 @@ public class PaymentController {
             return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true));
         }
 
-        String payriffStatus = payriffService.getOrderStatus(orderId);
+        // Atomically claim the order for processing (PENDING → PROCESSING).
+        int claimed = payriffOrderRepository.claimForProcessing(orderId);
+        if (claimed == 0) {
+            // Either already PROCESSING (concurrent request) or FAILED
+            return ResponseEntity.ok(Map.of("status", order.getStatus()));
+        }
 
-        // V3 statuses: PAID / APPROVED / SUCCESS → activate; DECLINED / FAILED / CANCELLED → fail
-        boolean isPaid = "PAID".equals(payriffStatus)
-                || "APPROVED".equals(payriffStatus)
-                || "SUCCESS".equals(payriffStatus);
+        String payriffStatus = payriffService.getOrderStatus(orderId);
+        boolean isPaid = isPaidStatus(payriffStatus);
 
         if (isPaid) {
-            order.setStatus("PAID");
-            payriffOrderRepository.save(order);
-
-            // Exam purchase
+            activateOrder(order, orderId, user);
             if (order.getExam() != null) {
-                examService.purchaseExam(order.getExam().getShareLink(), user);
                 return ResponseEntity.ok(Map.of("status", "PAID", "examShareLink", order.getExam().getShareLink()));
             }
-
-            // Subscription purchase
-            AssignSubscriptionRequest request = new AssignSubscriptionRequest();
-            request.setUserId(user.getId());
-            request.setPlanId(order.getPlan().getId());
-            request.setDurationMonths(order.getMonths());
-            request.setDurationDays(order.getDurationDays());
-            request.setPaymentProvider("PAYRIFF");
-            request.setTransactionId(orderId);
-            double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
-            request.setAmountPaid(economicValue);
-            boolean isSwitching = userSubscriptionRepository
-                    .findActiveSubscriptionByUserIdAndDate(user.getId(), java.time.LocalDateTime.now())
-                    .map(s -> !s.getPlan().getId().equals(order.getPlan().getId()))
-                    .orElse(false);
-            userSubscriptionService.assignSubscription(request);
-            AuditAction action = isSwitching ? AuditAction.SUBSCRIPTION_SWITCHED : AuditAction.SUBSCRIPTION_PURCHASED;
-            auditLogService.log(action, user.getEmail(), user.getFullName(),
-                    "SUBSCRIPTION", order.getPlan().getName(),
-                    "Ödəniş: " + String.format("%.2f", order.getAmount()) + " AZN. Müddət: " + order.getDurationDays() + " gün. OrderId: " + orderId);
-
             return ResponseEntity.ok(Map.of("status", "PAID", "message", "Abunəlik aktivləşdirildi"));
         }
 
-        if ("DECLINED".equals(payriffStatus) || "FAILED".equals(payriffStatus) || "CANCELLED".equals(payriffStatus)) {
+        if ("DECLINED".equalsIgnoreCase(payriffStatus) || "FAILED".equalsIgnoreCase(payriffStatus)
+                || "CANCELLED".equalsIgnoreCase(payriffStatus) || "REJECTED".equalsIgnoreCase(payriffStatus)) {
             order.setStatus("FAILED");
-            payriffOrderRepository.save(order);
+        } else {
+            order.setStatus("PENDING");
         }
+        payriffOrderRepository.save(order);
 
         return ResponseEntity.ok(Map.of("status", payriffStatus));
+    }
+
+    /**
+     * Payriff server-to-server callback. Called by Payriff after payment status changes.
+     * Must always return 200 so Payriff does not retry indefinitely.
+     */
+    @PostMapping("/callback")
+    @Transactional
+    public ResponseEntity<?> payriffCallback(@RequestBody(required = false) Map<String, Object> body) {
+        try {
+            if (body == null || !body.containsKey("orderId")) {
+                return ResponseEntity.ok().build();
+            }
+            String orderId = body.get("orderId").toString();
+            if (orderId.isBlank()) return ResponseEntity.ok().build();
+
+            PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+            if (order == null || "PAID".equals(order.getStatus())) {
+                return ResponseEntity.ok().build();
+            }
+
+            int claimed = payriffOrderRepository.claimForProcessing(orderId);
+            if (claimed == 0) return ResponseEntity.ok().build();
+
+            // Trust callback body status first, then re-verify via API
+            String callbackStatus = body.getOrDefault("status", "").toString();
+            boolean isPaid = isPaidStatus(callbackStatus);
+            if (!isPaid) {
+                // Double-check via Payriff API
+                isPaid = isPaidStatus(payriffService.getOrderStatus(orderId));
+            }
+
+            if (isPaid) {
+                activateOrder(order, orderId, null);
+            } else {
+                order.setStatus("PENDING");
+                payriffOrderRepository.save(order);
+            }
+        } catch (Exception ignored) {
+            // Always return 200 to Payriff
+        }
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/initiate-exam")
@@ -261,5 +287,51 @@ public class PaymentController {
                 "paymentUrl", result.paymentUrl(),
                 "amount", amount
         ));
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private boolean isPaidStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String s = status.toUpperCase();
+        return s.equals("PAID") || s.equals("APPROVED") || s.equals("SUCCESS")
+                || s.equals("CONFIRMED") || s.equals("COMPLETE") || s.equals("COMPLETED");
+    }
+
+    /** Marks order as PAID and activates subscription or exam purchase. */
+    private void activateOrder(PayriffOrder order, String orderId, User verifyingUser) {
+        order.setStatus("PAID");
+        payriffOrderRepository.save(order);
+
+        User orderUser = order.getUser();
+
+        if (order.getExam() != null) {
+            examService.purchaseExam(order.getExam().getShareLink(), orderUser);
+            return;
+        }
+
+        if (order.getPlan() != null) {
+            AssignSubscriptionRequest request = new AssignSubscriptionRequest();
+            request.setUserId(orderUser.getId());
+            request.setPlanId(order.getPlan().getId());
+            request.setDurationMonths(order.getMonths());
+            request.setDurationDays(order.getDurationDays());
+            request.setPaymentProvider("PAYRIFF");
+            request.setTransactionId(orderId);
+            double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
+            request.setAmountPaid(economicValue);
+
+            boolean isSwitching = userSubscriptionRepository
+                    .findActiveSubscriptionByUserIdAndDate(orderUser.getId(), LocalDateTime.now())
+                    .map(s -> !s.getPlan().getId().equals(order.getPlan().getId()))
+                    .orElse(false);
+            userSubscriptionService.assignSubscription(request);
+
+            AuditAction action = isSwitching ? AuditAction.SUBSCRIPTION_SWITCHED : AuditAction.SUBSCRIPTION_PURCHASED;
+            auditLogService.log(action, orderUser.getEmail(), orderUser.getFullName(),
+                    "SUBSCRIPTION", order.getPlan().getName(),
+                    "Ödəniş: " + String.format("%.2f", order.getAmount()) + " AZN. Müddət: "
+                            + order.getDurationDays() + " gün. OrderId: " + orderId);
+        }
     }
 }

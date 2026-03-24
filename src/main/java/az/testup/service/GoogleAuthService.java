@@ -98,14 +98,17 @@ public class GoogleAuthService {
             if (!user.isEnabled()) {
                 throw new UnauthorizedException("Hesabınız deaktiv edilmişdir.");
             }
-            // Link googleSub if not set yet (user registered normally, now logging in with Google)
+            // Link googleSub if not set yet; always sync Google picture if user has no custom upload
+            boolean dirty = false;
             if (user.getGoogleSub() == null) {
                 user.setGoogleSub(googleSub);
-                if (picture != null && (user.getProfilePicture() == null || user.getProfilePicture().isBlank())) {
-                    user.setProfilePicture(picture);
-                }
-                userRepository.save(user);
+                dirty = true;
             }
+            if (picture != null && isGooglePictureUrl(user.getProfilePicture())) {
+                user.setProfilePicture(picture);
+                dirty = true;
+            }
+            if (dirty) userRepository.save(user);
             String accessToken = jwtTokenProvider.generateAccessToken(
                     user.getId(), user.getEmail(), user.getRole().name(), user.getFullName());
             String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
@@ -129,6 +132,11 @@ public class GoogleAuthService {
                 "picture", picture != null ? picture : "",
                 "googleSub", googleSub
         );
+    }
+
+    /** Returns true if the stored picture is a Google URL (not a user-uploaded base64/custom URL). */
+    private boolean isGooglePictureUrl(String url) {
+        return url == null || url.isBlank() || url.startsWith("https://lh3.googleusercontent.com");
     }
 
     /**
