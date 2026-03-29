@@ -49,4 +49,8 @@ public class ExamResponse {
     private List<String> collaborativeSubjects;
     /** Number of submitted but not fully graded submissions (OPEN_MANUAL pending) */
     private long pendingManualCount;
+    /** Average star rating (1-5) from student submissions, null if no ratings yet */
+    private Double averageRating;
+    /** Number of students who rated this exam */
+    private long ratingCount;
 }

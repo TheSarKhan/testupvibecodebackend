@@ -22,4 +22,10 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
 
     @Query(value = "SELECT TO_CHAR(submitted_at, 'YYYY-MM') as month, COUNT(*) as count FROM submissions WHERE submitted_at >= :since AND submitted_at IS NOT NULL GROUP BY month ORDER BY month", nativeQuery = true)
     List<Object[]> countSubmissionsByMonth(@Param("since") LocalDateTime since);
+
+    @Query("SELECT AVG(s.rating) FROM Submission s WHERE s.exam.id = :examId AND s.rating IS NOT NULL")
+    Double findAverageRatingByExamId(@Param("examId") Long examId);
+
+    @Query("SELECT COUNT(s) FROM Submission s WHERE s.exam.id = :examId AND s.rating IS NOT NULL")
+    long countRatingsByExamId(@Param("examId") Long examId);
 }

@@ -778,6 +778,8 @@ public class ExamService {
                 .collaborativeSubjects(collaborativeSubjects)
                 .collaborativeTemplateSections(collaborativeTemplateSections)
                 .pendingManualCount(submissionRepository.countByExamIdAndSubmittedAtIsNotNullAndIsFullyGradedFalse(exam.getId()))
+                .averageRating(submissionRepository.findAverageRatingByExamId(exam.getId()))
+                .ratingCount(submissionRepository.countRatingsByExamId(exam.getId()))
                 .build();
     }
 

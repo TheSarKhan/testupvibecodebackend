@@ -564,10 +564,10 @@ public class DataSeeder implements CommandLineRunner {
 
         List<Banner> banners = List.of(
             Banner.builder()
-                .title("3 Ay Basic Plan — Pulsuz!")
-                .subtitle("Müəllim kimi qeydiyyatdan keçin, 3 aylıq Basic abunəliyini hədiyyə alın.")
-                .linkUrl("/register")
-                .linkText("İndi qeydiyyatdan keç")
+                .title("AI ilə suallar saniyələr içində hazırdır")
+                .subtitle("Mövzunu yazın — AI sizin üçün 7 fərqli formatda suallar yaratsın. Hər fənn, hər səviyyə üçün.")
+                .linkUrl("/imtahanlar")
+                .linkText("İmtahanlara bax")
                 .isActive(true)
                 .position(BannerPosition.HERO)
                 .bgGradient("from-indigo-600 to-purple-600")
@@ -586,10 +586,10 @@ public class DataSeeder implements CommandLineRunner {
                 .build(),
 
             Banner.builder()
-                .title("PDF-dən sual idxalı — Limitsiz planda")
+                .title("PDF-dən sual idxalı")
                 .subtitle("Mövcud test materiallarınızı PDF formatında yükləyin, suallar avtomatik əlavə edilsin.")
                 .linkUrl("/planlar")
-                .linkText("Limitsiz plana keç")
+                .linkText("Planlara bax")
                 .isActive(true)
                 .position(BannerPosition.BOTTOM)
                 .bgGradient("from-orange-500 to-pink-500")
