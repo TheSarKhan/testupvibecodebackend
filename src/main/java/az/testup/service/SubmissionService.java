@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -166,16 +167,8 @@ public class SubmissionService {
         answerRepository.save(answer); // Explicitly save the answer
     }
 
-    @Transactional
-    public SubmissionResponse finalizeSubmission(Long submissionId, User student) {
-        Submission submission = submissionRepository.findById(submissionId)
-                .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
-
-        if (submission.getSubmittedAt() != null) {
-            return mapToResponse(submission);
-        }
-
-        // Grade all current answers — includes both standalone and passage questions
+    /** Grades all answers (creating blank entries for unanswered questions) and snapshots each question. */
+    private void gradeAndPrepareAnswers(Submission submission) {
         for (Question question : getAllExamQuestions(submission.getExam())) {
             Answer answer = submission.getAnswers().stream()
                     .filter(a -> a.getQuestion().getId().equals(question.getId()))
@@ -191,9 +184,22 @@ public class SubmissionService {
                         return newAns;
                     });
             gradeAnswer(answer);
-            // Snapshot the question for versioning
-            answer.setQuestionSnapshot(createQuestionSnapshot(question));
+            if (answer.getQuestionSnapshot() == null) {
+                answer.setQuestionSnapshot(createQuestionSnapshot(question));
+            }
         }
+    }
+
+    @Transactional
+    public SubmissionResponse finalizeSubmission(Long submissionId, User student) {
+        Submission submission = submissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
+
+        if (submission.getSubmittedAt() != null) {
+            return mapToResponse(submission);
+        }
+
+        gradeAndPrepareAnswers(submission);
 
         return finalizeAndSave(submission);
     }
@@ -376,6 +382,38 @@ public class SubmissionService {
         }
     }
 
+    /**
+     * Called by scheduler every minute.
+     * Auto-submits any in-progress submission whose exam duration has elapsed.
+     */
+    @Transactional
+    public void autoSubmitExpiredExams() {
+        List<Submission> active = submissionRepository.findActiveTimedSubmissions();
+        if (active.isEmpty()) return;
+        LocalDateTime now = LocalDateTime.now();
+        int count = 0;
+        for (Submission submission : active) {
+            long durationSeconds = submission.getExam().getDurationMinutes() * 60L;
+            long elapsed = ChronoUnit.SECONDS.between(submission.getStartedAt(), now);
+            if (elapsed >= durationSeconds) {
+                try {
+                    // Set submittedAt to the exact moment the exam should have expired
+                    submission.setSubmittedAt(submission.getStartedAt().plusSeconds(durationSeconds));
+                    gradeAndPrepareAnswers(submission);
+                    finalizeAndSave(submission);
+                    count++;
+                    log.info("Auto-submitted expired exam: submissionId={}, examId={}",
+                            submission.getId(), submission.getExam().getId());
+                } catch (Exception e) {
+                    log.error("Auto-submit failed for submissionId={}: {}", submission.getId(), e.getMessage());
+                }
+            }
+        }
+        if (count > 0) {
+            log.info("Auto-submitted {} expired submission(s)", count);
+        }
+    }
+
     private SubmissionResponse finalizeAndSave(Submission submission) {
         double totalScore = submission.getAnswers().stream()
                 .filter(a -> a.getScore() != null)
@@ -394,7 +432,9 @@ public class SubmissionService {
                 .mapToDouble(Question::getPoints)
                 .sum();
 
-        submission.setSubmittedAt(LocalDateTime.now());
+        if (submission.getSubmittedAt() == null) {
+            submission.setSubmittedAt(LocalDateTime.now());
+        }
         submission.setTotalScore(totalScore);
         submission.setMaxScore(examMaxScore);
         submission.setIsFullyGraded(allGraded);

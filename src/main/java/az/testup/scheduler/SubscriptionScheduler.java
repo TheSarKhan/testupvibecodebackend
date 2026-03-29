@@ -9,6 +9,7 @@ import az.testup.repository.SubscriptionUsageRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.ExamService;
 import az.testup.service.PayriffService;
+import az.testup.service.SubmissionService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -33,6 +34,7 @@ public class SubscriptionScheduler {
     private final ExamService examService;
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final SubscriptionUsageRepository subscriptionUsageRepository;
+    private final SubmissionService submissionService;
 
     /**
      * Runs every 10 minutes. Picks up orders stuck in PENDING or PROCESSING
@@ -101,6 +103,15 @@ public class SubscriptionScheduler {
                 payriffOrderRepository.save(order);
             }
         }
+    }
+
+    /**
+     * Runs every 10 seconds.
+     * Auto-submits in-progress exams whose duration has elapsed (e.g. student closed browser).
+     */
+    @Scheduled(fixedDelay = 10_000)
+    public void autoSubmitExpiredExams() {
+        submissionService.autoSubmitExpiredExams();
     }
 
     /**
