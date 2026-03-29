@@ -23,4 +23,7 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
 
     @Query("SELECT COUNT(us) FROM UserSubscription us WHERE us.isActive = true AND us.endDate >= current_timestamp")
     long countActiveSubscriptions();
+
+    @Query("SELECT us FROM UserSubscription us WHERE us.isActive = true AND us.endDate >= current_timestamp")
+    List<UserSubscription> findAllActiveSubscriptions();
 }

@@ -123,14 +123,14 @@ public class EmailService {
                 <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;">
                 <div style="max-width:600px;margin:40px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08);">
                   <div style="background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:36px 40px;text-align:center;">
-                    <h1 style="margin:0;color:#fff;font-size:22px;letter-spacing:.5px;">testup.az</h1>
+                    <h1 style="margin:0;color:#fff;font-size:22px;letter-spacing:.5px;">TestUP</h1>
                   </div>
                   <div style="padding:36px 40px;">
                     <h2 style="margin:0 0 16px;color:#1f2937;font-size:20px;">%s</h2>
                     <div style="color:#4b5563;line-height:1.7;font-size:15px;">%s</div>
                   </div>
                   <div style="padding:20px 40px;border-top:1px solid #f3f4f6;text-align:center;">
-                    <p style="margin:0;color:#9ca3af;font-size:12px;">Bu mesaj testup.az platforması tərəfindən göndərilmişdir.</p>
+                    <p style="margin:0;color:#9ca3af;font-size:12px;">Bu mesaj TestUP platforması tərəfindən göndərilmişdir.</p>
                   </div>
                 </div>
                 </body></html>

@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -37,4 +38,11 @@ public class SubmissionResponse {
     private Integer wrongCount;
     private Integer skippedCount;
     private Integer pendingManualCount;
+
+    /** Extra exam details for student dashboard */
+    private List<String> subjects;
+    private List<String> tags;
+    private String examType;
+    private Integer questionCount;
+    private String teacherName;
 }

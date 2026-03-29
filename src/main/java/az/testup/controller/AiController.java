@@ -27,6 +27,20 @@ public class AiController {
     private final UserRepository userRepository;
 
     /**
+     * GET /api/ai/usage
+     * Returns AI question usage info for the current month: { limit, used, remaining }
+     */
+    @GetMapping("/usage")
+    public ResponseEntity<?> getAiUsage(@AuthenticationPrincipal UserDetails userDetails) {
+        try {
+            User user = getUser(userDetails);
+            return ResponseEntity.ok(subscriptionValidatorService.getAiUsageInfo(user.getId()));
+        } catch (SubscriptionLimitExceededException e) {
+            return ResponseEntity.ok(Map.of("limit", 0, "used", 0, "remaining", 0));
+        }
+    }
+
+    /**
      * POST /api/ai/generate-questions
      * Generates questions via Gemini API and returns them as BankQuestionRequest list.
      */

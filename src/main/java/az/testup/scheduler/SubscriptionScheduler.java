@@ -2,7 +2,11 @@ package az.testup.scheduler;
 
 import az.testup.dto.request.AssignSubscriptionRequest;
 import az.testup.entity.PayriffOrder;
+import az.testup.entity.SubscriptionUsage;
+import az.testup.entity.UserSubscription;
 import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.SubscriptionUsageRepository;
+import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.ExamService;
 import az.testup.service.PayriffService;
 import az.testup.service.UserSubscriptionService;
@@ -14,6 +18,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.List;
 
 @Component
@@ -26,6 +31,8 @@ public class SubscriptionScheduler {
     private final PayriffService payriffService;
     private final UserSubscriptionService userSubscriptionService;
     private final ExamService examService;
+    private final UserSubscriptionRepository userSubscriptionRepository;
+    private final SubscriptionUsageRepository subscriptionUsageRepository;
 
     /**
      * Runs every 10 minutes. Picks up orders stuck in PENDING or PROCESSING
@@ -94,5 +101,43 @@ public class SubscriptionScheduler {
                 payriffOrderRepository.save(order);
             }
         }
+    }
+
+    /**
+     * Runs at 00:00 on the 1st of every month.
+     * Creates fresh SubscriptionUsage records (monthly counters = 0) for all active subscriptions.
+     * Also cleans up usage records older than 3 months.
+     */
+    @Scheduled(cron = "0 0 0 1 * *")
+    @Transactional
+    public void resetMonthlyUsage() {
+        String currentMonthYear = YearMonth.now().toString(); // e.g. "2026-04"
+        List<UserSubscription> activeSubscriptions = userSubscriptionRepository.findAllActiveSubscriptions();
+
+        log.info("Monthly usage reset: resetting counters for {} active subscription(s) for month {}",
+                activeSubscriptions.size(), currentMonthYear);
+
+        for (UserSubscription subscription : activeSubscriptions) {
+            boolean exists = subscriptionUsageRepository
+                    .findByUserSubscriptionIdAndMonthYear(subscription.getId(), currentMonthYear)
+                    .isPresent();
+            if (!exists) {
+                subscriptionUsageRepository.save(
+                        SubscriptionUsage.builder()
+                                .userSubscription(subscription)
+                                .monthYear(currentMonthYear)
+                                .usedMonthlyExams(0)
+                                .usedSavedExams(0)
+                                .usedAiQuestions(0)
+                                .build()
+                );
+            }
+        }
+
+        // Keep only the last 3 months of usage records
+        String cutoff = YearMonth.now().minusMonths(3).toString();
+        subscriptionUsageRepository.deleteByMonthYearBefore(cutoff);
+
+        log.info("Monthly usage reset: completed for month {}", currentMonthYear);
     }
 }

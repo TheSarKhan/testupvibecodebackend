@@ -710,6 +710,25 @@ public class SubmissionService {
         return v;
     }
 
+    /** Returns true when the student left this answer completely blank (nothing selected/typed). */
+    private boolean isBlankAnswer(Answer a) {
+        if (a.getQuestion() == null) return false;
+        return switch (a.getQuestion().getQuestionType()) {
+            case MCQ, TRUE_FALSE        -> a.getSelectedOptionId() == null;
+            case MULTI_SELECT           -> a.getSelectedOptionIdsJson() == null
+                                           || a.getSelectedOptionIdsJson().isBlank()
+                                           || a.getSelectedOptionIdsJson().equals("[]");
+            case OPEN_AUTO, OPEN_MANUAL -> a.getAnswerText() == null || a.getAnswerText().isBlank();
+            case FILL_IN_THE_BLANK      -> a.getAnswerText() == null
+                                           || a.getAnswerText().isBlank()
+                                           || a.getAnswerText().equals("[]");
+            case MATCHING               -> a.getMatchingAnswerJson() == null
+                                           || a.getMatchingAnswerJson().isBlank()
+                                           || a.getMatchingAnswerJson().equals("[]");
+            default                     -> false;
+        };
+    }
+
     private SubmissionResponse mapToResponse(Submission submission) {
         int totalQuestions = submission.getExam().getQuestions().size();
 
@@ -720,21 +739,36 @@ public class SubmissionService {
         int pending = (int) submission.getAnswers().stream()
                 .filter(a -> a.getQuestion() != null
                         && a.getQuestion().getQuestionType() == QuestionType.OPEN_MANUAL
-                        && (a.getScore() == null || a.getScore() == 0.0))
+                        && !isBlankAnswer(a))
                 .count();
+
+        int skipped = (int) submission.getAnswers().stream()
+                .filter(a -> a.getQuestion() != null
+                        && a.getQuestion().getQuestionType() != QuestionType.OPEN_MANUAL
+                        && (a.getScore() == null || a.getScore() == 0.0)
+                        && isBlankAnswer(a))
+                .count();
+        // Unanswered OPEN_MANUAL questions also count as skipped
+        skipped += (int) submission.getAnswers().stream()
+                .filter(a -> a.getQuestion() != null
+                        && a.getQuestion().getQuestionType() == QuestionType.OPEN_MANUAL
+                        && isBlankAnswer(a))
+                .count();
+        // Also count questions that have no Answer record at all
+        skipped += Math.max(0, totalQuestions - submission.getAnswers().size());
 
         int wrong = (int) submission.getAnswers().stream()
                 .filter(a -> a.getQuestion() != null
                         && a.getQuestion().getQuestionType() != QuestionType.OPEN_MANUAL
-                        && (a.getScore() == null || a.getScore() == 0.0))
+                        && (a.getScore() == null || a.getScore() == 0.0)
+                        && !isBlankAnswer(a))
                 .count();
 
-        int skipped = Math.max(0, totalQuestions - correct - pending - wrong);
-
+        var exam = submission.getExam();
         return SubmissionResponse.builder()
                 .id(submission.getId())
-                .examId(submission.getExam().getId())
-                .examTitle(submission.getExam().getTitle())
+                .examId(exam.getId())
+                .examTitle(exam.getTitle())
                 .studentName(submission.getStudent() != null ? submission.getStudent().getFullName() : submission.getGuestName())
                 .totalScore(submission.getTotalScore())
                 .maxScore(submission.getMaxScore())
@@ -742,12 +776,17 @@ public class SubmissionService {
                 .rating(submission.getRating())
                 .startedAt(submission.getStartedAt())
                 .submittedAt(submission.getSubmittedAt())
-                .durationMinutes(submission.getExam().getDurationMinutes())
+                .durationMinutes(exam.getDurationMinutes())
                 .templateScorePercent(submission.getTemplateScorePercent())
                 .correctCount(correct)
                 .wrongCount(wrong)
                 .skippedCount(skipped)
                 .pendingManualCount(pending)
+                .subjects(exam.getSubjects())
+                .tags(exam.getTags())
+                .examType(exam.getExamType() != null ? exam.getExamType().name() : null)
+                .questionCount(totalQuestions)
+                .teacherName(exam.getTeacher() != null ? exam.getTeacher().getFullName() : null)
                 .build();
     }
 

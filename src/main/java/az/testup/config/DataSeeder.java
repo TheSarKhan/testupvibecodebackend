@@ -32,6 +32,7 @@ public class DataSeeder implements CommandLineRunner {
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final BannerRepository bannerRepository;
+    private final TagRepository tagRepository;
 
     private static final List<String> DEFAULT_SUBJECTS = List.of(
             "Riyaziyyat", "Fizika", "Kimya", "Biologiya",
@@ -95,6 +96,22 @@ public class DataSeeder implements CommandLineRunner {
         seedSubjectTopics();
         seedDimTemplate();
         seedBanners();
+        seedTags();
+    }
+
+    @Transactional
+    public void seedTags() {
+        if (tagRepository.count() > 0) return;
+        List.of(
+            "1-ci sinif", "2-ci sinif", "3-cü sinif", "4-cü sinif",
+            "5-ci sinif", "6-cı sinif", "7-ci sinif", "8-ci sinif",
+            "9-cu sinif", "10-cu sinif", "11-ci sinif",
+            "Asan", "Buraxılış imtahanı", "Cəbr", "Dinləmə",
+            "Fəsil sonu", "Həndəsə", "Leksika", "Məktəb daxili",
+            "Olimpiada", "Orta", "Oxuma", "Qiymətləndirmə",
+            "Qrammatika", "Test", "Yarımillik", "Çətin"
+        ).forEach(name -> tagRepository.save(Tag.builder().name(name).build()));
+        log.info("Tags seeded: {} tags", tagRepository.count());
     }
 
     @Transactional

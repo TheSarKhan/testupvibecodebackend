@@ -234,13 +234,47 @@ public class SubscriptionValidatorService {
         }
     }
 
+    /** Returns AI usage info: limit, used, remaining. */
+    public java.util.Map<String, Object> getAiUsageInfo(Long userId) {
+        java.util.Map<String, Object> info = new java.util.LinkedHashMap<>();
+        if (isAdmin(userId)) {
+            info.put("limit", -1);
+            info.put("used", 0);
+            info.put("remaining", -1); // unlimited
+            return info;
+        }
+        UserSubscription subscription = getActiveSubscription(userId);
+        SubscriptionPlan plan = subscription.getPlan();
+        Integer limit = plan.getMonthlyAiQuestionLimit();
+        if (limit == null || limit == 0) {
+            info.put("limit", 0);
+            info.put("used", 0);
+            info.put("remaining", 0);
+            return info;
+        }
+        if (limit == -1) {
+            SubscriptionUsage usage = getCurrentUsage(subscription);
+            info.put("limit", -1);
+            info.put("used", usage.getUsedAiQuestions());
+            info.put("remaining", -1); // unlimited
+            return info;
+        }
+        SubscriptionUsage usage = getCurrentUsage(subscription);
+        int used = usage.getUsedAiQuestions();
+        int remaining = Math.max(0, limit - used);
+        info.put("limit", limit);
+        info.put("used", used);
+        info.put("remaining", remaining);
+        return info;
+    }
+
     /** Records AI question usage after successful generation. */
     public void recordAiQuestions(Long userId, int count) {
         if (isAdmin(userId)) return;
         userSubscriptionRepository.findActiveSubscriptionByUserIdAndDate(userId, LocalDateTime.now()).ifPresent(subscription -> {
             SubscriptionPlan plan = subscription.getPlan();
             Integer limit = plan.getMonthlyAiQuestionLimit();
-            if (limit == null || limit == 0 || limit == -1) return; // unlimited or disabled — nothing to record
+            if (limit == null || limit == 0) return; // disabled — nothing to record
             SubscriptionUsage usage = getCurrentUsage(subscription);
             usage.setUsedAiQuestions(usage.getUsedAiQuestions() + count);
             subscriptionUsageRepository.save(usage);
