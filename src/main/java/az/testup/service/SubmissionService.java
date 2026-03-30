@@ -113,6 +113,11 @@ public class SubmissionService {
         Submission submission = submissionRepository.findById(submissionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
 
+        if (student != null && submission.getStudent() != null
+                && !submission.getStudent().getId().equals(student.getId())) {
+            throw new az.testup.exception.UnauthorizedException("Bu cəhdə müdaxilə etmək hüququnuz yoxdur");
+        }
+
         if (submission.getSubmittedAt() != null) {
             throw new BadRequestException("Bu imtahan artıq təhvil verilib");
         }
@@ -144,6 +149,11 @@ public class SubmissionService {
     public void saveAnswer(Long submissionId, AnswerRequest request, User student) {
         Submission submission = submissionRepository.findById(submissionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
+
+        if (student != null && submission.getStudent() != null
+                && !submission.getStudent().getId().equals(student.getId())) {
+            throw new az.testup.exception.UnauthorizedException("Bu cəhdə müdaxilə etmək hüququnuz yoxdur");
+        }
 
         if (submission.getSubmittedAt() != null) {
             throw new BadRequestException("İmtahan artıq bitib");
@@ -563,6 +573,12 @@ public class SubmissionService {
     public SubmissionResponse gradeManualAnswer(Long submissionId, az.testup.dto.request.GradeManualAnswerRequest request, User teacher) {
         Submission submission = submissionRepository.findById(submissionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
+
+        Exam exam = submission.getExam();
+        boolean isAdmin = teacher.getRole() == az.testup.enums.Role.ADMIN;
+        if (!isAdmin && (exam.getTeacher() == null || !exam.getTeacher().getId().equals(teacher.getId()))) {
+            throw new az.testup.exception.UnauthorizedException("Bu imtahanı yoxlamaq hüququnuz yoxdur");
+        }
 
         if (submission.getSubmittedAt() == null) {
             throw new BadRequestException("İmtahan hələ bitməyib");
