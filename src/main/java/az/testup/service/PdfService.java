@@ -45,26 +45,37 @@ public class PdfService {
         Font oFont;
         
         try {
-            // Priority font: Arial (standard on Windows)
-            String[] fontPaths = {
-                "C:\\Windows\\Fonts\\arial.ttf",
-                "C:\\Windows\\Fonts\\times.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                "src/main/resources/fonts/arial.ttf"
-            };
-            
             BaseFont bf = null;
-            for (String path : fontPaths) {
-                try {
-                    bf = BaseFont.createFont(path, BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
-                    log.info("Loaded font from: " + path);
-                    break;
-                } catch (Exception ignored) {}
-            }
-            
+
+            // 1. Classpath font (bundled in jar — works on all platforms)
+            try (java.io.InputStream is = getClass().getResourceAsStream("/fonts/DejaVuSans.ttf")) {
+                if (is != null) {
+                    byte[] fontBytes = is.readAllBytes();
+                    bf = BaseFont.createFont("DejaVuSans.ttf", BaseFont.IDENTITY_H, BaseFont.EMBEDDED, true, fontBytes, null);
+                    log.info("Loaded font from classpath: /fonts/DejaVuSans.ttf");
+                }
+            } catch (Exception ignored) {}
+
+            // 2. System fonts fallback
             if (bf == null) {
-                // Last ditch effort: try to find any sans-serif font
-                bf = BaseFont.createFont(BaseFont.HELVETICA, "Cp1254", BaseFont.NOT_EMBEDDED); // Cp1254 supports Turkish/Azerbaijani mostly
+                String[] fontPaths = {
+                    "C:\\Windows\\Fonts\\arial.ttf",
+                    "C:\\Windows\\Fonts\\calibri.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                    "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+                };
+                for (String path : fontPaths) {
+                    try {
+                        bf = BaseFont.createFont(path, BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+                        log.info("Loaded font from: " + path);
+                        break;
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            if (bf == null) {
+                throw new IOException("Unicode font tapılmadı. /fonts/DejaVuSans.ttf faylını resources-a əlavə edin.");
             }
 
 
@@ -208,7 +219,7 @@ public class PdfService {
         // --- Answer Key Page ---
         document.newPage();
         
-        Paragraph akHeader = new Paragraph("CAVAB ANAXTARI", titleFont);
+        Paragraph akHeader = new Paragraph("Düzgün Cavablar", titleFont);
         akHeader.setAlignment(Element.ALIGN_CENTER);
         akHeader.setSpacingAfter(20f);
         document.add(akHeader);

@@ -557,48 +557,60 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     private void seedBanners() {
-        if (bannerRepository.count() > 0) {
-            log.debug("Bannerlər artıq mövcuddur, keçilir");
-            return;
-        }
-
-        List<Banner> banners = List.of(
-            Banner.builder()
-                .title("AI ilə suallar saniyələr içində hazırdır")
-                .subtitle("Mövzunu yazın — AI sizin üçün 7 fərqli formatda suallar yaratsın. Hər fənn, hər səviyyə üçün.")
-                .linkUrl("/imtahanlar")
-                .linkText("İmtahanlara bax")
-                .isActive(true)
-                .position(BannerPosition.HERO)
-                .bgGradient("from-indigo-600 to-purple-600")
-                .orderIndex(0)
-                .build(),
-
-            Banner.builder()
-                .title("Sual bazanızı qurun")
-                .subtitle("Fənlər üzrə sualları saxlayın, istənilən imtahana əlavə edin. Basic planda daxildir.")
-                .linkUrl("/planlar")
-                .linkText("Planlara bax")
-                .isActive(true)
-                .position(BannerPosition.INLINE)
-                .bgGradient("from-emerald-500 to-teal-600")
-                .orderIndex(0)
-                .build(),
-
-            Banner.builder()
-                .title("PDF-dən sual idxalı")
-                .subtitle("Mövcud test materiallarınızı PDF formatında yükləyin, suallar avtomatik əlavə edilsin.")
-                .linkUrl("/planlar")
-                .linkText("Planlara bax")
-                .isActive(true)
-                .position(BannerPosition.BOTTOM)
-                .bgGradient("from-orange-500 to-pink-500")
-                .orderIndex(0)
-                .build()
+        // Always upsert default banners — update existing ones if title matches, otherwise insert
+        upsertBanner(
+            "AI ilə sual yaratma — 7 fərqli format",
+            "Mövzu və çətinlik dərəcəsini seçin, qalanını AI etsin. Riyazi simvollar dəstəyi ilə hər fənn üçün hazırdır.",
+            "/planlar",
+            "Planları kəşf et",
+            BannerPosition.HERO,
+            "from-indigo-600 to-purple-600",
+            0
         );
+        upsertBanner(
+            "Sual bazası — bir dəfə yaz, hər dəfə istifadə et",
+            "Suallarınızı fənlər üzrə saxlayın, istənilən imtahana bir kliklə əlavə edin.",
+            "/planlar",
+            "Planlara bax",
+            BannerPosition.INLINE,
+            "from-emerald-500 to-teal-600",
+            0
+        );
+        upsertBanner(
+            "Avtomatik qiymətləndirmə və ətraflı statistika",
+            "Hər sual üzrə doğru, yanlış, boş cavab faizlərini qrafiklərlə izləyin. Bütün planlarda mövcuddur.",
+            "/planlar",
+            "Planlara bax",
+            BannerPosition.BOTTOM,
+            "from-orange-500 to-pink-500",
+            0
+        );
+        log.info("Bannerlər yoxlanıldı/yeniləndi");
+    }
 
-        bannerRepository.saveAll(banners);
-        log.info("{} banner əlavə edildi", banners.size());
+    private void upsertBanner(String title, String subtitle, String linkUrl, String linkText,
+                               BannerPosition position, String bgGradient, int orderIndex) {
+        bannerRepository.findAll().stream()
+            .filter(b -> b.getPosition() == position && b.getOrderIndex() == orderIndex)
+            .findFirst()
+            .ifPresentOrElse(existing -> {
+                existing.setTitle(title);
+                existing.setSubtitle(subtitle);
+                existing.setLinkUrl(linkUrl);
+                existing.setLinkText(linkText);
+                existing.setBgGradient(bgGradient);
+                existing.setActive(true);
+                bannerRepository.save(existing);
+            }, () -> bannerRepository.save(Banner.builder()
+                .title(title)
+                .subtitle(subtitle)
+                .linkUrl(linkUrl)
+                .linkText(linkText)
+                .isActive(true)
+                .position(position)
+                .bgGradient(bgGradient)
+                .orderIndex(orderIndex)
+                .build()));
     }
 
     private void addTypeCount(TemplateSection section, QuestionType type, int count, int order) {

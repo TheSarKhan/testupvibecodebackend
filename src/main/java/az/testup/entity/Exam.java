@@ -46,12 +46,6 @@ public class Exam {
     @Column(nullable = false)
     private ExamStatus status;
 
-    /** 6-digit access code for PRIVATE exams (teacher-generated, time-limited) */
-    private String accessCode;
-
-    /** Expiry timestamp of the current access code (12 hours after generation) */
-    private LocalDateTime accessCodeExpiresAt;
-
     /** Unique share link identifier */
     @Column(unique = true, nullable = false)
     private String shareLink;

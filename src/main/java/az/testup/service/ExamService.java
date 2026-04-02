@@ -40,6 +40,7 @@ public class ExamService {
     private final SubmissionRepository submissionRepository;
     private final AuditLogService auditLogService;
     private final PayriffOrderRepository payriffOrderRepository;
+    private final ExamAccessCodeRepository examAccessCodeRepository;
 
     public Exam getExamEntityById(Long id) {
         return examRepository.findById(id)
@@ -370,6 +371,7 @@ public class ExamService {
         }
 
         Exam savedExam = examRepository.save(exam);
+        auditLogService.log(AuditAction.EXAM_UPDATED, teacher.getEmail(), teacher.getFullName(), "EXAM", savedExam.getTitle(), "Status: " + savedExam.getStatus());
         return mapToResponse(savedExam);
     }
 
@@ -547,9 +549,12 @@ public class ExamService {
         String code = CodeGenerator.generateAccessCode();
         LocalDateTime expiresAt = LocalDateTime.now().plusHours(12);
 
-        exam.setAccessCode(code);
-        exam.setAccessCodeExpiresAt(expiresAt);
-        examRepository.save(exam);
+        ExamAccessCode accessCode = ExamAccessCode.builder()
+                .exam(exam)
+                .code(code)
+                .expiresAt(expiresAt)
+                .build();
+        examAccessCodeRepository.save(accessCode);
 
         return Map.of("accessCode", code, "expiresAt", expiresAt.toString());
     }
@@ -564,8 +569,11 @@ public class ExamService {
         if (exam.getStatus() == ExamStatus.DRAFT) {
             throw new BadRequestException("Qaralama imtahanını birbaşa aça bilməzsiniz. Əvvəlcə yayımlayın.");
         }
-        exam.setStatus(exam.getStatus() == ExamStatus.PUBLISHED ? ExamStatus.CANCELLED : ExamStatus.PUBLISHED);
-        return mapToResponse(examRepository.save(exam));
+        ExamStatus newStatus = exam.getStatus() == ExamStatus.PUBLISHED ? ExamStatus.CANCELLED : ExamStatus.PUBLISHED;
+        exam.setStatus(newStatus);
+        Exam saved = examRepository.save(exam);
+        auditLogService.log(AuditAction.EXAM_STATUS_CHANGED, teacher.getEmail(), teacher.getFullName(), "EXAM", saved.getTitle(), "Yeni status: " + newStatus);
+        return mapToResponse(saved);
     }
 
     @Transactional
@@ -758,8 +766,6 @@ public class ExamService {
                 .visibility(exam.getVisibility())
                 .examType(exam.getExamType())
                 .status(exam.getStatus())
-                .accessCode(exam.getAccessCode())
-                .accessCodeExpiresAt(exam.getAccessCodeExpiresAt())
                 .shareLink(exam.getShareLink())
                 .durationMinutes(exam.getDurationMinutes())
                 .teacherId(exam.getTeacher().getId())

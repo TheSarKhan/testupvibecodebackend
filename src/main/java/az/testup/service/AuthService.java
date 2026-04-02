@@ -139,6 +139,7 @@ public class AuthService {
         }
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        auditLogService.log(AuditAction.PASSWORD_CHANGED, user.getEmail(), user.getFullName(), "AUTH", user.getEmail(), null);
     }
 
     /**

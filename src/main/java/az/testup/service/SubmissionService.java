@@ -6,6 +6,7 @@ import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
+import az.testup.enums.AuditAction;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.Role;
 import az.testup.util.FormulaEvaluator;
@@ -14,6 +15,7 @@ import az.testup.enums.QuestionType;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.AnswerRepository;
+import az.testup.repository.ExamAccessCodeRepository;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.PayriffOrderRepository;
@@ -50,6 +52,8 @@ public class SubmissionService {
     private final PayriffOrderRepository payriffOrderRepository;
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
+    private final AuditLogService auditLogService;
+    private final ExamAccessCodeRepository examAccessCodeRepository;
 
     @Transactional
     public SubmissionResponse startSubmission(String shareLink, StartSubmissionRequest request, User student) {
@@ -66,12 +70,22 @@ public class SubmissionService {
         }
 
         if (exam.getVisibility() == ExamVisibility.PRIVATE) {
-            if (request.getAccessCode() == null || !request.getAccessCode().equals(exam.getAccessCode())) {
+            if (request.getAccessCode() == null || request.getAccessCode().isBlank()) {
+                throw new BadRequestException("Keçid kodu tələb olunur");
+            }
+            ExamAccessCode accessCode = examAccessCodeRepository.findByCode(request.getAccessCode())
+                    .orElseThrow(() -> new BadRequestException("Keçid kodu yanlışdır"));
+            if (!accessCode.getExam().getId().equals(exam.getId())) {
                 throw new BadRequestException("Keçid kodu yanlışdır");
             }
-            if (exam.getAccessCodeExpiresAt() == null || exam.getAccessCodeExpiresAt().isBefore(LocalDateTime.now())) {
+            if (accessCode.isUsed()) {
+                throw new BadRequestException("Bu keçid kodu artıq istifadə edilib");
+            }
+            if (accessCode.getExpiresAt().isBefore(LocalDateTime.now())) {
                 throw new BadRequestException("Keçid kodunun müddəti bitib. Müəllimdən yeni kod istəyin");
             }
+            accessCode.setUsed(true);
+            examAccessCodeRepository.save(accessCode);
         }
 
         // Check if there is already an ongoing submission for this exam and student
@@ -105,6 +119,9 @@ public class SubmissionService {
         }
 
         submission = submissionRepository.save(submission);
+        String actorEmail = student != null ? student.getEmail() : (request.getGuestName() + " (qonaq)");
+        String actorName  = student != null ? student.getFullName() : request.getGuestName();
+        auditLogService.log(AuditAction.EXAM_STARTED, actorEmail, actorName, "EXAM", exam.getTitle(), "Müəllim: " + exam.getTeacher().getFullName());
         return mapToResponse(submission);
     }
 
@@ -269,7 +286,7 @@ public class SubmissionService {
         } else if (question.getQuestionType() == QuestionType.OPEN_AUTO) {
             String correctText = question.getCorrectAnswer();
             if (correctText != null && answer.getAnswerText() != null &&
-                    correctText.trim().equalsIgnoreCase(answer.getAnswerText().trim())) {
+                    normalizeAnswer(correctText).equalsIgnoreCase(normalizeAnswer(answer.getAnswerText()))) {
                 answer.setScore(question.getPoints());
             } else {
                 answer.setScore(0.0);
@@ -324,7 +341,7 @@ public class SubmissionService {
                         if (i < studentAnswers.size()
                                 && correctAnswers.get(i) != null
                                 && studentAnswers.get(i) != null
-                                && correctAnswers.get(i).trim().equalsIgnoreCase(studentAnswers.get(i).trim())) {
+                                && normalizeAnswer(correctAnswers.get(i)).equalsIgnoreCase(normalizeAnswer(studentAnswers.get(i)))) {
                             correct++;
                         }
                     }
@@ -462,6 +479,11 @@ public class SubmissionService {
         }
 
         submission = submissionRepository.save(submission);
+
+        String subEmail = submission.getStudent() != null ? submission.getStudent().getEmail() : (submission.getGuestName() + " (qonaq)");
+        String subName  = submission.getStudent() != null ? submission.getStudent().getFullName() : submission.getGuestName();
+        auditLogService.log(AuditAction.EXAM_SUBMITTED, subEmail, subName, "EXAM", submission.getExam().getTitle(),
+                String.format("Bal: %.2f / %.2f", submission.getTotalScore(), submission.getMaxScore()));
 
         // Remove exam from student's depot after completion
         if (submission.getStudent() != null) {
@@ -1125,6 +1147,20 @@ public class SubmissionService {
                         .attachedImageRight(m.getAttachedImageRight())
                         .build()
                 ).collect(Collectors.toList()));
+    }
+
+    /**
+     * Strips LaTeX math delimiters ($$...$$, $...$) from an answer so that
+     * a correct answer written with the math keyboard (e.g. "$$29$$") matches
+     * a student's plain-text answer (e.g. "29").
+     */
+    private static String normalizeAnswer(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        // Strip all $$...$$ and $...$ wrappers, keep only the inner content
+        s = s.replaceAll("\\$\\$([^$]*)\\$\\$", "$1");
+        s = s.replaceAll("\\$([^$]*)\\$", "$1");
+        return s.trim();
     }
 
     @lombok.Data

@@ -134,9 +134,10 @@ public class GoogleAuthService {
         );
     }
 
-    /** Returns true if the stored picture is a Google URL (not a user-uploaded base64/custom URL). */
+    /** Returns true if the stored picture is a Google URL (not a user-uploaded base64/custom URL).
+     *  null or blank means the user explicitly removed their picture — do NOT sync in that case. */
     private boolean isGooglePictureUrl(String url) {
-        return url == null || url.isBlank() || url.startsWith("https://lh3.googleusercontent.com");
+        return url != null && !url.isBlank() && url.startsWith("https://lh3.googleusercontent.com");
     }
 
     /**

@@ -7,6 +7,7 @@ public record AdminUserResponse(
         Long id,
         String fullName,
         String email,
+        String phoneNumber,
         Role role,
         String profilePicture,
         LocalDateTime createdAt,

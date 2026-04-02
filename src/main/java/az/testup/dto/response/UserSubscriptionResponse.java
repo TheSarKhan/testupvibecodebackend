@@ -1,5 +1,6 @@
 package az.testup.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import java.time.LocalDateTime;
 
@@ -11,6 +12,7 @@ public class UserSubscriptionResponse {
     private SubscriptionPlanResponse plan;
     private LocalDateTime startDate;
     private LocalDateTime endDate;
+    @JsonProperty("isActive")
     private boolean isActive;
     private String paymentProvider;
     private double amountPaid;

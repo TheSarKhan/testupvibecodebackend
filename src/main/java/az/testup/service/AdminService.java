@@ -411,6 +411,7 @@ public class AdminService {
                 user.getId(),
                 user.getFullName(),
                 user.getEmail(),
+                user.getPhoneNumber(),
                 user.getRole(),
                 user.getProfilePicture(),
                 user.getCreatedAt(),
