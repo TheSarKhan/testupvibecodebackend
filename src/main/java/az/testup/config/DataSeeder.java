@@ -250,47 +250,62 @@ public class DataSeeder implements CommandLineRunner {
 
     private void seedAdmin() {
         String adminEmail = "sarxanbabayevcontact@gmail.com";
-        if (!userRepository.existsByEmail(adminEmail)) {
-            User admin = User.builder()
+        User admin = userRepository.findByEmail(adminEmail).orElseGet(() -> {
+            User u = User.builder()
                     .fullName("Sərxan Babayev")
                     .email(adminEmail)
                     .password(passwordEncoder.encode("salam123"))
                     .role(Role.ADMIN)
                     .enabled(true)
                     .build();
-            userRepository.save(admin);
-            assignUnlimitedPlanToUser(admin);
+            User saved = userRepository.save(u);
+            assignUnlimitedPlanToUser(saved);
             log.info("Admin istifadəçisi yaradıldı: {}", adminEmail);
+            return saved;
+        });
+        if (admin.getPhoneNumber() == null) {
+            admin.setPhoneNumber("+994501234567");
+            userRepository.save(admin);
         }
     }
 
     private void seedTeacher() {
         String email = "serxan.babayev.06@gmail.com";
-        if (!userRepository.existsByEmail(email)) {
-            User teacher = User.builder()
+        User teacher = userRepository.findByEmail(email).orElseGet(() -> {
+            User u = User.builder()
                     .fullName("Sərxan Babayev")
                     .email(email)
                     .password(passwordEncoder.encode("salam123"))
                     .role(Role.TEACHER)
                     .enabled(true)
                     .build();
-            userRepository.save(teacher);
-            assignUnlimitedPlanToUser(teacher);
+            User saved = userRepository.save(u);
+            assignUnlimitedPlanToUser(saved);
             log.info("Müəllim hesabı yaradıldı: {}", email);
+            return saved;
+        });
+        if (teacher.getPhoneNumber() == null) {
+            teacher.setPhoneNumber("+994557654321");
+            userRepository.save(teacher);
         }
     }
 
     private void seedStudent() {
         String email = "serxanbabayev614@gmail.com";
-        if (!userRepository.existsByEmail(email)) {
-            userRepository.save(User.builder()
+        User student = userRepository.findByEmail(email).orElseGet(() -> {
+            User u = User.builder()
                     .fullName("Sərxan Babayev")
                     .email(email)
                     .password(passwordEncoder.encode("salam123"))
                     .role(Role.STUDENT)
                     .enabled(true)
-                    .build());
+                    .build();
             log.info("Şagird hesabı yaradıldı: {}", email);
+            return userRepository.save(u);
+        });
+        if (student.getPhoneNumber() == null) {
+            student.setPhoneNumber("+994709876543");
+            userRepository.save(student);
         }
     }
 
