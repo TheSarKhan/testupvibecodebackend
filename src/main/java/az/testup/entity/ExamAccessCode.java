@@ -3,6 +3,7 @@ package az.testup.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 /**
@@ -32,7 +33,7 @@ public class ExamAccessCode {
 
     /** When this code expires (12 hours after creation) */
     @Column(nullable = false)
-    private LocalDateTime expiresAt;
+    private Instant expiresAt;
 
     /** True once a student has used this code to start an exam */
     @Column(nullable = false)
@@ -40,10 +41,10 @@ public class ExamAccessCode {
     private boolean used = false;
 
     @Column(nullable = false, updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = Instant.now();
     }
 }

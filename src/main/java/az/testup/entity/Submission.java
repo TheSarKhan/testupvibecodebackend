@@ -3,6 +3,7 @@ package az.testup.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,9 +54,9 @@ public class Submission {
     @Builder.Default
     private List<Answer> answers = new ArrayList<>();
 
-    private LocalDateTime startedAt;
+    private Instant startedAt;
 
-    private LocalDateTime submittedAt;
+    private Instant submittedAt;
 
     @Column(updatable = false)
     private LocalDateTime createdAt;
