@@ -29,7 +29,8 @@ import java.util.List;
 @Slf4j
 public class PdfService {
 
-    private static final java.util.regex.Pattern LATEX_PATTERN = java.util.regex.Pattern.compile("\\$\\$(.*?)\\$\\$");
+    // Match both $$...$$ (display) and $...$ (inline) — display first to avoid matching single $ in $$
+    private static final java.util.regex.Pattern LATEX_PATTERN = java.util.regex.Pattern.compile("\\$\\$([^$]+)\\$\\$|\\$([^\\n$]+?)\\$");
 
     public byte[] generateExamPdf(Exam exam) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -306,26 +307,43 @@ public class PdfService {
                 paragraph.add(new Chunk(plainText, font));
             }
 
-            String latex = matcher.group(1).trim();
+            // Group 1: $$...$$ (display), Group 2: $...$ (inline)
+            String latex = matcher.group(1) != null ? matcher.group(1).trim() : (matcher.group(2) != null ? matcher.group(2).trim() : "");
+            boolean isDisplay = matcher.group(1) != null;
+
             if (!latex.isEmpty()) {
                 try {
                     TeXFormula formula = new TeXFormula(latex);
-                    TeXIcon icon = formula.createTeXIcon(TeXConstants.STYLE_DISPLAY, font.getSize());
-                    
-                    BufferedImage bimg = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
+                    int style = isDisplay ? TeXConstants.STYLE_DISPLAY : TeXConstants.STYLE_TEXT;
+
+                    // Render at 3x size for better quality, then scale down
+                    float renderScale = 3.0f;
+                    float renderFontSize = font.getSize() * renderScale;
+                    TeXIcon icon = formula.createTeXIcon(style, (int) renderFontSize);
+
+                    // Create high-quality BufferedImage
+                    BufferedImage bimg = new BufferedImage(
+                        (int)(icon.getIconWidth() * 1.2),
+                        (int)(icon.getIconHeight() * 1.2),
+                        BufferedImage.TYPE_INT_ARGB
+                    );
                     Graphics2D g2 = bimg.createGraphics();
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    g2.setColor(new Color(0, 0, 0, 0)); // transparent
-                    g2.fillRect(0, 0, icon.getIconWidth(), icon.getIconHeight());
-                    g2.setColor(Color.BLACK); // formula color
-                    icon.paintIcon(null, g2, 0, 0);
+                    g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                    g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                    g2.setColor(new Color(0, 0, 0, 0)); // transparent background
+                    g2.fillRect(0, 0, bimg.getWidth(), bimg.getHeight());
+                    g2.setColor(Color.BLACK);
+                    icon.paintIcon(null, g2, (int)(icon.getIconWidth() * 0.1), (int)(icon.getIconHeight() * 0.1));
                     g2.dispose();
-                    
+
                     Image iTextImage = Image.getInstance(bimg, null);
-                    float scaleFactor = 1.0f;
-                    iTextImage.scaleAbsolute(icon.getIconWidth() * scaleFactor, icon.getIconHeight() * scaleFactor);
-                    
-                    float yOffset = -icon.getIconHeight() * scaleFactor * 0.2f;
+                    // Scale down to actual size (dividing by renderScale)
+                    float displayWidth = icon.getIconWidth() / renderScale;
+                    float displayHeight = icon.getIconHeight() / renderScale;
+                    iTextImage.scaleAbsolute(displayWidth, displayHeight);
+
+                    float yOffset = -displayHeight * 0.2f;
                     paragraph.add(new Chunk(iTextImage, 0, yOffset, true));
                 } catch (Exception e) {
                     paragraph.add(new Chunk(matcher.group(0), font));
