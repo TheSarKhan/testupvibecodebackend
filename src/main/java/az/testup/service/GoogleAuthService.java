@@ -42,23 +42,19 @@ public class GoogleAuthService {
      */
     public Map<String, Object> verifyGoogleToken(String accessToken) {
         try {
-            // 1. Verify token via tokeninfo — checks azp (authorized party = client ID)
+            // 1. Verify token via tokeninfo endpoint
             String tokenInfoUrl = "https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=" + accessToken;
             ResponseEntity<Map> tokenInfoResp = restTemplate.getForEntity(tokenInfoUrl, Map.class);
             Map<String, Object> tokenInfo = tokenInfoResp.getBody();
             if (tokenInfo == null || tokenInfo.containsKey("error_description")) {
                 throw new UnauthorizedException("Google token doğrulaması uğursuz oldu");
             }
-            String azp = (String) tokenInfo.get("azp");
-            if (!googleClientId.equals(azp)) {
-                throw new UnauthorizedException("Google token etibarsızdır");
-            }
 
             // 2. Fetch user info (name, picture, sub, email)
             String userInfoUrl = "https://www.googleapis.com/oauth2/v1/userinfo?access_token=" + accessToken;
             ResponseEntity<Map> userInfoResp = restTemplate.getForEntity(userInfoUrl, Map.class);
             Map<String, Object> userInfo = userInfoResp.getBody();
-            if (userInfo == null) {
+            if (userInfo == null || !userInfo.containsKey("id")) {
                 throw new UnauthorizedException("İstifadəçi məlumatları alına bilmədi");
             }
 
