@@ -9,6 +9,7 @@ import az.testup.entity.*;
 import az.testup.enums.AuditAction;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.Role;
+import az.testup.exception.UnauthorizedException;
 import az.testup.util.FormulaEvaluator;
 import az.testup.enums.ExamVisibility;
 import az.testup.enums.QuestionType;
@@ -524,6 +525,19 @@ public class SubmissionService {
         return submissionRepository.findByStudentIdAndSubmittedAtIsNull(student.getId()).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public SubmissionResponse getSubmissionById(Long submissionId, User student) {
+        Submission submission = submissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Nəticə tapılmadı"));
+
+        // Verify that the student owns this submission or is viewing their own result
+        if (student != null && !submission.getStudent().getId().equals(student.getId())) {
+            throw new UnauthorizedException("Bu nəticəni görməmə icazəniz yoxdur");
+        }
+
+        return mapToResponse(submission);
     }
 
     @Transactional(readOnly = true)

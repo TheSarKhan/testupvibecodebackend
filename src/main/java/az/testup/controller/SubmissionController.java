@@ -124,9 +124,11 @@ public class SubmissionController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<SubmissionResponse> getSubmissionById(@PathVariable Long id) {
-        // ... (can implement if needed, for now using existing mapToResponse logic likely)
-        return ResponseEntity.notFound().build();
+    public ResponseEntity<SubmissionResponse> getSubmissionById(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User student = getCurrentUserOrNull(userDetails);
+        return ResponseEntity.ok(submissionService.getSubmissionById(id, student));
     }
 
     @PostMapping("/{id}/grade-answer")
