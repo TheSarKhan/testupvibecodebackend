@@ -810,7 +810,8 @@ public class SubmissionService {
             case MULTI_SELECT           -> a.getSelectedOptionIdsJson() == null
                                            || a.getSelectedOptionIdsJson().isBlank()
                                            || a.getSelectedOptionIdsJson().equals("[]");
-            case OPEN_AUTO, OPEN_MANUAL -> a.getAnswerText() == null || a.getAnswerText().isBlank();
+            case OPEN_AUTO, OPEN_MANUAL -> (a.getAnswerText() == null || a.getAnswerText().isBlank())
+                                           && (a.getAnswerImage() == null || a.getAnswerImage().isBlank());
             case FILL_IN_THE_BLANK      -> a.getAnswerText() == null
                                            || a.getAnswerText().isBlank()
                                            || a.getAnswerText().equals("[]");
@@ -1017,23 +1018,24 @@ public class SubmissionService {
 
         Exam exam = submission.getExam();
 
-        List<QuestionReviewResponse> reviewQuestions = submission.getAnswers().stream()
-                .sorted(java.util.Comparator.comparing(a -> {
-                    if (a.getQuestionSnapshot() != null) {
-                        try {
-                            QuestionSnapshot snapshot = objectMapper.readValue(a.getQuestionSnapshot(), QuestionSnapshot.class);
-                            return snapshot.getOrderIndex() != null ? snapshot.getOrderIndex() : 0;
-                        } catch (Exception e) {}
-                    }
-                    return a.getQuestion().getOrderIndex() != null ? a.getQuestion().getOrderIndex() : 0;
-                }))
-                .map(studentAnswer -> {
-                    Question q = studentAnswer.getQuestion();
+        // Create a map of question ID to answer for quick lookup
+        Map<Long, Answer> answerByQuestionId = submission.getAnswers().stream()
+                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+
+        // Get all questions from exam (standalone + passage) and sort by orderIndex
+        List<Question> allQuestions = exam.getQuestions().stream()
+                .sorted(java.util.Comparator.comparing(q -> q.getOrderIndex() != null ? q.getOrderIndex() : 0))
+                .collect(Collectors.toList());
+
+        List<QuestionReviewResponse> reviewQuestions = allQuestions.stream()
+                .map(q -> {
+                    Answer studentAnswer = answerByQuestionId.get(q.getId());
+
                     QuestionReviewResponse.QuestionReviewResponseBuilder qBuilder = QuestionReviewResponse.builder()
                             .id(q.getId())
                             .passageId(q.getPassage() != null ? q.getPassage().getId() : null);
 
-                    if (studentAnswer.getQuestionSnapshot() != null) {
+                    if (studentAnswer != null && studentAnswer.getQuestionSnapshot() != null) {
                         try {
                             QuestionSnapshot snapshot = objectMapper.readValue(studentAnswer.getQuestionSnapshot(), QuestionSnapshot.class);
                             qBuilder.content(snapshot.getContent())
@@ -1059,26 +1061,38 @@ public class SubmissionService {
                         fillBuilderWithLiveData(qBuilder, q);
                     }
 
-                    List<Long> selectedOptionIds = new ArrayList<>();
-                    if (q.getQuestionType() == QuestionType.MULTI_SELECT && studentAnswer.getSelectedOptionIdsJson() != null) {
-                        try {
-                            selectedOptionIds = objectMapper.readValue(studentAnswer.getSelectedOptionIdsJson(),
-                                objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class));
-                        } catch (Exception e) {}
-                    } else if (studentAnswer.getSelectedOptionId() != null) {
-                        selectedOptionIds.add(studentAnswer.getSelectedOptionId());
+                    if (studentAnswer != null) {
+                        List<Long> selectedOptionIds = new ArrayList<>();
+                        if (q.getQuestionType() == QuestionType.MULTI_SELECT && studentAnswer.getSelectedOptionIdsJson() != null) {
+                            try {
+                                selectedOptionIds = objectMapper.readValue(studentAnswer.getSelectedOptionIdsJson(),
+                                    objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class));
+                            } catch (Exception e) {}
+                        } else if (studentAnswer.getSelectedOptionId() != null) {
+                            selectedOptionIds.add(studentAnswer.getSelectedOptionId());
+                        }
+
+                        qBuilder.studentAnswerText(studentAnswer.getAnswerText())
+                                .studentAnswerImage(studentAnswer.getAnswerImage())
+                                .studentSelectedOptionId(studentAnswer.getSelectedOptionId())
+                                .studentSelectedOptionIds(selectedOptionIds)
+                                .studentMatchingAnswerJson(studentAnswer.getMatchingAnswerJson())
+                                .awardedScore(studentAnswer.getScore() != null ? studentAnswer.getScore() : 0.0)
+                                .isGraded(studentAnswer.getIsGraded() != null ? studentAnswer.getIsGraded() : true)
+                                .feedback(studentAnswer.getFeedback());
+                    } else {
+                        // Question was not answered - set default values
+                        qBuilder.studentAnswerText(null)
+                                .studentAnswerImage(null)
+                                .studentSelectedOptionId(null)
+                                .studentSelectedOptionIds(new ArrayList<>())
+                                .studentMatchingAnswerJson(null)
+                                .awardedScore(0.0)
+                                .isGraded(false)
+                                .feedback(null);
                     }
 
-                    return qBuilder
-                            .studentAnswerText(studentAnswer.getAnswerText())
-                            .studentAnswerImage(studentAnswer.getAnswerImage())
-                            .studentSelectedOptionId(studentAnswer.getSelectedOptionId())
-                            .studentSelectedOptionIds(selectedOptionIds)
-                            .studentMatchingAnswerJson(studentAnswer.getMatchingAnswerJson())
-                            .awardedScore(studentAnswer.getScore() != null ? studentAnswer.getScore() : 0.0)
-                            .isGraded(studentAnswer.getIsGraded() != null ? studentAnswer.getIsGraded() : true)
-                            .feedback(studentAnswer.getFeedback())
-                            .build();
+                    return qBuilder.build();
                 }).collect(Collectors.toList());
 
         int ungradedCount = (int) submission.getAnswers().stream()
