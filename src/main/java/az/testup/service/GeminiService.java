@@ -57,8 +57,10 @@ public class GeminiService {
 
     private String buildSystemMessage() {
         return "You are a professional exam question generator for Azerbaijani school curriculum. " +
-               "You MUST respond with valid JSON only — no markdown fences, no explanations, no extra text. " +
-               "The response must be a JSON object with a single key \"questions\" containing an array.";
+               "You MUST respond with VALID JSON ONLY — no markdown fences, no explanations, no extra text. " +
+               "The response must be a JSON object with a single key \"questions\" containing an array. " +
+               "CRITICAL: In JSON strings containing LaTeX, escape all backslashes properly. " +
+               "For example: to write \\frac in JSON, use the sequence: backslash backslash f r a c";
     }
 
     private String buildPrompt(GenerateQuestionsRequest req) {
@@ -80,10 +82,12 @@ public class GeminiService {
 
             LaTeX qaydaları (KaTeX formatı):
             - İnline riyazi ifadə: $ifadə$ — məsələn: $x^2 + 3x - 4 = 0$
-            - Kəsrlər: $\\frac{a}{b}$ — məsələn: $\\frac{3}{4}$
-            - Kvadrat kök: $\\sqrt{x}$ — məsələn: $\\sqrt{16}$
+            - Kəsrlər: $\\frac{a}{b}$ — məsələn: $\\frac{3}{4}$ (JSON-DA: \\\\frac)
+            - Kvadrat kök: $\\sqrt{x}$ — məsələn: $\\sqrt{16}$ (JSON-DA: \\\\sqrt)
             - Üst dərəcə: $x^{2}$, alt indeks: $x_{1}$
-            - Vurmaq: $\\cdot$ — məsələn: $3 \\cdot x$
+            - Vurmaq: $\\cdot$ — məsələn: $3 \\cdot x$ (JSON-DA: \\\\cdot)
+            - MATRİSLƏR: $\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$ — QEYDİ: kəsik üçün dörd arxa xətt, sonda \\end{} yazmalı
+            - QAYD: JSON-da LaTeX komandasının hər bir backslash DOUBLE-ESCAPE olmalı
             - Bütün riyazi ifadə, ədəd, dəyişən LaTeX ilə yazılmalıdır
             """ : "";
 
@@ -96,7 +100,7 @@ public class GeminiService {
                 : "Açıq sual: tələbə qısa cavab yazır, correctAnswer düzgün cavabdır.";
 
             exampleJson = isMath
-                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ bərabərliyini həll edin. $x$ = ___\",\"correctAnswer\":\"$x = 4$\"},{\"content\":\"$\\\\frac{3}{4}$ ədədinin $\\\\frac{2}{3}$ hissəsini tapın.\",\"correctAnswer\":\"$\\\\frac{1}{2}$\"}]}"
+                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ bərabərliyini həll edin. $x$ = ___\",\"correctAnswer\":\"$x = 4$\"},{\"content\":\"$\\\\frac{3}{4}$ ədədinin $\\\\frac{2}{3}$ hissəsini tapın.\",\"correctAnswer\":\"$\\\\frac{1}{2}$\"},{\"content\":\"$2 \\\\cdot \\\\begin{pmatrix} 1 & 2 \\\\\\\\ 3 & 4 \\\\end{pmatrix} + \\\\begin{pmatrix} 1 & 1 \\\\\\\\ 1 & 1 \\\\end{pmatrix}$ matris əməliyyatının nəticəsinin 1-ci sətir 1-ci sütun elementini tapın.\",\"correctAnswer\":\"4\"}]}"
                 : "{\"questions\":[{\"content\":\"Azərbaycanın paytaxtı hansı şəhərdir?\",\"correctAnswer\":\"Bakı\"},{\"content\":\"Su hansı kimyəvi formulla ifadə olunur?\",\"correctAnswer\":\"H₂O\"}]}";
         } else if (isMulti) {
             typeInstruction = "Çox seçimli: 4 variant olmalıdır, 2 variant düzgündür (isCorrect: true), 2 variant səhvdir (isCorrect: false).";
@@ -121,7 +125,8 @@ public class GeminiService {
                 "2. Variantlar real, məntiqi və aldadıcı olmalıdır — heç biri boş qoyulmamalıdır\n" +
                 "3. Hər sualda tam " + (isOpen ? "\"content\" və \"correctAnswer\"" : "\"content\" və 4 variant olan \"options\"") + " olmalıdır\n" +
                 "4. JSON obyektinin açarı \"questions\" olmalıdır\n" +
-                (isMath ? "5. Bütün riyazi ifadələr KaTeX ($...$) formatında yazılmalıdır\n" : "") +
+                (isMath ? "5. Bütün riyazi ifadələr KaTeX formatında yazılmalıdır ($...$)\n" +
+                         "6. JSON Response-da backslash-lar DOUBLE-ESCAPE olmalı: content-də LaTeX komandaları tək backslash ilə yazılır\n" : "") +
                 "\nNÜMUNƏ FORMAT (məzmunu kopyalama, yalnız strukturu izlə):\n" +
                 exampleJson);
     }
