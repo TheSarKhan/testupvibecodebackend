@@ -547,7 +547,7 @@ public class ExamService {
         }
 
         String code = CodeGenerator.generateAccessCode();
-        LocalDateTime expiresAt = LocalDateTime.now().plusHours(12);
+        java.time.Instant expiresAt = java.time.Instant.now().plusSeconds(12 * 3600);
 
         ExamAccessCode accessCode = ExamAccessCode.builder()
                 .exam(exam)

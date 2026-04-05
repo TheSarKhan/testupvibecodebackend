@@ -6,7 +6,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.List;
 import az.testup.dto.request.AnswerRequest;
 
@@ -18,7 +17,7 @@ public class SessionDetailsResponse {
     private Long submissionId;
     private String examTitle;
     private Integer durationMinutes;
-    private LocalDateTime startedAt;
+    private Instant startedAt;
     /** Pre-calculated remaining seconds (server-side, timezone-safe). -1 = no timer. */
     private Long remainingSeconds;
     /** Ordered list of exam subjects (first = main section, rest = extra sections) */

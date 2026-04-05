@@ -6,7 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 @Data
@@ -22,8 +22,8 @@ public class SubmissionResponse {
     private Double maxScore;
     private Boolean isFullyGraded;
     private Integer rating;
-    private LocalDateTime startedAt;
-    private LocalDateTime submittedAt;
+    private Instant startedAt;
+    private Instant submittedAt;
     private Integer durationMinutes;
     /** Whether the student paid for this exam (null if exam is free) */
     private Boolean hasPaid;

@@ -1,0 +1,3 @@
+-- Timezone fix implemented in Java code using Instant type
+-- Hibernate automatically handles UTC conversion for Instant fields
+-- Database columns remain compatible while Java code manages timezone-safe operations

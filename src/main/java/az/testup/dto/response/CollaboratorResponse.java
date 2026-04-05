@@ -2,7 +2,7 @@ package az.testup.dto.response;
 
 import az.testup.enums.CollaboratorStatus;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 public record CollaboratorResponse(
@@ -17,8 +17,8 @@ public record CollaboratorResponse(
         String adminComment,
         Long draftExamId,
         Integer draftQuestionCount,
-        LocalDateTime submittedAt,
-        LocalDateTime createdAt,
+        Instant submittedAt,
+        Instant createdAt,
         /** Template sections assigned to this teacher (empty = free mode) */
         List<CollaboratorSectionInfo> templateSections
 ) {}

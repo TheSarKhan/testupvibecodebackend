@@ -385,7 +385,7 @@ public class CollaborativeExamService {
         }
 
         collab.setStatus(CollaboratorStatus.SUBMITTED);
-        collab.setSubmittedAt(LocalDateTime.now());
+        collab.setSubmittedAt(java.time.Instant.now());
         collaboratorRepository.save(collab);
 
         User admin = collab.getCollaborativeExam().getTeacher();

@@ -5,7 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 @Data
@@ -18,8 +18,8 @@ public class SubmissionReviewResponse {
     private String examTitle;
     private Double totalScore;
     private Double maxScore;
-    private LocalDateTime startedAt;
-    private LocalDateTime submittedAt;
+    private Instant startedAt;
+    private Instant submittedAt;
     private Boolean isFullyGraded;
     private Integer ungradedCount;
     private Integer rating;

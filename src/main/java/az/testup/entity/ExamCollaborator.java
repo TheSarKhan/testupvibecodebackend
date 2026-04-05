@@ -4,7 +4,7 @@ import az.testup.enums.CollaboratorStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,13 +60,13 @@ public class ExamCollaborator {
     @Column(columnDefinition = "TEXT")
     private String adminComment;
 
-    private LocalDateTime submittedAt;
+    private Instant submittedAt;
 
     @Column(updatable = false, nullable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = Instant.now();
     }
 }
