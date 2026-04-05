@@ -82,7 +82,8 @@ public class SubmissionService {
             if (accessCode.isUsed()) {
                 throw new BadRequestException("Bu keçid kodu artıq istifadə edilib");
             }
-            if (accessCode.getExpiresAt().isBefore(LocalDateTime.now())) {
+            java.time.ZoneId utcZone = java.time.ZoneId.of("UTC");
+            if (accessCode.getExpiresAt().isBefore(java.time.LocalDateTime.now(utcZone))) {
                 throw new BadRequestException("Keçid kodunun müddəti bitib. Müəllimdən yeni kod istəyin");
             }
             accessCode.setUsed(true);
@@ -106,11 +107,12 @@ public class SubmissionService {
             }
         }
 
+        java.time.ZoneId utcZone = java.time.ZoneId.of("UTC");
         Submission submission = Submission.builder()
                 .exam(exam)
                 .student(student)
                 .guestName(student == null ? request.getGuestName() : null)
-                .startedAt(LocalDateTime.now())
+                .startedAt(java.time.LocalDateTime.now(utcZone))
                 .isFullyGraded(false)
                 .answers(new ArrayList<>())
                 .build();
@@ -418,7 +420,8 @@ public class SubmissionService {
     public void autoSubmitExpiredExams() {
         List<Submission> active = submissionRepository.findActiveTimedSubmissions();
         if (active.isEmpty()) return;
-        LocalDateTime now = LocalDateTime.now();
+        java.time.ZoneId utcZone = java.time.ZoneId.of("UTC");
+        LocalDateTime now = java.time.LocalDateTime.now(utcZone);
         int count = 0;
         for (Submission submission : active) {
             long durationSeconds = submission.getExam().getDurationMinutes() * 60L;
@@ -461,7 +464,8 @@ public class SubmissionService {
                 .sum();
 
         if (submission.getSubmittedAt() == null) {
-            submission.setSubmittedAt(LocalDateTime.now());
+            java.time.ZoneId utcZone = java.time.ZoneId.of("UTC");
+            submission.setSubmittedAt(java.time.LocalDateTime.now(utcZone));
         }
         submission.setTotalScore(totalScore);
         submission.setMaxScore(examMaxScore);
@@ -953,9 +957,12 @@ public class SubmissionService {
         }).collect(Collectors.toList());
 
         // Calculate remaining seconds server-side to avoid client timezone issues
+        // Use Instant.now() (UTC) instead of LocalDateTime.now() to ensure consistent calculation across all timezones
         Long remainingSeconds = null;
         if (exam.getDurationMinutes() != null && exam.getDurationMinutes() > 0 && submission.getStartedAt() != null) {
-            long elapsed = java.time.temporal.ChronoUnit.SECONDS.between(submission.getStartedAt(), LocalDateTime.now());
+            java.time.ZoneId utcZone = java.time.ZoneId.of("UTC");
+            java.time.LocalDateTime nowUtc = java.time.LocalDateTime.now(utcZone);
+            long elapsed = java.time.temporal.ChronoUnit.SECONDS.between(submission.getStartedAt(), nowUtc);
             remainingSeconds = exam.getDurationMinutes() * 60L - elapsed;
         }
 
