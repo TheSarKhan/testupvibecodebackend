@@ -13,4 +13,5 @@ public class BannerRequest {
     private String position; // HERO | INLINE | BOTTOM
     private String bgGradient;
     private Integer orderIndex;
+    private String targetAudience; // ALL | GUEST | TEACHER | STUDENT
 }

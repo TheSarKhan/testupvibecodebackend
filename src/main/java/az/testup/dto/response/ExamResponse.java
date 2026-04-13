@@ -32,6 +32,7 @@ public class ExamResponse {
     private boolean sitePublished;
     private Long templateId;
     private Long templateSectionId;
+    private List<Long> templateSectionIds;
     private List<String> tags;
     private List<QuestionResponse> questions;
     private List<PassageResponse> passages;

@@ -14,6 +14,7 @@ import az.testup.entity.TemplateSectionTypeCount;
 import az.testup.entity.TemplateSubtitle;
 import az.testup.entity.User;
 import az.testup.enums.QuestionType;
+import az.testup.enums.TemplateType;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.TemplateSectionRepository;
 import az.testup.repository.TemplateRepository;
@@ -41,10 +42,22 @@ public class TemplateService {
                 .collect(Collectors.toList());
     }
 
+    public List<TemplateResponse> getTemplatesByType(TemplateType type) {
+        return templateRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(t -> type == (t.getTemplateType() != null ? t.getTemplateType() : TemplateType.STANDARD))
+                .map(this::mapTemplate)
+                .collect(Collectors.toList());
+    }
+
     @Transactional
     public TemplateResponse createTemplate(TemplateRequest request, User admin) {
+        TemplateType type = TemplateType.STANDARD;
+        if (request.templateType() != null) {
+            try { type = TemplateType.valueOf(request.templateType()); } catch (IllegalArgumentException ignored) {}
+        }
         Template template = Template.builder()
                 .title(request.title())
+                .templateType(type)
                 .createdBy(admin)
                 .build();
         return mapTemplate(templateRepository.save(template));
@@ -55,6 +68,9 @@ public class TemplateService {
         Template template = templateRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Şablon tapılmadı"));
         template.setTitle(request.title());
+        if (request.templateType() != null) {
+            try { template.setTemplateType(TemplateType.valueOf(request.templateType())); } catch (IllegalArgumentException ignored) {}
+        }
         return mapTemplate(templateRepository.save(template));
     }
 
@@ -136,6 +152,7 @@ public class TemplateService {
 
         section.setSubjectName(request.subjectName());
         section.setFormula(request.formula());
+        section.setPointGroups(request.pointGroups());
         section.getTypeCounts().clear();
 
         if (request.typeCounts() != null) {
@@ -181,6 +198,7 @@ public class TemplateService {
         TemplateSection section = TemplateSection.builder()
                 .subjectName(request.subjectName())
                 .formula(request.formula())
+                .pointGroups(request.pointGroups())
                 .orderIndex(request.orderIndex() != null ? request.orderIndex() : orderIndex)
                 .subtitle(subtitle)
                 .build();
@@ -204,7 +222,8 @@ public class TemplateService {
     private TemplateResponse mapTemplate(Template t) {
         return new TemplateResponse(t.getId(), t.getTitle(),
                 t.getSubtitles() != null ? t.getSubtitles().size() : 0,
-                t.getCreatedAt());
+                t.getCreatedAt(),
+                t.getTemplateType() != null ? t.getTemplateType().name() : TemplateType.STANDARD.name());
     }
 
     private TemplateSubtitleResponse mapSubtitle(TemplateSubtitle s) {
@@ -223,6 +242,6 @@ public class TemplateService {
                 s.getId(), s.getSubjectName(),
                 total > 0 ? total : s.getQuestionCount(),
                 typeCounts, s.getFormula(), s.getOrderIndex(),
-                templateTitle, subtitleName);
+                templateTitle, subtitleName, s.getPointGroups());
     }
 }

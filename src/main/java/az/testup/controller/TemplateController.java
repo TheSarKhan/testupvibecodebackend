@@ -3,6 +3,7 @@ package az.testup.controller;
 import az.testup.dto.response.TemplateSectionResponse;
 import az.testup.dto.response.TemplateResponse;
 import az.testup.dto.response.TemplateSubtitleResponse;
+import az.testup.enums.TemplateType;
 import az.testup.service.TemplateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,7 +20,12 @@ public class TemplateController {
 
     @GetMapping
     public ResponseEntity<List<TemplateResponse>> getAllTemplates() {
-        return ResponseEntity.ok(templateService.getAllTemplates());
+        return ResponseEntity.ok(templateService.getTemplatesByType(TemplateType.STANDARD));
+    }
+
+    @GetMapping("/olimpiyada")
+    public ResponseEntity<List<TemplateResponse>> getOlimpiyadaTemplates() {
+        return ResponseEntity.ok(templateService.getTemplatesByType(TemplateType.OLIMPIYADA));
     }
 
     @GetMapping("/{templateId}/subtitles")

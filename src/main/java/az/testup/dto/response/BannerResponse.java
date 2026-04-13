@@ -22,6 +22,7 @@ public class BannerResponse {
     private String position;
     private String bgGradient;
     private Integer orderIndex;
+    private String targetAudience;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

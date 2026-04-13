@@ -148,6 +148,15 @@ public class SubmissionController {
         return ResponseEntity.ok(submissionService.getSubmissionReview(id, student));
     }
 
+    @DeleteMapping("/{id}/teacher-hide")
+    public ResponseEntity<Void> hideSubmission(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User teacher = getCurrentUser(userDetails);
+        submissionService.hideSubmission(id, teacher);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/teacher/pending")
     public ResponseEntity<List<SubmissionResponse>> getTeacherPendingGradings(
             @AuthenticationPrincipal UserDetails userDetails) {

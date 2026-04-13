@@ -39,6 +39,9 @@ public class ExamRequest {
 
     private Long templateSectionId;
 
+    /** Multiple template section IDs for multi-subject template exams */
+    private List<Long> templateSectionIds;
+
     private List<String> tags;
 
     /** Standalone questions (not belonging to any passage) */

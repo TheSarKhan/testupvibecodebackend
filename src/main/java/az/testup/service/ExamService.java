@@ -124,7 +124,12 @@ public class ExamService {
             exam.setTemplate(template);
         }
 
-        if (request.getTemplateSectionId() != null) {
+        if (request.getTemplateSectionIds() != null && !request.getTemplateSectionIds().isEmpty()) {
+            List<TemplateSection> sections = templateSectionRepository.findAllById(request.getTemplateSectionIds());
+            exam.getTemplateSections().clear();
+            exam.getTemplateSections().addAll(sections);
+            exam.setTemplateSection(sections.isEmpty() ? null : sections.get(0));
+        } else if (request.getTemplateSectionId() != null) {
             TemplateSection section = templateSectionRepository.findById(request.getTemplateSectionId())
                     .orElseThrow(() -> new ResourceNotFoundException("Şablon bölməsi tapılmadı"));
             exam.setTemplateSection(section);
@@ -294,12 +299,19 @@ public class ExamService {
             exam.getTags().addAll(request.getTags());
         }
 
-        if (request.getTemplateSectionId() != null) {
+        if (request.getTemplateSectionIds() != null && !request.getTemplateSectionIds().isEmpty()) {
+            List<TemplateSection> sections = templateSectionRepository.findAllById(request.getTemplateSectionIds());
+            exam.getTemplateSections().clear();
+            exam.getTemplateSections().addAll(sections);
+            exam.setTemplateSection(sections.isEmpty() ? null : sections.get(0));
+        } else if (request.getTemplateSectionId() != null) {
             TemplateSection section = templateSectionRepository.findById(request.getTemplateSectionId())
                     .orElseThrow(() -> new ResourceNotFoundException("Şablon bölməsi tapılmadı"));
             exam.setTemplateSection(section);
+            exam.getTemplateSections().clear();
         } else {
             exam.setTemplateSection(null);
+            exam.getTemplateSections().clear();
         }
 
         // --- Handle standalone questions ---
@@ -772,6 +784,9 @@ public class ExamService {
                 .teacherName(exam.getTeacher().getFullName())
                 .templateId(exam.getTemplate() != null ? exam.getTemplate().getId() : null)
                 .templateSectionId(exam.getTemplateSection() != null ? exam.getTemplateSection().getId() : null)
+                .templateSectionIds(exam.getTemplateSections() != null && !exam.getTemplateSections().isEmpty()
+                        ? exam.getTemplateSections().stream().map(az.testup.entity.TemplateSection::getId).collect(java.util.stream.Collectors.toList())
+                        : null)
                 .price(exam.getPrice())
                 .sitePublished(exam.isSitePublished())
                 .questions(standaloneQuestions)

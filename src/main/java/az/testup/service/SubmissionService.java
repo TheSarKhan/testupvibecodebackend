@@ -33,7 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -468,7 +470,27 @@ public class SubmissionService {
         submission.setIsFullyGraded(allGraded);
 
         // Formula-based scoring for template exams
-        if (submission.getExam().getTemplateSection() != null) {
+        List<TemplateSection> templateSections = submission.getExam().getTemplateSections();
+        if (templateSections != null && templateSections.size() >= 2) {
+            // Multi-section: weighted average of per-section formula percentages
+            double totalWeightedPercent = 0.0;
+            int totalQCount = 0;
+            for (TemplateSection section : templateSections) {
+                List<Answer> sectionAnswers = submission.getAnswers().stream()
+                        .filter(a -> a.getQuestion() != null
+                                && section.getSubjectName().equals(a.getQuestion().getSubjectGroup()))
+                        .collect(Collectors.toList());
+                Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
+                Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
+                double rawScore = FormulaEvaluator.evaluate(section.getFormula(), actualVars);
+                double maxRaw = FormulaEvaluator.evaluate(section.getFormula(), maxVars);
+                double pct = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+                totalWeightedPercent += pct * section.getQuestionCount();
+                totalQCount += section.getQuestionCount();
+            }
+            double overall = totalQCount > 0 ? totalWeightedPercent / totalQCount : 0.0;
+            submission.setTemplateScorePercent(Math.round(overall * 100.0) / 100.0);
+        } else if (submission.getExam().getTemplateSection() != null) {
             String formula = submission.getExam().getTemplateSection().getFormula();
             int templateQuestionCount = submission.getExam().getTemplateSection().getQuestionCount();
             Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
@@ -558,6 +580,7 @@ public class SubmissionService {
                 : Map.of();
 
         return submissionRepository.findByExamId(examId).stream()
+                .filter(sub -> !Boolean.TRUE.equals(sub.getHiddenFromTeacher()))
                 .map(sub -> {
                     SubmissionResponse resp = mapToResponse(sub);
                     if (isPaidExam) {
@@ -655,7 +678,26 @@ public class SubmissionService {
         submission.setIsFullyGraded(nowFullyGraded);
 
         // Recalculate formula score for template exams
-        if (submission.getExam().getTemplateSection() != null) {
+        List<TemplateSection> gradeSections = submission.getExam().getTemplateSections();
+        if (gradeSections != null && gradeSections.size() >= 2) {
+            double totalWeightedPercent = 0.0;
+            int totalQCount = 0;
+            for (TemplateSection gradeSection : gradeSections) {
+                List<Answer> sectionAnswers = submission.getAnswers().stream()
+                        .filter(a -> a.getQuestion() != null
+                                && gradeSection.getSubjectName().equals(a.getQuestion().getSubjectGroup()))
+                        .collect(Collectors.toList());
+                Map<String, Double> secActualVars = buildFormulaVariables(sectionAnswers, gradeSection.getQuestionCount());
+                Map<String, Double> secMaxVars = buildMaxFormulaVariables(sectionAnswers, gradeSection.getQuestionCount());
+                double secRaw = FormulaEvaluator.evaluate(gradeSection.getFormula(), secActualVars);
+                double secMaxRaw = FormulaEvaluator.evaluate(gradeSection.getFormula(), secMaxVars);
+                double pct = secMaxRaw > 0 ? Math.max(0.0, secRaw / secMaxRaw * 100.0) : 0.0;
+                totalWeightedPercent += pct * gradeSection.getQuestionCount();
+                totalQCount += gradeSection.getQuestionCount();
+            }
+            double overall = totalQCount > 0 ? totalWeightedPercent / totalQCount : 0.0;
+            submission.setTemplateScorePercent(Math.round(overall * 100.0) / 100.0);
+        } else if (submission.getExam().getTemplateSection() != null) {
             String formula = submission.getExam().getTemplateSection().getFormula();
             int templateQuestionCount = submission.getExam().getTemplateSection().getQuestionCount();
             Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
@@ -682,7 +724,9 @@ public class SubmissionService {
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
-        List<Submission> submissions = submissionRepository.findByExamId(examId);
+        List<Submission> submissions = submissionRepository.findByExamId(examId).stream()
+                .filter(sub -> !Boolean.TRUE.equals(sub.getHiddenFromTeacher()))
+                .collect(Collectors.toList());
 
         double totalScoreSum = 0;
         double totalRatingSum = 0;
@@ -743,6 +787,7 @@ public class SubmissionService {
     /** Counts answer outcomes per question type for formula evaluation. */
     private Map<String, Double> buildFormulaVariables(List<Answer> answers, int totalQuestionCount) {
         long mcq_correct = 0, mcq_wrong = 0, mcq_blank = 0;
+        double mcq_score_sum = 0.0;  // sum of points from correct MCQ answers
         long multi_correct = 0, multi_wrong = 0;
         long open_correct = 0, open_wrong = 0;
         double manual_correct = 0.0, manual_wrong = 0.0; // fractional for partial credit
@@ -754,8 +799,8 @@ public class SubmissionService {
             double score = a.getScore() != null ? a.getScore() : 0.0;
             if (type == QuestionType.MCQ || type == QuestionType.TRUE_FALSE) {
                 if (a.getSelectedOptionId() == null) mcq_blank++;
-                else if (score >= pts) mcq_correct++;
-                else mcq_wrong++;
+                else if (score >= pts) { mcq_correct++; mcq_score_sum += score; }
+                else { mcq_wrong++; }
             } else if (type == QuestionType.MULTI_SELECT) {
                 if (score >= pts) multi_correct++; else multi_wrong++;
             } else if (type == QuestionType.OPEN_AUTO) {
@@ -774,6 +819,8 @@ public class SubmissionService {
         }
         Map<String, Double> v = new HashMap<>();
         v.put("a", (double) mcq_correct);    v.put("b", (double) mcq_wrong);    v.put("c", (double) mcq_blank);
+        v.put("s", mcq_score_sum);   // sum of points from correct MCQ answers
+        v.put("w", (double) mcq_wrong);   // count of wrong MCQ answers (olympiad penalty: s - w/4.0)
         v.put("d", (double) multi_correct);  v.put("e", (double) multi_wrong);
         v.put("f", (double) open_correct);   v.put("g", (double) open_wrong);
         v.put("l", manual_correct);          v.put("m", manual_wrong);
@@ -791,8 +838,15 @@ public class SubmissionService {
         long manual = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.OPEN_MANUAL).count();
         long fill = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.FILL_IN_THE_BLANK).count();
         long match = answers.stream().filter(a -> a.getQuestion().getQuestionType() == QuestionType.MATCHING).count();
+        double mcq_score_max = answers.stream()
+                .filter(a -> a.getQuestion().getQuestionType() == QuestionType.MCQ
+                        || a.getQuestion().getQuestionType() == QuestionType.TRUE_FALSE)
+                .mapToDouble(a -> a.getQuestion().getPoints() != null ? a.getQuestion().getPoints() : 1.0)
+                .sum();
         Map<String, Double> v = new HashMap<>();
         v.put("a", (double) mcq);    v.put("b", 0.0); v.put("c", 0.0);
+        v.put("s", mcq_score_max); // max possible MCQ score (all correct)
+        v.put("w", 0.0);           // max scenario: no wrong answers
         v.put("d", (double) multi);  v.put("e", 0.0);
         v.put("f", (double) open);   v.put("g", 0.0);
         v.put("l", (double) manual); v.put("m", 0.0);
@@ -832,7 +886,8 @@ public class SubmissionService {
         int pending = (int) submission.getAnswers().stream()
                 .filter(a -> a.getQuestion() != null
                         && a.getQuestion().getQuestionType() == QuestionType.OPEN_MANUAL
-                        && !isBlankAnswer(a))
+                        && !isBlankAnswer(a)
+                        && !Boolean.TRUE.equals(a.getIsGraded()))
                 .count();
 
         int skipped = (int) submission.getAnswers().stream()
@@ -880,7 +935,123 @@ public class SubmissionService {
                 .examType(exam.getExamType() != null ? exam.getExamType().name() : null)
                 .questionCount(totalQuestions)
                 .teacherName(exam.getTeacher() != null ? exam.getTeacher().getFullName() : null)
+                .subjectStats(buildSubjectStats(submission))
                 .build();
+    }
+
+    @Transactional
+    public void hideSubmission(Long submissionId, User teacher) {
+        Submission submission = submissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Nəticə tapılmadı"));
+        Exam exam = submission.getExam();
+        boolean isOwner = exam.getTeacher() != null && exam.getTeacher().getId().equals(teacher.getId());
+        boolean isAdmin = teacher.getRole() == Role.ADMIN;
+        if (!isOwner && !isAdmin) {
+            throw new UnauthorizedException("Bu əməliyyat üçün icazəniz yoxdur");
+        }
+        submission.setHiddenFromTeacher(true);
+        submissionRepository.save(submission);
+    }
+
+    private List<SubjectStatResponse> buildSubjectStats(Submission submission) {
+        Exam exam = submission.getExam();
+        List<TemplateSection> sections = exam.getTemplateSections();
+        boolean isMultiSection = sections != null && sections.size() >= 2;
+
+        // Determine subject list: either from template sections or from exam subjects
+        List<String> subjects = isMultiSection
+                ? sections.stream().map(TemplateSection::getSubjectName).collect(Collectors.toList())
+                : exam.getSubjects();
+
+        if (subjects == null || subjects.size() < 2) return List.of();
+
+        // Build answer lookup: questionId -> Answer
+        Map<Long, Answer> answerByQuestionId = submission.getAnswers().stream()
+                .filter(a -> a.getQuestion() != null)
+                .collect(Collectors.toMap(
+                        a -> a.getQuestion().getId(),
+                        a -> a,
+                        (a, b) -> a));
+
+        // Group questions by subjectGroup, preserving subject order
+        Map<String, List<Question>> bySubject = new LinkedHashMap<>();
+        for (String subject : subjects) {
+            bySubject.put(subject, new ArrayList<>());
+        }
+        for (Question q : exam.getQuestions()) {
+            String group = q.getSubjectGroup() != null ? q.getSubjectGroup() : "";
+            bySubject.computeIfAbsent(group, k -> new ArrayList<>()).add(q);
+        }
+
+        // Build section lookup by subjectName (for formula access)
+        Map<String, TemplateSection> sectionByName = isMultiSection
+                ? sections.stream().collect(Collectors.toMap(TemplateSection::getSubjectName, s -> s, (a, b) -> a))
+                : Map.of();
+
+        List<SubjectStatResponse> stats = new ArrayList<>();
+        for (Map.Entry<String, List<Question>> entry : bySubject.entrySet()) {
+            String subjectName = entry.getKey();
+            List<Question> questions = entry.getValue();
+            if (questions.isEmpty()) continue;
+
+            int qCount   = questions.size();
+            int correct  = 0, wrong = 0, skipped = 0, pending = 0;
+            double totalScore = 0.0, maxScore = 0.0;
+            List<Answer> sectionAnswers = new ArrayList<>();
+
+            for (Question q : questions) {
+                maxScore += q.getPoints() != null ? q.getPoints() : 0.0;
+                Answer a = answerByQuestionId.get(q.getId());
+                if (a == null) {
+                    skipped++;
+                    continue;
+                }
+                sectionAnswers.add(a);
+                boolean blank = isBlankAnswer(a);
+                if (q.getQuestionType() == QuestionType.OPEN_MANUAL) {
+                    if (blank) skipped++;
+                    else if (!Boolean.TRUE.equals(a.getIsGraded())) pending++;
+                    else if (a.getScore() != null && a.getScore() > 0.0) {
+                        correct++;
+                        totalScore += a.getScore();
+                    } else {
+                        wrong++;
+                    }
+                } else if (blank || a.getScore() == null || a.getScore() == 0.0) {
+                    if (blank) skipped++;
+                    else wrong++;
+                } else {
+                    correct++;
+                    totalScore += a.getScore();
+                }
+            }
+
+            // Compute formulaPercent for multi-section template exams
+            Double formulaPercent = null;
+            if (isMultiSection) {
+                TemplateSection section = sectionByName.get(subjectName);
+                if (section != null) {
+                    Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
+                    Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
+                    double rawScore = FormulaEvaluator.evaluate(section.getFormula(), actualVars);
+                    double maxRaw = FormulaEvaluator.evaluate(section.getFormula(), maxVars);
+                    formulaPercent = maxRaw > 0 ? Math.max(0.0, Math.round(rawScore / maxRaw * 10000.0) / 100.0) : 0.0;
+                }
+            }
+
+            stats.add(SubjectStatResponse.builder()
+                    .subjectName(subjectName)
+                    .questionCount(qCount)
+                    .correctCount(correct)
+                    .wrongCount(wrong)
+                    .skippedCount(skipped)
+                    .pendingManualCount(pending)
+                    .totalScore(totalScore)
+                    .maxScore(maxScore)
+                    .formulaPercent(formulaPercent)
+                    .build());
+        }
+        return stats;
     }
 
     @Transactional(readOnly = true)

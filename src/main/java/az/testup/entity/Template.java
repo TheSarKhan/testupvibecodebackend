@@ -1,5 +1,6 @@
 package az.testup.entity;
 
+import az.testup.enums.TemplateType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -23,6 +24,12 @@ public class Template {
     /** Template title, e.g. "DIM" */
     @Column(name = "title", nullable = false)
     private String title;
+
+    /** STANDARD = regular template; OLIMPIYADA = olympiad-style with per-question point groups */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "template_type", nullable = false)
+    @Builder.Default
+    private TemplateType templateType = TemplateType.STANDARD;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")

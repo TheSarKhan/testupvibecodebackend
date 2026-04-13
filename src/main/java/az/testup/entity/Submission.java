@@ -57,6 +57,11 @@ public class Submission {
 
     private Instant submittedAt;
 
+    /** When true, this submission is hidden from teacher statistics (soft-delete for teacher view only) */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean hiddenFromTeacher = false;
+
     @Column(updatable = false)
     private Instant createdAt;
 

@@ -10,5 +10,6 @@ public record TemplateSectionResponse(
         String formula,
         Integer orderIndex,
         String templateTitle,
-        String subtitleName
+        String subtitleName,
+        String pointGroups
 ) {}

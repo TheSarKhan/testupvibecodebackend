@@ -1,5 +1,6 @@
 package az.testup.entity;
 
+import az.testup.enums.BannerAudience;
 import az.testup.enums.BannerPosition;
 import jakarta.persistence.*;
 import lombok.*;
@@ -40,6 +41,11 @@ public class Banner {
 
     // Tailwind gradient class e.g. "from-indigo-600 to-purple-600"
     private String bgGradient;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private BannerAudience targetAudience = BannerAudience.ALL;
 
     @Column(nullable = false)
     private Integer orderIndex;

@@ -78,10 +78,21 @@ public class Exam {
     @JoinColumn(name = "template_id")
     private Template template;
 
-    /** Which template section (subject) this exam fulfills */
+    /** Which template section (subject) this exam fulfills — kept for backward compat (first section) */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "template_section_id")
     private TemplateSection templateSection;
+
+    /** All template sections assigned to this exam (multi-subject template support) */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "exam_template_sections",
+        joinColumns = @JoinColumn(name = "exam_id"),
+        inverseJoinColumns = @JoinColumn(name = "section_id")
+    )
+    @OrderBy("orderIndex ASC")
+    @Builder.Default
+    private List<TemplateSection> templateSections = new ArrayList<>();
 
     @ElementCollection
     @CollectionTable(name = "exam_tags", joinColumns = @JoinColumn(name = "exam_id"))

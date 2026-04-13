@@ -45,4 +45,7 @@ public class SubmissionResponse {
     private String examType;
     private Integer questionCount;
     private String teacherName;
+
+    /** Per-subject breakdown (only populated when exam has 2+ subjects) */
+    private List<SubjectStatResponse> subjectStats;
 }

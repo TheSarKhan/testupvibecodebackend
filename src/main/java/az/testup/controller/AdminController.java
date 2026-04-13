@@ -29,6 +29,7 @@ import az.testup.service.UserSubscriptionService;
 import az.testup.entity.Banner;
 import az.testup.entity.ExamSubject;
 import az.testup.entity.SubjectTopic;
+import az.testup.enums.BannerAudience;
 import az.testup.enums.BannerPosition;
 import az.testup.repository.BannerRepository;
 import az.testup.service.TemplateService;
@@ -477,6 +478,7 @@ public class AdminController {
                 .position(BannerPosition.valueOf(req.getPosition() != null ? req.getPosition() : "INLINE"))
                 .bgGradient(req.getBgGradient())
                 .orderIndex(req.getOrderIndex() != null ? req.getOrderIndex() : 0)
+                .targetAudience(req.getTargetAudience() != null ? BannerAudience.valueOf(req.getTargetAudience()) : BannerAudience.ALL)
                 .build();
         return ResponseEntity.ok(toBannerResponse(bannerRepository.save(banner)));
     }
@@ -494,6 +496,7 @@ public class AdminController {
         if (req.getPosition() != null) banner.setPosition(BannerPosition.valueOf(req.getPosition()));
         if (req.getBgGradient() != null) banner.setBgGradient(req.getBgGradient());
         if (req.getOrderIndex() != null) banner.setOrderIndex(req.getOrderIndex());
+        if (req.getTargetAudience() != null) banner.setTargetAudience(BannerAudience.valueOf(req.getTargetAudience()));
         return ResponseEntity.ok(toBannerResponse(bannerRepository.save(banner)));
     }
 
@@ -529,6 +532,7 @@ public class AdminController {
                 .position(b.getPosition() != null ? b.getPosition().name() : null)
                 .bgGradient(b.getBgGradient())
                 .orderIndex(b.getOrderIndex())
+                .targetAudience(b.getTargetAudience() != null ? b.getTargetAudience().name() : BannerAudience.ALL.name())
                 .createdAt(b.getCreatedAt())
                 .updatedAt(b.getUpdatedAt())
                 .build();

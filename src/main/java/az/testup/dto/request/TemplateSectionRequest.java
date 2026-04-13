@@ -7,5 +7,6 @@ public record TemplateSectionRequest(
         String subjectName,
         List<TemplateSectionTypeCountRequest> typeCounts,
         String formula,
-        Integer orderIndex
+        Integer orderIndex,
+        String pointGroups
 ) {}

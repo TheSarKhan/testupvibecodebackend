@@ -41,6 +41,15 @@ public class TemplateSection {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String formula;
 
+    /**
+     * JSON array of point groups, e.g.:
+     * [{"from":1,"to":15,"points":1.0},{"from":16,"to":20,"points":1.5}]
+     * 'from'/'to' are 1-based question indices within this section.
+     * Null means all questions have equal weight (use formula's own weighting).
+     */
+    @Column(name = "point_groups", columnDefinition = "TEXT")
+    private String pointGroups;
+
     @OneToMany(mappedBy = "section", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @OrderBy("orderIndex ASC")
     @Builder.Default

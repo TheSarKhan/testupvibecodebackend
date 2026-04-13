@@ -6,5 +6,6 @@ public record TemplateResponse(
         Long id,
         String title,
         int subtitleCount,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        String templateType
 ) {}

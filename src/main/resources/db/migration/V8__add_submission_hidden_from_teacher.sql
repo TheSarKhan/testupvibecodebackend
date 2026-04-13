@@ -1,0 +1,2 @@
+ALTER TABLE submissions
+    ADD COLUMN IF NOT EXISTS hidden_from_teacher BOOLEAN NOT NULL DEFAULT FALSE;
