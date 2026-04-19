@@ -117,6 +117,12 @@ public class EmailService {
         String safeDesc = description != null
                 ? description.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
                 : "";
+        return buildHtmlRaw(title, safeDesc);
+    }
+
+    public String buildHtmlRaw(String title, String htmlBody) {
+        String safeTitle = htmlBody != null ? title : "";
+        String body = htmlBody != null ? htmlBody : "";
         return """
                 <!DOCTYPE html>
                 <html lang="az">
@@ -134,7 +140,7 @@ public class EmailService {
                   </div>
                 </div>
                 </body></html>
-                """.formatted(title, safeDesc);
+                """.formatted(safeTitle, body);
     }
 
     // ─── SendPulse token (cached) ─────────────────────────────────────────────

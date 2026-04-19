@@ -162,7 +162,7 @@ public class AuthService {
                 + "Əgər bu sorğunu siz göndərməmisinizsə, bu mesajı nəzərə almayın.";
         emailService.sendGmail(email, user.getFullName(),
                 "Şifrə Sıfırlama — testup.az",
-                emailService.buildHtml("Şifrə Sıfırlama Kodu", body),
+                emailService.buildHtmlRaw("Şifrə Sıfırlama Kodu", body),
                 null);
     }
 
