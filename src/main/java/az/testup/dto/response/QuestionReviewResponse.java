@@ -16,6 +16,7 @@ public class QuestionReviewResponse {
     private Long id;
     /** Non-null if this question belongs to a passage group */
     private Long passageId;
+    private String subjectGroup;
     private String content;
     private String attachedImage;
     private QuestionType questionType;

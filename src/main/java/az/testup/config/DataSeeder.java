@@ -35,6 +35,7 @@ public class DataSeeder implements CommandLineRunner {
     private final BannerRepository bannerRepository;
     private final TagRepository tagRepository;
     private final ExamRepository examRepository;
+    private final PassageRepository passageRepository;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -105,6 +106,7 @@ public class DataSeeder implements CommandLineRunner {
         seedSampleOlimpiyadaExam();
         seedSampleRiyaziyyatExam();
         seedSampleMultiSubjectExam();
+        seedSampleIngilisDiliExam();
     }
 
     @Transactional
@@ -609,53 +611,80 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     private void seedDimTemplate() {
-        if (templateRepository.findByTitle("DİM Buraxılış").isPresent()) {
-            log.debug("DİM Buraxılış şablonu artıq mövcuddur, keçilir");
+        Template template = templateRepository.findByTitle("DİM Buraxılış").orElse(null);
+
+        if (template != null) {
+            final Template finalTemplate = template;
+            new TransactionTemplate(transactionManager).execute(status -> {
+                List<TemplateSection> sections = entityManager.createQuery(
+                        "SELECT s FROM TemplateSection s JOIN s.subtitle sub WHERE sub.template = :t",
+                        TemplateSection.class)
+                        .setParameter("t", finalTemplate)
+                        .getResultList();
+                for (TemplateSection sec : sections) {
+                    // Patch maxScore
+                    if (sec.getMaxScore() == null) {
+                        sec.setMaxScore(100.0);
+                        sectionRepository.save(sec);
+                    }
+                    // Patch İngilis dili: add TEXT/LISTENING passage type counts if missing
+                    if ("İngilis dili".equals(sec.getSubjectName())) {
+                        boolean hasText = sec.getTypeCounts().stream().anyMatch(tc -> "TEXT".equals(tc.getPassageType()));
+                        boolean hasListening = sec.getTypeCounts().stream().anyMatch(tc -> "LISTENING".equals(tc.getPassageType()));
+                        int nextOrder = sec.getTypeCounts().stream().mapToInt(TemplateSectionTypeCount::getOrderIndex).max().orElse(-1) + 1;
+                        if (!hasText) addTypeCount(sec, QuestionType.MCQ, 5, nextOrder++, "TEXT");
+                        if (!hasListening) addTypeCount(sec, QuestionType.MCQ, 3, nextOrder, "LISTENING");
+                    }
+                }
+                return null;
+            });
+            log.debug("DİM Buraxılış şablonu yoxlanıldı/yeniləndi");
             return;
         }
 
-        Template template = Template.builder()
-                .title("DİM Buraxılış")
-                .build();
-        template = templateRepository.save(template);
+        template = templateRepository.save(Template.builder().title("DİM Buraxılış").build());
 
-        TemplateSubtitle subtitle = TemplateSubtitle.builder()
+        TemplateSubtitle subtitle = subtitleRepository.save(TemplateSubtitle.builder()
                 .template(template)
                 .subtitle("11-ci sinif")
                 .orderIndex(0)
-                .build();
-        subtitle = subtitleRepository.save(subtitle);
+                .build());
 
-        // İngilis dili: MCQ=23, OPEN_MANUAL=7
+        // İngilis dili: 15 adi MCQ + Mətn (5 MCQ) + Dinləmə (3 MCQ) + OPEN_MANUAL=7  |  Max = 100 bal
         TemplateSection ingilis = TemplateSection.builder()
                 .subtitle(subtitle)
                 .subjectName("İngilis dili")
                 .questionCount(30)
                 .formula("(100.0/37.0)*(2*l+a)")
+                .maxScore(100.0)
                 .orderIndex(0)
                 .build();
         ingilis = sectionRepository.save(ingilis);
-        addTypeCount(ingilis, QuestionType.MCQ, 23, 0);
-        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 7, 1);
+        addTypeCount(ingilis, QuestionType.MCQ, 15, 0, null);
+        addTypeCount(ingilis, QuestionType.MCQ, 5, 1, "TEXT");
+        addTypeCount(ingilis, QuestionType.MCQ, 3, 2, "LISTENING");
+        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 7, 3, null);
 
-        // Az dili: MCQ=20, OPEN_MANUAL=10
+        // Azərbaycan dili: MCQ=20, OPEN_MANUAL=10  |  Max = 100 bal
         TemplateSection azDili = TemplateSection.builder()
                 .subtitle(subtitle)
                 .subjectName("Azərbaycan dili")
                 .questionCount(30)
                 .formula("(5.0/2.0)*(2*l+a)")
+                .maxScore(100.0)
                 .orderIndex(1)
                 .build();
         azDili = sectionRepository.save(azDili);
         addTypeCount(azDili, QuestionType.MCQ, 20, 0);
         addTypeCount(azDili, QuestionType.OPEN_MANUAL, 10, 1);
 
-        // Riyaziyyat: MCQ=13, OPEN_AUTO=5, OPEN_MANUAL=7
+        // Riyaziyyat: MCQ=13, OPEN_AUTO=5, OPEN_MANUAL=7  |  Max = 100 bal
         TemplateSection riyaziyyat = TemplateSection.builder()
                 .subtitle(subtitle)
                 .subjectName("Riyaziyyat")
                 .questionCount(25)
                 .formula("(25.0/8.0)*(2*l+f+a)")
+                .maxScore(100.0)
                 .orderIndex(2)
                 .build();
         riyaziyyat = sectionRepository.save(riyaziyyat);
@@ -754,12 +783,168 @@ public class DataSeeder implements CommandLineRunner {
                 .build()));
     }
 
+    @Transactional
+    public void seedSampleIngilisDiliExam() {
+        String teacherEmail = "serxan.babayev.06@gmail.com";
+        User teacher = userRepository.findByEmail(teacherEmail).orElse(null);
+        if (teacher == null) { log.warn("Müəllim tapılmadı: {}", teacherEmail); return; }
+
+        String examTitle = "İngilis dili — Mətn & Dinləmə Nümunəsi";
+        boolean alreadyExists = examRepository.findByTeacherAndDeletedFalse(teacher).stream()
+                .anyMatch(e -> examTitle.equals(e.getTitle()));
+        if (alreadyExists) { log.debug("İngilis dili nümunə imtahanı artıq mövcuddur"); return; }
+
+        Template template = templateRepository.findByTitle("DİM Buraxılış").orElse(null);
+        TemplateSection section = template == null ? null :
+                entityManager.createQuery(
+                        "SELECT s FROM TemplateSection s WHERE s.subtitle.template.id = :tid AND s.subjectName = :name",
+                        TemplateSection.class)
+                        .setParameter("tid", template.getId())
+                        .setParameter("name", "İngilis dili")
+                        .getResultList().stream().findFirst().orElse(null);
+
+        Exam exam = examRepository.save(Exam.builder()
+                .title(examTitle)
+                .description("DİM formatında İngilis dili imtahanı: adi testlər, oxuma mətni (TEXT) və dinləmə (LISTENING) tapşırıqları daxildir.")
+                .subjects(new java.util.ArrayList<>(List.of("İngilis dili")))
+                .visibility(ExamVisibility.PUBLIC)
+                .examType(ExamType.TEMPLATE)
+                .status(ExamStatus.PUBLISHED)
+                .shareLink(java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12))
+                .durationMinutes(90)
+                .teacher(teacher)
+                .template(template)
+                .templateSection(section)
+                .build());
+
+        // ── 15 standalone MCQ ──────────────────────────────────────────────
+        buildMcq(exam, 0,  "Which sentence is grammatically correct?",
+                new String[]{"She don't like coffee.", "She doesn't likes coffee.", "She doesn't like coffee.", "She not like coffee."}, 2);
+        buildMcq(exam, 1,  "Choose the correct form: 'I ___ to school every day.'",
+                new String[]{"goes", "go", "going", "gone"}, 1);
+        buildMcq(exam, 2,  "What is the past tense of 'go'?",
+                new String[]{"goed", "gone", "went", "go"}, 2);
+        buildMcq(exam, 3,  "Which word is a synonym for 'happy'?",
+                new String[]{"sad", "angry", "joyful", "tired"}, 2);
+        buildMcq(exam, 4,  "Choose the correct preposition: 'She is good ___ singing.'",
+                new String[]{"in", "on", "at", "for"}, 2);
+        buildMcq(exam, 5,  "Which sentence uses the Present Perfect correctly?",
+                new String[]{"I have went there.", "I have go there.", "I have been there.", "I have been went there."}, 2);
+        buildMcq(exam, 6,  "'Despite the rain, ...' — which ending is correct?",
+                new String[]{"but we went out.", "however we went out.", "we went out.", "we didn't went out."}, 2);
+        buildMcq(exam, 7,  "Choose the correct article: '___ Eiffel Tower is in Paris.'",
+                new String[]{"A", "An", "The", "—"}, 2);
+        buildMcq(exam, 8,  "What does 'enormous' mean?",
+                new String[]{"tiny", "average", "very large", "fast"}, 2);
+        buildMcq(exam, 9,  "'If I ___ rich, I would travel the world.' Choose the correct form.",
+                new String[]{"am", "was", "were", "be"}, 2);
+        buildMcq(exam, 10, "Which is the correct passive form of 'They built this bridge in 1990'?",
+                new String[]{"This bridge built in 1990.", "This bridge was built in 1990.", "This bridge is built in 1990.", "This bridge were built in 1990."}, 1);
+        buildMcq(exam, 11, "Choose the correct relative pronoun: 'The book ___ I read was interesting.'",
+                new String[]{"who", "whose", "which", "whom"}, 2);
+        buildMcq(exam, 12, "Which sentence contains a gerund?",
+                new String[]{"She wants to swim.", "Swimming is her hobby.", "She swims every day.", "She will swim tomorrow."}, 1);
+        buildMcq(exam, 13, "'Neither John nor his friends ___ coming.' Fill in the blank.",
+                new String[]{"is", "are", "was", "were"}, 1);
+        buildMcq(exam, 14, "What is the correct comparative form of 'good'?",
+                new String[]{"gooder", "more good", "better", "more better"}, 2);
+
+        // ── TEXT passage (orderIndex 15) — 5 MCQ ──────────────────────────
+        Passage textPassage = passageRepository.save(Passage.builder()
+                .exam(exam)
+                .passageType(PassageType.TEXT)
+                .title("The Amazon Rainforest")
+                .textContent(
+                    "The Amazon rainforest, often called the 'lungs of the Earth', covers over 5.5 million square " +
+                    "kilometres across nine countries in South America. It produces about 20% of the world's oxygen " +
+                    "and is home to an estimated 10% of all species on Earth.\n\n" +
+                    "Deforestation remains the biggest threat to the Amazon. Every year, thousands of square " +
+                    "kilometres of forest are cleared for agriculture, logging, and urban expansion. Scientists warn " +
+                    "that if deforestation continues at the current rate, the Amazon could reach a 'tipping point' " +
+                    "beyond which it cannot recover.\n\n" +
+                    "Conservation efforts include protected reserves, international agreements, and satellite " +
+                    "monitoring systems that track illegal logging in real time. Local communities play a crucial " +
+                    "role in protecting the forest, as their way of life depends on its survival."
+                )
+                .orderIndex(15)
+                .subjectGroup(null)
+                .build());
+        exam.getPassages().add(textPassage);
+
+        buildPassageMcq(exam, textPassage, 0, "What percentage of the world's oxygen does the Amazon produce?",
+                new String[]{"10%", "5%", "30%", "20%"}, 3);
+        buildPassageMcq(exam, textPassage, 1, "What is described as the biggest threat to the Amazon?",
+                new String[]{"Climate change", "Tourism", "Deforestation", "Flooding"}, 2);
+        buildPassageMcq(exam, textPassage, 2, "What does the phrase 'tipping point' mean in the context of the passage?",
+                new String[]{"The highest point of a mountain", "A point of no recovery", "A scientific measurement", "A logging technique"}, 1);
+        buildPassageMcq(exam, textPassage, 3, "How many countries does the Amazon rainforest span?",
+                new String[]{"Five", "Seven", "Nine", "Twelve"}, 2);
+        buildPassageMcq(exam, textPassage, 4, "According to the passage, what role do local communities play?",
+                new String[]{"They expand agriculture", "They monitor satellites", "They protect the forest", "They conduct deforestation"}, 2);
+
+        // ── LISTENING passage (orderIndex 16) — 3 MCQ ─────────────────────
+        // (audio content is empty for seeder — teacher fills it in the editor)
+        Passage listeningPassage = passageRepository.save(Passage.builder()
+                .exam(exam)
+                .passageType(PassageType.LISTENING)
+                .title("A Job Interview")
+                .listenLimit(2)
+                .orderIndex(16)
+                .subjectGroup(null)
+                .build());
+        exam.getPassages().add(listeningPassage);
+
+        buildPassageMcq(exam, listeningPassage, 0, "What position is the candidate applying for?",
+                new String[]{"Software engineer", "Marketing manager", "Graphic designer", "Sales representative"}, 1);
+        buildPassageMcq(exam, listeningPassage, 1, "How many years of experience does the candidate have?",
+                new String[]{"Two", "Three", "Four", "Five"}, 1);
+        buildPassageMcq(exam, listeningPassage, 2, "What does the interviewer say about the salary?",
+                new String[]{"It is negotiable", "It is fixed", "It is below average", "It will be discussed next week"}, 0);
+
+        // ── 7 OPEN_MANUAL ──────────────────────────────────────────────────
+        buildOpenManual(exam, 17, "Describe your favourite book in 3–4 sentences.");
+        buildOpenManual(exam, 18, "Write a short paragraph about the importance of learning English.");
+        buildOpenManual(exam, 19, "Rewrite the sentence in passive voice: 'The chef cooked the meal.'");
+        buildOpenManual(exam, 20, "Use 'although' to combine these two sentences: 'It was raining. We went for a walk.'");
+        buildOpenManual(exam, 21, "Explain the difference between 'since' and 'for' with examples.");
+        buildOpenManual(exam, 22, "Write three sentences using the modal verbs: must, should, might.");
+        buildOpenManual(exam, 23, "Translate into English: 'Onlar dünən axşam kinoya getdilər.'");
+
+        examRepository.save(exam);
+        log.info("İngilis dili nümunə imtahanı yaradıldı: \"{}\"", examTitle);
+    }
+
+    private void buildPassageMcq(Exam exam, Passage passage, int subIdx, String content, String[] opts, int correctIdx) {
+        Question q = Question.builder()
+                .exam(exam)
+                .passage(passage)
+                .content(content)
+                .questionType(QuestionType.MCQ)
+                .points(1.0)
+                .orderIndex(subIdx)
+                .build();
+        for (int i = 0; i < opts.length; i++) {
+            q.getOptions().add(Option.builder()
+                    .question(q)
+                    .content(opts[i])
+                    .isCorrect(i == correctIdx)
+                    .orderIndex(i)
+                    .build());
+        }
+        exam.getQuestions().add(q);
+    }
+
     private void addTypeCount(TemplateSection section, QuestionType type, int count, int order) {
+        addTypeCount(section, type, count, order, null);
+    }
+
+    private void addTypeCount(TemplateSection section, QuestionType type, int count, int order, String passageType) {
         TemplateSectionTypeCount tc = TemplateSectionTypeCount.builder()
                 .section(section)
                 .questionType(type)
                 .count(count)
                 .orderIndex(order)
+                .passageType(passageType)
                 .build();
         section.getTypeCounts().add(tc);
         sectionRepository.save(section);

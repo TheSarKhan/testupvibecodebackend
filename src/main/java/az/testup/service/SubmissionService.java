@@ -913,7 +913,7 @@ public class SubmissionService {
                 .count();
 
         var exam = submission.getExam();
-        return SubmissionResponse.builder()
+        SubmissionResponse response = SubmissionResponse.builder()
                 .id(submission.getId())
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
@@ -935,8 +935,17 @@ public class SubmissionService {
                 .examType(exam.getExamType() != null ? exam.getExamType().name() : null)
                 .questionCount(totalQuestions)
                 .teacherName(exam.getTeacher() != null ? exam.getTeacher().getFullName() : null)
-                .subjectStats(buildSubjectStats(submission))
                 .build();
+
+        List<SubjectStatResponse> stats = buildSubjectStats(submission);
+        response.setSubjectStats(stats);
+        if (stats != null && stats.stream().anyMatch(s -> s.getSectionMaxScore() != null)) {
+            response.setTemplateTotalScore(
+                stats.stream().filter(s -> s.getSectionScore() != null).mapToDouble(SubjectStatResponse::getSectionScore).sum());
+            response.setTemplateTotalMaxScore(
+                stats.stream().filter(s -> s.getSectionMaxScore() != null).mapToDouble(SubjectStatResponse::getSectionMaxScore).sum());
+        }
+        return response;
     }
 
     @Transactional
@@ -991,6 +1000,7 @@ public class SubmissionService {
         List<SubjectStatResponse> stats = new ArrayList<>();
         for (Map.Entry<String, List<Question>> entry : bySubject.entrySet()) {
             String subjectName = entry.getKey();
+            if (subjectName.isEmpty() && !subjects.isEmpty()) subjectName = subjects.get(0);
             List<Question> questions = entry.getValue();
             if (questions.isEmpty()) continue;
 
@@ -1039,6 +1049,17 @@ public class SubmissionService {
                 }
             }
 
+            // sectionScore = formulaPercent/100 * section.maxScore (if both available)
+            Double sectionMaxScore = null;
+            Double sectionScore = null;
+            if (isMultiSection) {
+                TemplateSection section = sectionByName.get(subjectName);
+                if (section != null && section.getMaxScore() != null && formulaPercent != null) {
+                    sectionMaxScore = section.getMaxScore();
+                    sectionScore = formulaPercent / 100.0 * sectionMaxScore;
+                }
+            }
+
             stats.add(SubjectStatResponse.builder()
                     .subjectName(subjectName)
                     .questionCount(qCount)
@@ -1049,6 +1070,8 @@ public class SubmissionService {
                     .totalScore(totalScore)
                     .maxScore(maxScore)
                     .formulaPercent(formulaPercent)
+                    .sectionScore(sectionScore)
+                    .sectionMaxScore(sectionMaxScore)
                     .build());
         }
         return stats;
@@ -1204,7 +1227,8 @@ public class SubmissionService {
 
                     QuestionReviewResponse.QuestionReviewResponseBuilder qBuilder = QuestionReviewResponse.builder()
                             .id(q.getId())
-                            .passageId(q.getPassage() != null ? q.getPassage().getId() : null);
+                            .passageId(q.getPassage() != null ? q.getPassage().getId() : null)
+                            .subjectGroup(q.getSubjectGroup());
 
                     if (studentAnswer != null && studentAnswer.getQuestionSnapshot() != null) {
                         try {
@@ -1270,10 +1294,18 @@ public class SubmissionService {
                 .filter(a -> Boolean.FALSE.equals(a.getIsGraded()))
                 .count();
 
+        List<SubjectStatResponse> reviewStats = buildSubjectStats(submission);
+        Double reviewTotalScore = null, reviewTotalMaxScore = null;
+        if (reviewStats != null && reviewStats.stream().anyMatch(s -> s.getSectionMaxScore() != null)) {
+            reviewTotalScore    = reviewStats.stream().filter(s -> s.getSectionScore()    != null).mapToDouble(SubjectStatResponse::getSectionScore).sum();
+            reviewTotalMaxScore = reviewStats.stream().filter(s -> s.getSectionMaxScore() != null).mapToDouble(SubjectStatResponse::getSectionMaxScore).sum();
+        }
+
         return SubmissionReviewResponse.builder()
                 .id(submission.getId())
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
+                .examSubject(exam.getSubjects() != null && !exam.getSubjects().isEmpty() ? exam.getSubjects().get(0) : null)
                 .totalScore(submission.getTotalScore())
                 .maxScore(submission.getMaxScore())
                 .startedAt(submission.getStartedAt())
@@ -1283,6 +1315,8 @@ public class SubmissionService {
                 .rating(submission.getRating())
                 .questions(reviewQuestions)
                 .templateScorePercent(submission.getTemplateScorePercent())
+                .templateTotalScore(reviewTotalScore)
+                .templateTotalMaxScore(reviewTotalMaxScore)
                 .build();
     }
 

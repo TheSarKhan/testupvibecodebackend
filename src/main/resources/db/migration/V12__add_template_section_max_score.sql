@@ -1,0 +1,1 @@
+ALTER TABLE template_sections ADD COLUMN IF NOT EXISTS max_score DOUBLE PRECISION;

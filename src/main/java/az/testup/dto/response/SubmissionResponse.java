@@ -48,4 +48,10 @@ public class SubmissionResponse {
 
     /** Per-subject breakdown (only populated when exam has 2+ subjects) */
     private List<SubjectStatResponse> subjectStats;
+
+    /** Sum of sectionScore across all sections (null if no section has maxScore set) */
+    private Double templateTotalScore;
+
+    /** Sum of sectionMaxScore across all sections (null if no section has maxScore set) */
+    private Double templateTotalMaxScore;
 }

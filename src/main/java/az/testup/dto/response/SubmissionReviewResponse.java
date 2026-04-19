@@ -16,6 +16,7 @@ public class SubmissionReviewResponse {
     private Long id;
     private Long examId;
     private String examTitle;
+    private String examSubject;
     private Double totalScore;
     private Double maxScore;
     private Instant startedAt;
@@ -25,4 +26,6 @@ public class SubmissionReviewResponse {
     private Integer rating;
     private List<QuestionReviewResponse> questions;
     private Double templateScorePercent;
+    private Double templateTotalScore;
+    private Double templateTotalMaxScore;
 }

@@ -153,6 +153,8 @@ public class TemplateService {
         section.setSubjectName(request.subjectName());
         section.setFormula(request.formula());
         section.setPointGroups(request.pointGroups());
+        section.setMaxScore(request.maxScore());
+        section.setAllowCustomPoints(request.allowCustomPoints() != null ? request.allowCustomPoints() : true);
         section.getTypeCounts().clear();
 
         if (request.typeCounts() != null) {
@@ -199,6 +201,8 @@ public class TemplateService {
                 .subjectName(request.subjectName())
                 .formula(request.formula())
                 .pointGroups(request.pointGroups())
+                .maxScore(request.maxScore())
+                .allowCustomPoints(request.allowCustomPoints() != null ? request.allowCustomPoints() : true)
                 .orderIndex(request.orderIndex() != null ? request.orderIndex() : orderIndex)
                 .subtitle(subtitle)
                 .build();
@@ -242,6 +246,6 @@ public class TemplateService {
                 s.getId(), s.getSubjectName(),
                 total > 0 ? total : s.getQuestionCount(),
                 typeCounts, s.getFormula(), s.getOrderIndex(),
-                templateTitle, subtitleName, s.getPointGroups());
+                templateTitle, subtitleName, s.getPointGroups(), s.getMaxScore(), s.isAllowCustomPoints());
     }
 }

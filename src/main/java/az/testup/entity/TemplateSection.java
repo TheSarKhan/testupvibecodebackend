@@ -50,10 +50,22 @@ public class TemplateSection {
     @Column(name = "point_groups", columnDefinition = "TEXT")
     private String pointGroups;
 
+    /** Maximum achievable score for this section (e.g. 100 for DİM Az dili). Null = not set. */
+    @Column(name = "max_score")
+    private Double maxScore;
+
     @OneToMany(mappedBy = "section", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @OrderBy("orderIndex ASC")
     @Builder.Default
     private List<TemplateSectionTypeCount> typeCounts = new ArrayList<>();
+
+    /**
+     * If true, teacher can set individual point values per question.
+     * If false, points are determined solely by the formula — point inputs are hidden in ExamEditor.
+     */
+    @Column(name = "allow_custom_points", nullable = false)
+    @Builder.Default
+    private boolean allowCustomPoints = true;
 
     /** Display order within template */
     @Column(nullable = false)

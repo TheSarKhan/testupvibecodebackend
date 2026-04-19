@@ -11,5 +11,7 @@ public record TemplateSectionResponse(
         Integer orderIndex,
         String templateTitle,
         String subtitleName,
-        String pointGroups
+        String pointGroups,
+        Double maxScore,
+        Boolean allowCustomPoints
 ) {}

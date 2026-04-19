@@ -21,4 +21,10 @@ public class SubjectStatResponse {
 
     /** Formula-based percentage for this subject (only set in multi-section template exams) */
     private Double formulaPercent;
+
+    /** Actual score earned in this section = formulaPercent/100 * sectionMaxScore (null if maxScore not set) */
+    private Double sectionScore;
+
+    /** Maximum achievable score for this section (from TemplateSection.maxScore) */
+    private Double sectionMaxScore;
 }

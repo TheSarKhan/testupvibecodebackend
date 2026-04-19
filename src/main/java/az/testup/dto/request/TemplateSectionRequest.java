@@ -8,5 +8,7 @@ public record TemplateSectionRequest(
         List<TemplateSectionTypeCountRequest> typeCounts,
         String formula,
         Integer orderIndex,
-        String pointGroups
+        String pointGroups,
+        Double maxScore,
+        Boolean allowCustomPoints
 ) {}
