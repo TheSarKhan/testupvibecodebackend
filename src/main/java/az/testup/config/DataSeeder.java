@@ -102,8 +102,8 @@ public class DataSeeder implements CommandLineRunner {
         seedDimTemplate();
         seedBanners();
         seedTags();
-        seedOlimpiyadaTemplate();
-        seedSampleOlimpiyadaExam();
+        // seedOlimpiyadaTemplate();
+        // seedSampleOlimpiyadaExam();
         seedSampleRiyaziyyatExam();
         seedSampleMultiSubjectExam();
         seedSampleIngilisDiliExam();

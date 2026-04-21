@@ -57,8 +57,8 @@ google:
   client-id: ${GOOGLE_CLIENT_ID}
 
 kapitalbank:
-  username: ${KAPITALBANK_USERNAME}
-  password: ${KAPITALBANK_PASSWORD}
+  username: ${KAPITALBANK_USERNAME:}
+  password: ${KAPITALBANK_PASSWORD:}
   production: ${KAPITALBANK_PRODUCTION:false}
 
 app:
