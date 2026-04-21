@@ -171,10 +171,14 @@ public class AdminService {
 
     @Transactional
     public void deleteExam(Long examId) {
-        if (!examRepository.existsById(examId)) {
-            throw new ResourceNotFoundException("İmtahan tapılmadı");
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        long submittedCount = submissionRepository.countByExamIdAndSubmittedAtIsNotNull(examId);
+        if (submittedCount > 0) {
+            throw new az.testup.exception.BadRequestException(
+                    submittedCount + " tələbənin nəticəsi olan imtahanı silmək olmaz. Əvvəlcə nəticələri export edin.");
         }
-        auditLogService.log(AuditAction.EXAM_DELETED, "admin", "Admin", "EXAM", examId.toString(), null);
+        auditLogService.log(AuditAction.EXAM_DELETED, "admin", "Admin", "EXAM", exam.getTitle(), null);
         submissionRepository.deleteByExamId(examId);
         examRepository.deleteById(examId);
     }

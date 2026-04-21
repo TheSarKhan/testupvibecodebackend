@@ -18,6 +18,7 @@ import az.testup.service.ExamService;
 import az.testup.service.PayriffService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -33,6 +34,9 @@ import java.util.Optional;
 @RequestMapping("/api/payment")
 @RequiredArgsConstructor
 public class PaymentController {
+
+    @Value("${app.base-url}")
+    private String appBaseUrl;
 
     private final PayriffService payriffService;
     private final PayriffOrderRepository payriffOrderRepository;
@@ -176,8 +180,8 @@ public class PaymentController {
             return ResponseEntity.ok(Map.of("status", order.getStatus()));
         }
 
-        String payriffStatus = payriffService.getOrderStatus(orderId);
-        boolean isPaid = isPaidStatus(payriffStatus);
+        String paymentStatus = payriffService.getOrderStatus(orderId);
+        boolean isPaid = isPaidStatus(paymentStatus);
 
         if (isPaid) {
             activateOrder(order, orderId, user);
@@ -187,57 +191,72 @@ public class PaymentController {
             return ResponseEntity.ok(Map.of("status", "PAID", "message", "Abunəlik aktivləşdirildi"));
         }
 
-        if ("DECLINED".equalsIgnoreCase(payriffStatus) || "FAILED".equalsIgnoreCase(payriffStatus)
-                || "CANCELLED".equalsIgnoreCase(payriffStatus) || "REJECTED".equalsIgnoreCase(payriffStatus)) {
+        if (isFailedStatus(paymentStatus)) {
             order.setStatus("FAILED");
         } else {
             order.setStatus("PENDING");
         }
         payriffOrderRepository.save(order);
 
-        return ResponseEntity.ok(Map.of("status", payriffStatus));
+        return ResponseEntity.ok(Map.of("status", paymentStatus));
     }
 
     /**
-     * Payriff server-to-server callback. Called by Payriff after payment status changes.
-     * Must always return 200 so Payriff does not retry indefinitely.
+     * Kapital Bank browser redirect callback.
+     * KB redirects user's browser here after payment with ?ID={orderId}&STATUS={status}.
+     * Processes the order and redirects to the frontend success/failure page.
      */
-    @PostMapping("/callback")
+    @GetMapping("/callback")
     @Transactional
-    public ResponseEntity<?> payriffCallback(@RequestBody(required = false) Map<String, Object> body) {
+    public ResponseEntity<?> kapitalBankCallback(
+            @RequestParam(name = "ID", required = false) String orderId,
+            @RequestParam(name = "STATUS", required = false) String callbackStatus) {
         try {
-            if (body == null || !body.containsKey("orderId")) {
-                return ResponseEntity.ok().build();
+            if (orderId == null || orderId.isBlank()) {
+                return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
             }
-            String orderId = body.get("orderId").toString();
-            if (orderId.isBlank()) return ResponseEntity.ok().build();
 
             PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
-            if (order == null || "PAID".equals(order.getStatus())) {
-                return ResponseEntity.ok().build();
+            if (order == null) {
+                return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
+            }
+
+            if ("PAID".equals(order.getStatus())) {
+                String successUrl = order.getExam() != null
+                        ? appBaseUrl + "/odenis/ugurlu?shareLink=" + order.getExam().getShareLink()
+                        : appBaseUrl + "/odenis/ugurlu";
+                return ResponseEntity.status(302).header("Location", successUrl).build();
             }
 
             int claimed = payriffOrderRepository.claimForProcessing(orderId);
-            if (claimed == 0) return ResponseEntity.ok().build();
+            if (claimed == 0) {
+                return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/ugurlu").build();
+            }
 
-            // Trust callback body status first, then re-verify via API
-            String callbackStatus = body.getOrDefault("status", "").toString();
+            // Trust KB callback status first, then verify via API if needed
             boolean isPaid = isPaidStatus(callbackStatus);
             if (!isPaid) {
-                // Double-check via Payriff API
                 isPaid = isPaidStatus(payriffService.getOrderStatus(orderId));
             }
 
             if (isPaid) {
                 activateOrder(order, orderId, null);
+                String successUrl = order.getExam() != null
+                        ? appBaseUrl + "/odenis/ugurlu?shareLink=" + order.getExam().getShareLink()
+                        : appBaseUrl + "/odenis/ugurlu";
+                return ResponseEntity.status(302).header("Location", successUrl).build();
             } else {
-                order.setStatus("PENDING");
+                if (isFailedStatus(callbackStatus)) {
+                    order.setStatus("FAILED");
+                } else {
+                    order.setStatus("PENDING");
+                }
                 payriffOrderRepository.save(order);
+                return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
             }
-        } catch (Exception ignored) {
-            // Always return 200 to Payriff
+        } catch (Exception e) {
+            return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
         }
-        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/initiate-exam")
@@ -293,9 +312,19 @@ public class PaymentController {
 
     private boolean isPaidStatus(String status) {
         if (status == null || status.isBlank()) return false;
-        String s = status.toUpperCase();
-        return s.equals("PAID") || s.equals("APPROVED") || s.equals("SUCCESS")
+        String s = status.toUpperCase().replace(" ", "").replace("_", "");
+        return s.equals("FULLYPAID") || s.equals("PARTIALLYPAID")
+                || s.equals("AUTHORIZED") || s.equals("FUNDED")
+                || s.equals("PAID") || s.equals("APPROVED") || s.equals("SUCCESS")
                 || s.equals("CONFIRMED") || s.equals("COMPLETE") || s.equals("COMPLETED");
+    }
+
+    private boolean isFailedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String s = status.toUpperCase().replace(" ", "").replace("_", "");
+        return s.equals("DECLINED") || s.equals("FAILED") || s.equals("CANCELLED")
+                || s.equals("REJECTED") || s.equals("REFUSED") || s.equals("EXPIRED")
+                || s.equals("VOIDED") || s.equals("CLOSED");
     }
 
     /** Marks order as PAID and activates subscription or exam purchase. */
@@ -316,7 +345,7 @@ public class PaymentController {
             request.setPlanId(order.getPlan().getId());
             request.setDurationMonths(order.getMonths());
             request.setDurationDays(order.getDurationDays());
-            request.setPaymentProvider("PAYRIFF");
+            request.setPaymentProvider("KAPITALBANK");
             request.setTransactionId(orderId);
             double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
             request.setAmountPaid(economicValue);

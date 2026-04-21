@@ -269,7 +269,12 @@ public class SubmissionService {
 
     private void gradeAnswer(Answer answer) {
         Question question = answer.getQuestion();
-        boolean isTemplateExam = question.getExam().getTemplateSection() != null;
+        boolean isTemplateExam;
+        try {
+            isTemplateExam = question.getExam().getTemplateSection() != null;
+        } catch (Exception e) {
+            isTemplateExam = false;
+        }
         if (question.getQuestionType() == QuestionType.MCQ || question.getQuestionType() == QuestionType.TRUE_FALSE) {
             if (answer.getSelectedOptionId() != null) {
                 Option correctOption = question.getOptions().stream()
@@ -470,7 +475,13 @@ public class SubmissionService {
         submission.setIsFullyGraded(allGraded);
 
         // Formula-based scoring for template exams
-        List<TemplateSection> templateSections = submission.getExam().getTemplateSections();
+        List<TemplateSection> templateSections;
+        try {
+            templateSections = submission.getExam().getTemplateSections();
+        } catch (Exception e) {
+            log.warn("Template sections not available for exam {}, skipping formula score", submission.getExam().getId());
+            templateSections = List.of();
+        }
         if (templateSections != null && templateSections.size() >= 2) {
             // Multi-section: weighted average of per-section formula percentages
             double totalWeightedPercent = 0.0;
@@ -490,15 +501,22 @@ public class SubmissionService {
             }
             double overall = totalQCount > 0 ? totalWeightedPercent / totalQCount : 0.0;
             submission.setTemplateScorePercent(Math.round(overall * 100.0) / 100.0);
-        } else if (submission.getExam().getTemplateSection() != null) {
-            String formula = submission.getExam().getTemplateSection().getFormula();
-            int templateQuestionCount = submission.getExam().getTemplateSection().getQuestionCount();
-            Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
-            Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), templateQuestionCount);
-            double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
-            double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
-            double percent = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
-            submission.setTemplateScorePercent(Math.round(percent * 100.0) / 100.0);
+        } else {
+            try {
+                TemplateSection singleSection = submission.getExam().getTemplateSection();
+                if (singleSection != null) {
+                    String formula = singleSection.getFormula();
+                    int templateQuestionCount = singleSection.getQuestionCount();
+                    Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
+                    Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), templateQuestionCount);
+                    double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
+                    double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
+                    double percent = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+                    submission.setTemplateScorePercent(Math.round(percent * 100.0) / 100.0);
+                }
+            } catch (Exception e) {
+                log.warn("Template section not available for exam {}, skipping formula score", submission.getExam().getId());
+            }
         }
 
         submission = submissionRepository.save(submission);
@@ -581,6 +599,7 @@ public class SubmissionService {
 
         return submissionRepository.findByExamId(examId).stream()
                 .filter(sub -> !Boolean.TRUE.equals(sub.getHiddenFromTeacher()))
+                .filter(sub -> sub.getSubmittedAt() != null)
                 .map(sub -> {
                     SubmissionResponse resp = mapToResponse(sub);
                     if (isPaidExam) {
@@ -964,7 +983,12 @@ public class SubmissionService {
 
     private List<SubjectStatResponse> buildSubjectStats(Submission submission) {
         Exam exam = submission.getExam();
-        List<TemplateSection> sections = exam.getTemplateSections();
+        List<TemplateSection> sections;
+        try {
+            sections = exam.getTemplateSections();
+        } catch (Exception e) {
+            sections = List.of();
+        }
         boolean isMultiSection = sections != null && sections.size() >= 2;
 
         // Determine subject list: either from template sections or from exam subjects
