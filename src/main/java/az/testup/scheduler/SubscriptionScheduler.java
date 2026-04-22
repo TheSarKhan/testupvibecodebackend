@@ -60,10 +60,8 @@ public class SubscriptionScheduler {
                     continue;
                 }
 
-                String payriffStatus = payriffService.getOrderStatus(order.getOrderId());
-                boolean isPaid = "PAID".equals(payriffStatus)
-                        || "APPROVED".equals(payriffStatus)
-                        || "SUCCESS".equals(payriffStatus);
+                String paymentStatus = payriffService.getOrderStatus(order.getOrderId());
+                boolean isPaid = isPaidStatus(paymentStatus);
 
                 if (isPaid) {
                     order.setStatus("PAID");
@@ -78,21 +76,19 @@ public class SubscriptionScheduler {
                         req.setPlanId(order.getPlan().getId());
                         req.setDurationMonths(order.getMonths());
                         req.setDurationDays(order.getDurationDays());
-                        req.setPaymentProvider("PAYRIFF");
+                        req.setPaymentProvider("KAPITALBANK");
                         req.setTransactionId(order.getOrderId());
                         double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
                         req.setAmountPaid(economicValue);
                         userSubscriptionService.assignSubscription(req);
                         log.info("Payment recovery: subscription activated for orderId={}", order.getOrderId());
                     }
-                } else if ("DECLINED".equals(payriffStatus)
-                        || "FAILED".equals(payriffStatus)
-                        || "CANCELLED".equals(payriffStatus)) {
+                } else if (isFailedStatus(paymentStatus)) {
                     order.setStatus("FAILED");
                     payriffOrderRepository.save(order);
-                    log.info("Payment recovery: order marked FAILED, orderId={}, payriffStatus={}", order.getOrderId(), payriffStatus);
+                    log.info("Payment recovery: order marked FAILED, orderId={}, status={}", order.getOrderId(), paymentStatus);
                 } else {
-                    // Still genuinely pending at Payriff — roll back so we retry next cycle
+                    // Still pending at Kapital Bank — roll back so we retry next cycle
                     order.setStatus("PENDING");
                     payriffOrderRepository.save(order);
                 }
@@ -103,6 +99,23 @@ public class SubscriptionScheduler {
                 payriffOrderRepository.save(order);
             }
         }
+    }
+
+    private boolean isPaidStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String s = status.toUpperCase().replace(" ", "").replace("_", "");
+        return s.equals("FULLYPAID") || s.equals("PARTIALLYPAID")
+                || s.equals("AUTHORIZED") || s.equals("FUNDED")
+                || s.equals("PAID") || s.equals("APPROVED") || s.equals("SUCCESS")
+                || s.equals("CONFIRMED") || s.equals("COMPLETE") || s.equals("COMPLETED");
+    }
+
+    private boolean isFailedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String s = status.toUpperCase().replace(" ", "").replace("_", "");
+        return s.equals("DECLINED") || s.equals("FAILED") || s.equals("CANCELLED")
+                || s.equals("REJECTED") || s.equals("REFUSED") || s.equals("EXPIRED")
+                || s.equals("VOIDED") || s.equals("CLOSED");
     }
 
     /**

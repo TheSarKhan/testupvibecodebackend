@@ -161,20 +161,20 @@ public class AdminController {
             return ResponseEntity.ok(Map.of("success", true, "message", "Artıq işlənib", "alreadyPaid", true));
         }
 
-        String payriffStatus = payriffService.getOrderStatus(orderId);
-        boolean isPaid = "PAID".equals(payriffStatus) || "APPROVED".equals(payriffStatus) || "SUCCESS".equals(payriffStatus);
+        String paymentStatus = payriffService.getOrderStatus(orderId);
+        boolean isPaid = isKbPaidStatus(paymentStatus);
 
         if (isPaid) {
             activateOrder(order, orderId, "Admin manual verify");
-            return ResponseEntity.ok(Map.of("success", true, "payriffStatus", payriffStatus));
+            return ResponseEntity.ok(Map.of("success", true, "paymentStatus", paymentStatus));
         }
 
-        if ("DECLINED".equals(payriffStatus) || "FAILED".equals(payriffStatus) || "CANCELLED".equals(payriffStatus)) {
+        if (isKbFailedStatus(paymentStatus)) {
             order.setStatus("FAILED");
             payriffOrderRepository.save(order);
         }
 
-        return ResponseEntity.ok(Map.of("success", false, "payriffStatus", payriffStatus));
+        return ResponseEntity.ok(Map.of("success", false, "paymentStatus", paymentStatus));
     }
 
     // Force-activate regardless of Payriff status (admin knows money came in externally)
@@ -218,21 +218,19 @@ public class AdminController {
         payriffOrderRepository.save(order);
 
         if (order.getExam() != null) {
-            // Exam purchase
             User student = order.getUser();
             examService.purchaseExam(order.getExam().getShareLink(), student);
             auditLogService.log(AuditAction.SUBSCRIPTION_PURCHASED,
                     "admin@system", "Admin", "EXAM", order.getExam().getTitle(),
                     logNote + ". İstifadəçi: " + student.getEmail() + ". Məbləğ: " + order.getAmount() + " AZN");
         } else {
-            // Subscription purchase
             double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
             AssignSubscriptionRequest req = new AssignSubscriptionRequest();
             req.setUserId(order.getUser().getId());
             req.setPlanId(order.getPlan().getId());
             req.setDurationMonths(order.getMonths());
             req.setDurationDays(order.getDurationDays());
-            req.setPaymentProvider("PAYRIFF");
+            req.setPaymentProvider("KAPITALBANK");
             req.setTransactionId(orderId);
             req.setAmountPaid(economicValue);
             userSubscriptionService.assignSubscription(req);
@@ -240,6 +238,23 @@ public class AdminController {
                     "admin@system", "Admin", "SUBSCRIPTION", order.getPlan().getName(),
                     logNote + ". İstifadəçi: " + order.getUser().getEmail() + ". Məbləğ: " + order.getAmount() + " AZN. Müddət: " + order.getDurationDays() + " gün");
         }
+    }
+
+    private boolean isKbPaidStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String s = status.toUpperCase().replace(" ", "").replace("_", "");
+        return s.equals("FULLYPAID") || s.equals("PARTIALLYPAID")
+                || s.equals("AUTHORIZED") || s.equals("FUNDED")
+                || s.equals("PAID") || s.equals("APPROVED") || s.equals("SUCCESS")
+                || s.equals("CONFIRMED") || s.equals("COMPLETE") || s.equals("COMPLETED");
+    }
+
+    private boolean isKbFailedStatus(String status) {
+        if (status == null || status.isBlank()) return false;
+        String s = status.toUpperCase().replace(" ", "").replace("_", "");
+        return s.equals("DECLINED") || s.equals("FAILED") || s.equals("CANCELLED")
+                || s.equals("REJECTED") || s.equals("REFUSED") || s.equals("EXPIRED")
+                || s.equals("VOIDED") || s.equals("CLOSED");
     }
 
     // ───── Users ─────
