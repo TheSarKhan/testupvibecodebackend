@@ -18,6 +18,7 @@ public class SessionDetailsResponse {
     private String examTitle;
     private Integer durationMinutes;
     private Instant startedAt;
+    private Instant submittedAt;
     /** Pre-calculated remaining seconds (server-side, timezone-safe). -1 = no timer. */
     private Long remainingSeconds;
     /** Ordered list of exam subjects (first = main section, rest = extra sections) */

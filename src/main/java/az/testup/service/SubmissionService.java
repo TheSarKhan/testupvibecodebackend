@@ -334,7 +334,9 @@ public class SubmissionService {
             answer.setIsGraded(true);
         } else if (question.getQuestionType() == QuestionType.OPEN_MANUAL) {
             answer.setScore(0.0);
-            answer.setIsGraded(false);
+            boolean blankManual = (answer.getAnswerText() == null || answer.getAnswerText().isBlank())
+                    && (answer.getAnswerImage() == null || answer.getAnswerImage().isBlank());
+            answer.setIsGraded(blankManual);
         } else if (question.getQuestionType() == QuestionType.FILL_IN_THE_BLANK) {
             String correctJson = question.getCorrectAnswer();
             String studentJson = answer.getAnswerText();
@@ -1184,6 +1186,7 @@ public class SubmissionService {
                 .examTitle(exam.getTitle())
                 .durationMinutes(exam.getDurationMinutes())
                 .startedAt(submission.getStartedAt())
+                .submittedAt(submission.getSubmittedAt())
                 .remainingSeconds(remainingSeconds)
                 .subjects(exam.getSubjects())
                 .questions(standaloneQuestions)

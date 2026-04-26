@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
@@ -55,7 +56,11 @@ public class SubmissionController {
             @Valid @RequestBody AnswerRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
         User student = getCurrentUserOrNull(userDetails);
-        submissionService.saveAnswer(id, request, student);
+        try {
+            submissionService.saveAnswer(id, request, student);
+        } catch (ObjectOptimisticLockingFailureException ignored) {
+            // submitExam ran concurrently and deleted the answer row — auto-save is irrelevant
+        }
         return ResponseEntity.ok().build();
     }
 
