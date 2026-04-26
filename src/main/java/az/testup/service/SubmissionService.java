@@ -573,7 +573,7 @@ public class SubmissionService {
                 .orElseThrow(() -> new ResourceNotFoundException("Nəticə tapılmadı"));
 
         // Verify that the student owns this submission or is viewing their own result
-        if (student != null && !submission.getStudent().getId().equals(student.getId())) {
+        if (student != null && submission.getStudent() != null && !submission.getStudent().getId().equals(student.getId())) {
             throw new UnauthorizedException("Bu nəticəni görməmə icazəniz yoxdur");
         }
 
@@ -1447,5 +1447,215 @@ public class SubmissionService {
         private Boolean isCorrect;
         private Integer orderIndex;
         private String attachedImage;
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] generateExamResultsExcel(Long examId, User teacher) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+
+        boolean isOwner = exam.getTeacher() != null && exam.getTeacher().getId().equals(teacher.getId());
+        boolean isAdminUser = teacher.getRole() == Role.ADMIN;
+        if (!isOwner && !isAdminUser) {
+            throw new UnauthorizedException("Bu imtahanın nəticələrini görməyə icazəniz yoxdur");
+        }
+
+        boolean isPaidExam = exam.getPrice() != null && exam.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0;
+        Map<Long, java.math.BigDecimal> purchaseMap = isPaidExam
+                ? examPurchaseRepository.findByExamId(examId).stream()
+                    .filter(p -> p.getUser() != null)
+                    .collect(Collectors.toMap(p -> p.getUser().getId(), az.testup.entity.ExamPurchase::getAmountPaid, (a, b) -> a))
+                : Map.of();
+
+        // Load raw entities so we can compute subject scores directly from answers
+        List<Submission> rawSubs = submissionRepository.findByExamId(examId).stream()
+                .filter(sub -> !Boolean.TRUE.equals(sub.getHiddenFromTeacher()))
+                .filter(sub -> sub.getSubmittedAt() != null)
+                .collect(Collectors.toList());
+
+        // Determine ordered subject list from exam (same logic as buildSubjectStats)
+        List<TemplateSection> sections;
+        try { sections = exam.getTemplateSections(); } catch (Exception e) { sections = List.of(); }
+        boolean isMultiSection = sections != null && sections.size() >= 2;
+        List<String> subjectNames = isMultiSection
+                ? sections.stream().map(TemplateSection::getSubjectName).collect(Collectors.toList())
+                : (exam.getSubjects() != null ? exam.getSubjects() : List.of());
+        // Filter to subjects that have at least 2 entries
+        boolean hasSubjects = subjectNames.size() >= 2;
+
+        // Build per-question subject mapping: questionId -> subjectName
+        // Use the same grouping as buildSubjectStats: subjectGroup, falling back to first subject for null
+        Map<Long, String> questionSubject = new HashMap<>();
+        if (hasSubjects) {
+            for (Question q : exam.getQuestions()) {
+                String grp = q.getSubjectGroup() != null && !q.getSubjectGroup().isEmpty()
+                        ? q.getSubjectGroup() : subjectNames.get(0);
+                questionSubject.put(q.getId(), grp);
+            }
+        }
+
+        // Build per-subject maxScore from exam questions (constant across all submissions)
+        Map<String, Double> subjectMaxScore = new LinkedHashMap<>();
+        if (hasSubjects) {
+            for (String name : subjectNames) subjectMaxScore.put(name, 0.0);
+            for (Question q : exam.getQuestions()) {
+                String sub = questionSubject.get(q.getId());
+                if (sub != null) {
+                    double pts = q.getPoints() != null ? q.getPoints() : 0.0;
+                    subjectMaxScore.merge(sub, pts, Double::sum);
+                }
+            }
+        }
+
+        java.time.format.DateTimeFormatter dtf = java.time.format.DateTimeFormatter
+                .ofPattern("dd.MM.yyyy HH:mm")
+                .withZone(java.time.ZoneId.of("Asia/Baku"));
+
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook()) {
+            org.apache.poi.ss.usermodel.CellStyle boldStyle = wb.createCellStyle();
+            org.apache.poi.ss.usermodel.Font boldFont = wb.createFont();
+            boldFont.setBold(true);
+            boldStyle.setFont(boldFont);
+
+            org.apache.poi.ss.usermodel.CellStyle headerStyle = wb.createCellStyle();
+            headerStyle.setFillForegroundColor(org.apache.poi.ss.usermodel.IndexedColors.GREY_25_PERCENT.getIndex());
+            headerStyle.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+            org.apache.poi.ss.usermodel.Font hFont = wb.createFont();
+            hFont.setBold(true);
+            headerStyle.setFont(hFont);
+
+            // Sheet 1: Statistika
+            org.apache.poi.ss.usermodel.Sheet statsSheet = wb.createSheet("Statistika");
+            statsSheet.setColumnWidth(0, 7000);
+            statsSheet.setColumnWidth(1, 10000);
+
+            long subCount = rawSubs.size();
+            double avgScore = rawSubs.stream().mapToDouble(r -> r.getTotalScore() != null ? r.getTotalScore() : 0).average().orElse(0);
+            double maxScore = rawSubs.stream().mapToDouble(r -> r.getMaxScore() != null ? r.getMaxScore() : 0).max().orElse(0);
+            double avgRating = rawSubs.stream().filter(r -> r.getRating() != null).mapToDouble(r -> r.getRating()).average().orElse(0);
+
+            Object[][] statsData = {
+                {"İmtahan Adı", exam.getTitle()},
+                {"İmtahan ID", String.valueOf(examId)},
+                {"Ümumi İştirakçı", subCount},
+                {"Orta Bal", Math.round(avgScore * 100.0) / 100.0},
+                {"Maksimum Bal", maxScore},
+                {"Orta Reytinq", avgRating > 0 ? Math.round(avgRating * 100.0) / 100.0 : "–"},
+            };
+            int sRow = 0;
+            for (Object[] rowData : statsData) {
+                org.apache.poi.ss.usermodel.Row row = statsSheet.createRow(sRow++);
+                org.apache.poi.ss.usermodel.Cell lbl = row.createCell(0);
+                lbl.setCellValue((String) rowData[0]);
+                lbl.setCellStyle(boldStyle);
+                org.apache.poi.ss.usermodel.Cell val = row.createCell(1);
+                if (rowData[1] instanceof Number) val.setCellValue(((Number) rowData[1]).doubleValue());
+                else val.setCellValue(String.valueOf(rowData[1]));
+            }
+
+            // Sheet 2: İştirakçılar
+            org.apache.poi.ss.usermodel.Sheet partSheet = wb.createSheet("İştirakçılar");
+
+            List<String> headers = new ArrayList<>(java.util.Arrays.asList("#", "İştirakçı", "Başlayıb", "Xərclənən Vaxt"));
+            if (hasSubjects) {
+                subjectNames.forEach(headers::add);
+                headers.add("Toplam");
+            } else {
+                headers.add("Bal");
+            }
+            headers.add("Reytinq");
+            if (isPaidExam) headers.add("Ödəniş");
+            headers.add("Status");
+
+            org.apache.poi.ss.usermodel.Row hRow = partSheet.createRow(0);
+            for (int i = 0; i < headers.size(); i++) {
+                org.apache.poi.ss.usermodel.Cell c = hRow.createCell(i);
+                c.setCellValue(headers.get(i));
+                c.setCellStyle(headerStyle);
+            }
+            partSheet.setColumnWidth(0, 1200);
+            partSheet.setColumnWidth(1, 7000);
+            partSheet.setColumnWidth(2, 5500);
+            partSheet.setColumnWidth(3, 3800);
+            int ci = 4;
+            if (hasSubjects) {
+                for (int i = 0; i < subjectNames.size(); i++) partSheet.setColumnWidth(ci++, 4500);
+                partSheet.setColumnWidth(ci++, 4000);
+            } else {
+                partSheet.setColumnWidth(ci++, 3500);
+            }
+            partSheet.setColumnWidth(ci++, 2800);
+            if (isPaidExam) partSheet.setColumnWidth(ci++, 5500);
+            partSheet.setColumnWidth(ci, 4500);
+
+            for (int idx = 0; idx < rawSubs.size(); idx++) {
+                Submission sub = rawSubs.get(idx);
+                org.apache.poi.ss.usermodel.Row row = partSheet.createRow(idx + 1);
+                int col = 0;
+
+                String studentName = sub.getStudent() != null ? sub.getStudent().getFullName() : sub.getGuestName();
+                row.createCell(col++).setCellValue(idx + 1);
+                row.createCell(col++).setCellValue(studentName != null ? studentName : "");
+                row.createCell(col++).setCellValue(sub.getStartedAt() != null ? dtf.format(sub.getStartedAt()) : "–");
+
+                String duration = "–";
+                if (sub.getStartedAt() != null && sub.getSubmittedAt() != null) {
+                    long sec = Math.abs(ChronoUnit.SECONDS.between(sub.getStartedAt(), sub.getSubmittedAt()));
+                    duration = (sec / 60) + "dk " + (sec % 60) + "sn";
+                }
+                row.createCell(col++).setCellValue(duration);
+
+                if (hasSubjects) {
+                    // Compute per-subject totalScore directly from answers
+                    Map<String, Double> subjectEarned = new LinkedHashMap<>();
+                    for (String name : subjectNames) subjectEarned.put(name, 0.0);
+
+                    for (Answer ans : sub.getAnswers()) {
+                        if (ans.getQuestion() == null || ans.getScore() == null || ans.getScore() <= 0.0) continue;
+                        String subj = questionSubject.get(ans.getQuestion().getId());
+                        if (subj != null && subjectEarned.containsKey(subj)) {
+                            subjectEarned.merge(subj, ans.getScore(), Double::sum);
+                        }
+                    }
+
+                    double totalEarned = 0.0;
+                    double totalMax = 0.0;
+                    for (String name : subjectNames) {
+                        double earned = Math.round(subjectEarned.getOrDefault(name, 0.0) * 100.0) / 100.0;
+                        double maks = Math.round(subjectMaxScore.getOrDefault(name, 0.0) * 100.0) / 100.0;
+                        row.createCell(col++).setCellValue(earned + "/" + maks);
+                        totalEarned += earned;
+                        totalMax += maks;
+                    }
+                    row.createCell(col++).setCellValue(
+                            Math.round(totalEarned * 100.0) / 100.0 + "/" + Math.round(totalMax * 100.0) / 100.0);
+                } else {
+                    double sc = sub.getTotalScore() != null ? sub.getTotalScore() : 0;
+                    double mx = sub.getMaxScore() != null ? sub.getMaxScore() : 0;
+                    row.createCell(col++).setCellValue(sc + "/" + mx);
+                }
+
+                row.createCell(col++).setCellValue(sub.getRating() != null ? sub.getRating() + "/5" : "–");
+
+                if (isPaidExam) {
+                    Long sid = sub.getStudent() != null ? sub.getStudent().getId() : null;
+                    boolean hasPaid = sid != null && purchaseMap.containsKey(sid);
+                    java.math.BigDecimal paid = sid != null ? purchaseMap.get(sid) : null;
+                    String pay = hasPaid
+                            ? (paid != null ? "Ödənib (" + paid.setScale(2, java.math.RoundingMode.HALF_UP) + " ₼)" : "Ödənib")
+                            : "Ödənilməyib";
+                    row.createCell(col++).setCellValue(pay);
+                }
+
+                String status = Boolean.TRUE.equals(sub.getIsFullyGraded()) ? "Tam Yoxlanılıb" : "Yoxlanılır";
+                row.createCell(col++).setCellValue(status);
+            }
+
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            wb.write(out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Excel faylı yaradılarkən xəta baş verdi", e);
+        }
     }
 }

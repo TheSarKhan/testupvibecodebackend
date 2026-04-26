@@ -11,10 +11,15 @@ import az.testup.repository.UserRepository;
 import az.testup.service.SubmissionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+
+import java.nio.charset.StandardCharsets;
 
 import java.util.List;
 
@@ -100,6 +105,20 @@ public class SubmissionController {
             @AuthenticationPrincipal UserDetails userDetails) {
         User teacher = getCurrentUser(userDetails);
         return ResponseEntity.ok(submissionService.getExamSubmissions(examId, teacher));
+    }
+
+    @GetMapping("/exam/{examId}/export")
+    public ResponseEntity<byte[]> exportExamResultsExcel(
+            @PathVariable Long examId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User teacher = getCurrentUser(userDetails);
+        byte[] data = submissionService.generateExamResultsExcel(examId, teacher);
+        String filename = "imtahan_" + examId + "_neticeler.xlsx";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(filename, StandardCharsets.UTF_8).build());
+        return ResponseEntity.ok().headers(headers).body(data);
     }
 
     @GetMapping("/exam/{examId}/statistics")
