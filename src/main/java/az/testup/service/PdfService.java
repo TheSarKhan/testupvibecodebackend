@@ -297,8 +297,31 @@ public class PdfService {
         return out.toByteArray();
     }
 
+    private String stripHtml(String html) {
+        return html
+            .replaceAll("(?i)<br\\s*/?>", "\n")
+            .replaceAll("<[^>]+>", "")
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'");
+    }
+
     private void addRichText(Paragraph paragraph, String text, Font font) {
         if (text == null) return;
+        String plain = stripHtml(text);
+        String[] lines = plain.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            addLineRichText(paragraph, lines[i], font);
+            if (i < lines.length - 1) {
+                paragraph.add(Chunk.NEWLINE);
+            }
+        }
+    }
+
+    private void addLineRichText(Paragraph paragraph, String text, Font font) {
         java.util.regex.Matcher matcher = LATEX_PATTERN.matcher(text);
         int lastEnd = 0;
         while (matcher.find()) {
