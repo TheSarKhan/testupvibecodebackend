@@ -1,14 +1,14 @@
 package az.testup.scheduler;
 
 import az.testup.dto.request.AssignSubscriptionRequest;
-import az.testup.entity.PayriffOrder;
+import az.testup.entity.PaymentOrder;
 import az.testup.entity.SubscriptionUsage;
 import az.testup.entity.UserSubscription;
-import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.SubscriptionUsageRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.ExamService;
-import az.testup.service.PayriffService;
+import az.testup.service.KapitalBankService;
 import az.testup.service.SubmissionService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
@@ -28,8 +28,8 @@ public class SubscriptionScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(SubscriptionScheduler.class);
 
-    private final PayriffOrderRepository payriffOrderRepository;
-    private final PayriffService payriffService;
+    private final PaymentOrderRepository paymentOrderRepository;
+    private final KapitalBankService kapitalBankService;
     private final UserSubscriptionService userSubscriptionService;
     private final ExamService examService;
     private final UserSubscriptionRepository userSubscriptionRepository;
@@ -38,34 +38,32 @@ public class SubscriptionScheduler {
 
     /**
      * Runs every 10 minutes. Picks up orders stuck in PENDING or PROCESSING
-     * (e.g. user paid but closed the browser before the verify call completed).
-     * Checks their real status with Payriff and activates or marks them failed.
+     * (e.g. user paid but closed the browser before verify completed).
+     * Checks real status with Kapital Bank and activates or marks them failed.
      */
     @Scheduled(fixedDelay = 600_000)
     @Transactional
     public void recoverAbandonedPayments() {
-        // Only look at orders older than 5 minutes to avoid interfering with active sessions
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(5);
-        List<PayriffOrder> stuckOrders = payriffOrderRepository.findStuckOrders(cutoff);
+        List<PaymentOrder> stuckOrders = paymentOrderRepository.findStuckOrders(cutoff);
 
         if (stuckOrders.isEmpty()) return;
 
         log.info("Payment recovery: checking {} stuck order(s)", stuckOrders.size());
 
-        for (PayriffOrder order : stuckOrders) {
+        for (PaymentOrder order : stuckOrders) {
             try {
-                int claimed = payriffOrderRepository.claimForProcessing(order.getOrderId());
+                int claimed = paymentOrderRepository.claimForProcessing(order.getOrderId());
                 if (claimed == 0) {
-                    // Already being processed by a concurrent verify request — skip
                     continue;
                 }
 
-                String paymentStatus = payriffService.getOrderStatus(order.getOrderId());
+                String paymentStatus = kapitalBankService.getOrderStatus(order.getOrderId());
                 boolean isPaid = isPaidStatus(paymentStatus);
 
                 if (isPaid) {
                     order.setStatus("PAID");
-                    payriffOrderRepository.save(order);
+                    paymentOrderRepository.save(order);
 
                     if (order.getExam() != null) {
                         examService.purchaseExam(order.getExam().getShareLink(), order.getUser());
@@ -85,18 +83,16 @@ public class SubscriptionScheduler {
                     }
                 } else if (isFailedStatus(paymentStatus)) {
                     order.setStatus("FAILED");
-                    payriffOrderRepository.save(order);
+                    paymentOrderRepository.save(order);
                     log.info("Payment recovery: order marked FAILED, orderId={}, status={}", order.getOrderId(), paymentStatus);
                 } else {
-                    // Still pending at Kapital Bank — roll back so we retry next cycle
                     order.setStatus("PENDING");
-                    payriffOrderRepository.save(order);
+                    paymentOrderRepository.save(order);
                 }
             } catch (Exception e) {
                 log.error("Payment recovery: error processing orderId={}: {}", order.getOrderId(), e.getMessage());
-                // Reset to PENDING so next cycle retries
                 order.setStatus("PENDING");
-                payriffOrderRepository.save(order);
+                paymentOrderRepository.save(order);
             }
         }
     }
@@ -120,7 +116,7 @@ public class SubscriptionScheduler {
 
     /**
      * Runs every 10 seconds.
-     * Auto-submits in-progress exams whose duration has elapsed (e.g. student closed browser).
+     * Auto-submits in-progress exams whose duration has elapsed.
      */
     @Scheduled(fixedDelay = 10_000)
     public void autoSubmitExpiredExams() {
@@ -129,13 +125,12 @@ public class SubscriptionScheduler {
 
     /**
      * Runs at 00:00 on the 1st of every month.
-     * Creates fresh SubscriptionUsage records (monthly counters = 0) for all active subscriptions.
-     * Also cleans up usage records older than 3 months.
+     * Creates fresh SubscriptionUsage records for all active subscriptions.
      */
     @Scheduled(cron = "0 0 0 1 * *")
     @Transactional
     public void resetMonthlyUsage() {
-        String currentMonthYear = YearMonth.now().toString(); // e.g. "2026-04"
+        String currentMonthYear = YearMonth.now().toString();
         List<UserSubscription> activeSubscriptions = userSubscriptionRepository.findAllActiveSubscriptions();
 
         log.info("Monthly usage reset: resetting counters for {} active subscription(s) for month {}",
@@ -158,7 +153,6 @@ public class SubscriptionScheduler {
             }
         }
 
-        // Keep only the last 3 months of usage records
         String cutoff = YearMonth.now().minusMonths(3).toString();
         subscriptionUsageRepository.deleteByMonthYearBefore(cutoff);
 

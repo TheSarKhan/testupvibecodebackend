@@ -9,7 +9,7 @@ import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.entity.TemplateSection;
 import az.testup.entity.ExamPurchase;
-import az.testup.entity.PayriffOrder;
+import az.testup.entity.PaymentOrder;
 import az.testup.entity.StudentSavedExam;
 import az.testup.enums.AuditAction;
 import az.testup.enums.ExamStatus;
@@ -39,7 +39,7 @@ public class ExamService {
     private final ExamCollaboratorRepository examCollaboratorRepository;
     private final SubmissionRepository submissionRepository;
     private final AuditLogService auditLogService;
-    private final PayriffOrderRepository payriffOrderRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
     private final ExamAccessCodeRepository examAccessCodeRepository;
 
     public Exam getExamEntityById(Long id) {
@@ -231,7 +231,7 @@ public class ExamService {
         if (exam.getPrice() == null || exam.getPrice().compareTo(java.math.BigDecimal.ZERO) == 0) {
             return true; // free exam — always accessible
         }
-        long paid = payriffOrderRepository.countByUserIdAndExamIdAndStatus(user.getId(), exam.getId(), "PAID");
+        long paid = paymentOrderRepository.countByUserIdAndExamIdAndStatus(user.getId(), exam.getId(), "PAID");
         long submitted = submissionRepository.countByExamIdAndStudentIdAndSubmittedAtIsNotNull(exam.getId(), user.getId());
         return paid > submitted;
     }
@@ -251,9 +251,9 @@ public class ExamService {
      */
     @Transactional(readOnly = true)
     public List<String> getMyPurchasedExamShareLinks(User user) {
-        return payriffOrderRepository.findPaidExamOrders(user.getId(), "PAID")
+        return paymentOrderRepository.findPaidExamOrders(user.getId(), "PAID")
                 .stream()
-                .map(PayriffOrder::getExam)
+                .map(PaymentOrder::getExam)
                 .filter(Objects::nonNull)
                 .distinct()
                 .filter(e -> hasUnusedPurchase(e, user))

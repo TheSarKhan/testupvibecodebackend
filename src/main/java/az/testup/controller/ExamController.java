@@ -3,10 +3,10 @@ package az.testup.controller;
 import az.testup.dto.request.ExamRequest;
 import az.testup.dto.response.ExamResponse;
 import az.testup.entity.Exam;
-import az.testup.entity.PayriffOrder;
+import az.testup.entity.PaymentOrder;
 import az.testup.entity.User;
 import az.testup.exception.UnauthorizedException;
-import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.UserRepository;
 import az.testup.service.ExamService;
 import az.testup.service.PdfService;
@@ -32,7 +32,7 @@ public class ExamController {
     private final UserRepository userRepository;
     private final PdfService pdfService;
     private final SubscriptionValidatorService subscriptionValidatorService;
-    private final PayriffOrderRepository payriffOrderRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
 
 
     @PostMapping
@@ -157,7 +157,7 @@ public class ExamController {
         if (userDetails == null) return ResponseEntity.ok(List.of());
         User user = userRepository.findByEmail(userDetails.getUsername()).orElse(null);
         if (user == null) return ResponseEntity.ok(List.of());
-        List<PayriffOrder> orders = payriffOrderRepository.findPaidExamOrders(user.getId(), "PAID");
+        List<PaymentOrder> orders = paymentOrderRepository.findPaidExamOrders(user.getId(), "PAID");
         List<Map<String, Object>> result = orders.stream()
             .filter(order -> order.getExam() != null && examService.hasUnusedPurchase(order.getExam(), user))
             .collect(Collectors.toMap(

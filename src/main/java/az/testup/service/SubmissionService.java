@@ -19,7 +19,7 @@ import az.testup.repository.AnswerRepository;
 import az.testup.repository.ExamAccessCodeRepository;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
-import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.QuestionRepository;
 import az.testup.repository.StudentSavedExamRepository;
 import az.testup.repository.SubmissionRepository;
@@ -52,7 +52,7 @@ public class SubmissionService {
     private final AnswerRepository answerRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
     private final StudentSavedExamRepository studentSavedExamRepository;
-    private final PayriffOrderRepository payriffOrderRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
     private final AuditLogService auditLogService;
@@ -101,7 +101,7 @@ public class SubmissionService {
 
         // Payment check for paid exams: paidOrders must exceed completedSubmissions
         if (student != null && exam.getPrice() != null && exam.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0) {
-            long paid = payriffOrderRepository.countByUserIdAndExamIdAndStatus(student.getId(), exam.getId(), "PAID");
+            long paid = paymentOrderRepository.countByUserIdAndExamIdAndStatus(student.getId(), exam.getId(), "PAID");
             long submitted = submissionRepository.countByExamIdAndStudentIdAndSubmittedAtIsNotNull(exam.getId(), student.getId());
             if (paid <= submitted) {
                 throw new BadRequestException("Bu imtahanı başlamaq üçün ödəniş tələb olunur");

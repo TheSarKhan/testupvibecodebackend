@@ -2,22 +2,24 @@ package az.testup.controller;
 
 import az.testup.dto.request.AssignSubscriptionRequest;
 import az.testup.entity.Exam;
-import az.testup.entity.PayriffOrder;
+import az.testup.entity.PaymentOrder;
 import az.testup.entity.SubscriptionPlan;
 import az.testup.entity.User;
 import az.testup.entity.UserSubscription;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
-import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.SubscriptionPlanRepository;
 import az.testup.repository.UserRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.enums.AuditAction;
 import az.testup.service.AuditLogService;
 import az.testup.service.ExamService;
-import az.testup.service.PayriffService;
+import az.testup.service.KapitalBankService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -35,11 +37,13 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class PaymentController {
 
+    private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
+
     @Value("${app.base-url}")
     private String appBaseUrl;
 
-    private final PayriffService payriffService;
-    private final PayriffOrderRepository payriffOrderRepository;
+    private final KapitalBankService kapitalBankService;
+    private final PaymentOrderRepository paymentOrderRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final UserRepository userRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
@@ -118,9 +122,14 @@ public class PaymentController {
 
         // Paid: charge only the difference, duration from total value
         String description = plan.getName() + " — " + months + " ay";
-        PayriffService.CreateInvoiceResult result = payriffService.createOrder(chargeAmount, description);
+        KapitalBankService.CreateInvoiceResult result = kapitalBankService.createOrder(chargeAmount, description);
 
-        PayriffOrder order = PayriffOrder.builder()
+        if (body.containsKey("storedId") && body.get("storedId") != null) {
+            long storedId = Long.parseLong(body.get("storedId").toString());
+            kapitalBankService.setSrcToken(result.orderId(), result.password(), storedId);
+        }
+
+        PaymentOrder order = PaymentOrder.builder()
                 .orderId(result.orderId())
                 .user(user)
                 .plan(plan)
@@ -130,7 +139,7 @@ public class PaymentController {
                 .status("PENDING")
                 .createdAt(LocalDateTime.now())
                 .build();
-        payriffOrderRepository.save(order);
+        paymentOrderRepository.save(order);
 
         return ResponseEntity.ok(Map.of(
                 "orderId", result.orderId(),
@@ -153,7 +162,7 @@ public class PaymentController {
 
         String orderId = body.get("orderId").toString();
 
-        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        PaymentOrder order = paymentOrderRepository.findByOrderId(orderId).orElse(null);
         if (order == null) {
             return ResponseEntity.status(404).body(Map.of("status", "NOT_FOUND", "message", "Order not found"));
         }
@@ -165,7 +174,7 @@ public class PaymentController {
             return ResponseEntity.status(403).body(Map.of("message", "Bu əməliyyat üçün icazəniz yoxdur"));
         }
 
-        // Already fully processed — return early without hitting Payriff API
+        // Already fully processed — return early without hitting Kapital Bank API
         if ("PAID".equals(order.getStatus())) {
             if (order.getExam() != null) {
                 return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true, "examShareLink", order.getExam().getShareLink()));
@@ -174,13 +183,13 @@ public class PaymentController {
         }
 
         // Atomically claim the order for processing (PENDING → PROCESSING).
-        int claimed = payriffOrderRepository.claimForProcessing(orderId);
+        int claimed = paymentOrderRepository.claimForProcessing(orderId);
         if (claimed == 0) {
             // Either already PROCESSING (concurrent request) or FAILED
             return ResponseEntity.ok(Map.of("status", order.getStatus()));
         }
 
-        String paymentStatus = payriffService.getOrderStatus(orderId);
+        String paymentStatus = kapitalBankService.getOrderStatus(orderId);
         boolean isPaid = isPaidStatus(paymentStatus);
 
         if (isPaid) {
@@ -196,7 +205,7 @@ public class PaymentController {
         } else {
             order.setStatus("PENDING");
         }
-        payriffOrderRepository.save(order);
+        paymentOrderRepository.save(order);
 
         return ResponseEntity.ok(Map.of("status", paymentStatus));
     }
@@ -204,7 +213,6 @@ public class PaymentController {
     /**
      * Kapital Bank browser redirect callback.
      * KB redirects user's browser here after payment with ?ID={orderId}&STATUS={status}.
-     * Processes the order and redirects to the frontend success/failure page.
      */
     @GetMapping("/callback")
     @Transactional
@@ -212,49 +220,65 @@ public class PaymentController {
             @RequestParam(name = "ID", required = false) String orderId,
             @RequestParam(name = "STATUS", required = false) String callbackStatus) {
         try {
+            log.info("KB callback received: ID={}, STATUS={}", orderId, callbackStatus);
+
             if (orderId == null || orderId.isBlank()) {
+                log.warn("KB callback: orderId is blank");
                 return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
             }
 
-            PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+            PaymentOrder order = paymentOrderRepository.findByOrderId(orderId).orElse(null);
             if (order == null) {
+                log.warn("KB callback: order not found in DB for orderId={}", orderId);
                 return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
             }
+
+            log.info("KB callback: order found, current DB status={}", order.getStatus());
 
             if ("PAID".equals(order.getStatus())) {
+                log.info("KB callback: order already PAID, redirecting to ugurlu");
                 String successUrl = order.getExam() != null
                         ? appBaseUrl + "/odenis/ugurlu?shareLink=" + order.getExam().getShareLink()
                         : appBaseUrl + "/odenis/ugurlu";
                 return ResponseEntity.status(302).header("Location", successUrl).build();
             }
 
-            int claimed = payriffOrderRepository.claimForProcessing(orderId);
+            int claimed = paymentOrderRepository.claimForProcessing(orderId);
+            log.info("KB callback: claimForProcessing result={}", claimed);
             if (claimed == 0) {
+                log.info("KB callback: order already being processed, redirecting to ugurlu");
                 return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/ugurlu").build();
             }
 
-            // Trust KB callback status first, then verify via API if needed
             boolean isPaid = isPaidStatus(callbackStatus);
+            log.info("KB callback: isPaid from callbackStatus({})={}", callbackStatus, isPaid);
+
             if (!isPaid) {
-                isPaid = isPaidStatus(payriffService.getOrderStatus(orderId));
+                String apiStatus = kapitalBankService.getOrderStatus(orderId);
+                log.info("KB callback: API getOrderStatus returned={}", apiStatus);
+                isPaid = isPaidStatus(apiStatus);
             }
 
             if (isPaid) {
+                log.info("KB callback: payment confirmed, activating order={}", orderId);
                 activateOrder(order, orderId, null);
                 String successUrl = order.getExam() != null
                         ? appBaseUrl + "/odenis/ugurlu?shareLink=" + order.getExam().getShareLink()
                         : appBaseUrl + "/odenis/ugurlu";
                 return ResponseEntity.status(302).header("Location", successUrl).build();
-            } else {
-                if (isFailedStatus(callbackStatus)) {
-                    order.setStatus("FAILED");
-                } else {
-                    order.setStatus("PENDING");
-                }
-                payriffOrderRepository.save(order);
+            } else if (isFailedStatus(callbackStatus)) {
+                log.warn("KB callback: payment FAILED, status={}", callbackStatus);
+                order.setStatus("FAILED");
+                paymentOrderRepository.save(order);
                 return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
+            } else {
+                log.warn("KB callback: status not confirmed yet ({}), keeping PENDING", callbackStatus);
+                order.setStatus("PENDING");
+                paymentOrderRepository.save(order);
+                return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/ugurlu").build();
             }
         } catch (Exception e) {
+            log.error("KB callback: exception for orderId={}: {}", orderId, e.getMessage(), e);
             return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
         }
     }
@@ -280,16 +304,21 @@ public class PaymentController {
             return ResponseEntity.badRequest().body(Map.of("message", "Bu imtahan pulsuzdur"));
         }
 
-        // Has unused purchase (paid more times than submitted) — no need to pay again, just start
+        // Has unused purchase — no need to pay again
         if (examService.hasUnusedPurchase(exam, user)) {
             return ResponseEntity.ok(Map.of("alreadyPurchased", true, "shareLink", shareLink));
         }
 
         double amount = exam.getPrice().doubleValue();
         String description = exam.getTitle() + " — imtahan";
-        PayriffService.CreateInvoiceResult result = payriffService.createOrder(amount, description);
+        KapitalBankService.CreateInvoiceResult result = kapitalBankService.createOrder(amount, description);
 
-        PayriffOrder order = PayriffOrder.builder()
+        if (body.containsKey("storedId") && body.get("storedId") != null) {
+            long storedId = Long.parseLong(body.get("storedId").toString());
+            kapitalBankService.setSrcToken(result.orderId(), result.password(), storedId);
+        }
+
+        PaymentOrder order = PaymentOrder.builder()
                 .orderId(result.orderId())
                 .user(user)
                 .exam(exam)
@@ -299,7 +328,7 @@ public class PaymentController {
                 .status("PENDING")
                 .createdAt(LocalDateTime.now())
                 .build();
-        payriffOrderRepository.save(order);
+        paymentOrderRepository.save(order);
 
         return ResponseEntity.ok(Map.of(
                 "orderId", result.orderId(),
@@ -327,10 +356,9 @@ public class PaymentController {
                 || s.equals("VOIDED") || s.equals("CLOSED");
     }
 
-    /** Marks order as PAID and activates subscription or exam purchase. */
-    private void activateOrder(PayriffOrder order, String orderId, User verifyingUser) {
+    private void activateOrder(PaymentOrder order, String orderId, User verifyingUser) {
         order.setStatus("PAID");
-        payriffOrderRepository.save(order);
+        paymentOrderRepository.save(order);
 
         User orderUser = order.getUser();
 

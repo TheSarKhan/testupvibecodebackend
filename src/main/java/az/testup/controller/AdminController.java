@@ -16,15 +16,15 @@ import az.testup.dto.response.TemplateResponse;
 import az.testup.dto.response.TemplateSubtitleResponse;
 import az.testup.dto.response.TemplateSectionResponse;
 import az.testup.dto.request.AssignSubscriptionRequest;
-import az.testup.entity.PayriffOrder;
+import az.testup.entity.PaymentOrder;
 import az.testup.entity.User;
 import az.testup.enums.AuditAction;
-import az.testup.repository.PayriffOrderRepository;
+import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.UserRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.AuditLogService;
 import az.testup.service.ExamService;
-import az.testup.service.PayriffService;
+import az.testup.service.KapitalBankService;
 import az.testup.service.UserSubscriptionService;
 import az.testup.entity.Banner;
 import az.testup.entity.ExamSubject;
@@ -65,9 +65,9 @@ public class AdminController {
     private final TemplateService templateService;
     private final BannerRepository bannerRepository;
     private final AuditLogService auditLogService;
-    private final PayriffOrderRepository payriffOrderRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
-    private final PayriffService payriffService;
+    private final KapitalBankService kapitalBankService;
     private final UserSubscriptionService userSubscriptionService;
     private final ExamService examService;
     private final UserRepository userRepository;
@@ -83,15 +83,15 @@ public class AdminController {
 
     @GetMapping("/revenue")
     public ResponseEntity<RevenueStatsResponse> getRevenue() {
-        double total = payriffOrderRepository.totalRevenue() != null ? payriffOrderRepository.totalRevenue() : 0.0;
-        double thisMonth = payriffOrderRepository.thisMonthRevenue() != null ? payriffOrderRepository.thisMonthRevenue() : 0.0;
-        double lastMonth = payriffOrderRepository.lastMonthRevenue() != null ? payriffOrderRepository.lastMonthRevenue() : 0.0;
+        double total = paymentOrderRepository.totalRevenue() != null ? paymentOrderRepository.totalRevenue() : 0.0;
+        double thisMonth = paymentOrderRepository.thisMonthRevenue() != null ? paymentOrderRepository.thisMonthRevenue() : 0.0;
+        double lastMonth = paymentOrderRepository.lastMonthRevenue() != null ? paymentOrderRepository.lastMonthRevenue() : 0.0;
         double growth = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100.0 : (thisMonth > 0 ? 100.0 : 0.0);
-        long totalPaidOrders = payriffOrderRepository.countByStatus("PAID");
+        long totalPaidOrders = paymentOrderRepository.countByStatus("PAID");
         long activeSubscriptions = userSubscriptionRepository.countActiveSubscriptions();
 
         List<RevenueStatsResponse.MonthlyItem> monthly = new ArrayList<>();
-        for (Object[] row : payriffOrderRepository.monthlyRevenue()) {
+        for (Object[] row : paymentOrderRepository.monthlyRevenue()) {
             monthly.add(new RevenueStatsResponse.MonthlyItem(
                     row[0].toString(),
                     ((Number) row[1]).doubleValue(),
@@ -101,7 +101,7 @@ public class AdminController {
         Collections.reverse(monthly); // ascending order for chart
 
         List<RevenueStatsResponse.PlanItem> byPlan = new ArrayList<>();
-        for (Object[] row : payriffOrderRepository.revenueByPlan()) {
+        for (Object[] row : paymentOrderRepository.revenueByPlan()) {
             byPlan.add(new RevenueStatsResponse.PlanItem(
                     row[0].toString(),
                     ((Number) row[1]).doubleValue(),
@@ -110,7 +110,7 @@ public class AdminController {
         }
 
         List<RevenueStatsResponse.RecentPayment> recent = new ArrayList<>();
-        for (PayriffOrder o : payriffOrderRepository.findTop10ByStatusOrderByCreatedAtDesc("PAID")) {
+        for (PaymentOrder o : paymentOrderRepository.findTop10ByStatusOrderByCreatedAtDesc("PAID")) {
             recent.add(new RevenueStatsResponse.RecentPayment(
                     o.getOrderId(),
                     o.getUser().getEmail(),
@@ -133,7 +133,7 @@ public class AdminController {
     @GetMapping("/revenue/pending-orders")
     public ResponseEntity<List<Map<String, Object>>> getPendingOrders() {
         List<Map<String, Object>> result = new ArrayList<>();
-        for (PayriffOrder o : payriffOrderRepository.findByStatusOrderByCreatedAtDesc("PENDING")) {
+        for (PaymentOrder o : paymentOrderRepository.findByStatusOrderByCreatedAtDesc("PENDING")) {
             boolean isExam = o.getExam() != null;
             java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
             item.put("id", o.getId());
@@ -153,7 +153,7 @@ public class AdminController {
 
     @PostMapping("/revenue/verify-order/{orderId}")
     public ResponseEntity<Map<String, Object>> adminVerifyOrder(@PathVariable String orderId) {
-        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        PaymentOrder order = paymentOrderRepository.findByOrderId(orderId).orElse(null);
         if (order == null) {
             return ResponseEntity.status(404).body(Map.of("success", false, "message", "Order tapılmadı"));
         }
@@ -161,7 +161,7 @@ public class AdminController {
             return ResponseEntity.ok(Map.of("success", true, "message", "Artıq işlənib", "alreadyPaid", true));
         }
 
-        String paymentStatus = payriffService.getOrderStatus(orderId);
+        String paymentStatus = kapitalBankService.getOrderStatus(orderId);
         boolean isPaid = isKbPaidStatus(paymentStatus);
 
         if (isPaid) {
@@ -171,18 +171,18 @@ public class AdminController {
 
         if (isKbFailedStatus(paymentStatus)) {
             order.setStatus("FAILED");
-            payriffOrderRepository.save(order);
+            paymentOrderRepository.save(order);
         }
 
         return ResponseEntity.ok(Map.of("success", false, "paymentStatus", paymentStatus));
     }
 
-    // Force-activate regardless of Payriff status (admin knows money came in externally)
+    // Force-activate regardless of payment status (admin knows money came in externally)
     @PostMapping("/revenue/force-activate/{orderId}")
     public ResponseEntity<Map<String, Object>> adminForceActivate(
             @PathVariable String orderId,
             @AuthenticationPrincipal UserDetails principal) {
-        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        PaymentOrder order = paymentOrderRepository.findByOrderId(orderId).orElse(null);
         if (order == null) {
             return ResponseEntity.status(404).body(Map.of("success", false, "message", "Order tapılmadı"));
         }
@@ -196,7 +196,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> adminCancelOrder(
             @PathVariable String orderId,
             @AuthenticationPrincipal UserDetails principal) {
-        PayriffOrder order = payriffOrderRepository.findByOrderId(orderId).orElse(null);
+        PaymentOrder order = paymentOrderRepository.findByOrderId(orderId).orElse(null);
         if (order == null) {
             return ResponseEntity.status(404).body(Map.of("success", false, "message", "Order tapılmadı"));
         }
@@ -204,7 +204,7 @@ public class AdminController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "PAID order ləğv edilə bilməz"));
         }
         order.setStatus("FAILED");
-        payriffOrderRepository.save(order);
+        paymentOrderRepository.save(order);
         String adminEmail = principal != null ? principal.getUsername() : "admin";
         String targetName = order.getExam() != null ? order.getExam().getTitle() : (order.getPlan() != null ? order.getPlan().getName() : "?");
         auditLogService.log(AuditAction.SUBSCRIPTION_CANCELLED, adminEmail, adminEmail,
@@ -213,9 +213,9 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("success", true));
     }
 
-    private void activateOrder(PayriffOrder order, String orderId, String logNote) {
+    private void activateOrder(PaymentOrder order, String orderId, String logNote) {
         order.setStatus("PAID");
-        payriffOrderRepository.save(order);
+        paymentOrderRepository.save(order);
 
         if (order.getExam() != null) {
             User student = order.getUser();
