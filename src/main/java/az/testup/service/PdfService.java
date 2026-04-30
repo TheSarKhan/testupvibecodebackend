@@ -132,11 +132,16 @@ public class PdfService {
                 List<Option> options = q.getOptions();
                 options.sort(Comparator.comparing(Option::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())));
                 
+                Font oLabelFont = derivedFont(oFont, true, false);
                 char optionChar = 'A';
                 for (Option opt : options) {
                     Paragraph oPara = new Paragraph();
-                    oPara.add(new Chunk("   " + optionChar + ") ", oFont));
-                    addRichText(oPara, opt.getContent(), oFont);
+                    oPara.add(new Chunk("   " + optionChar + ") ", oLabelFont));
+                    String optContent = opt.getContent();
+                    if (optContent == null || optContent.isBlank() || optContent.replaceAll("<[^>]+>", "").isBlank()) {
+                        optContent = optionChar + " variantı";
+                    }
+                    addRichText(oPara, optContent, oFont);
                     oPara.setSpacingAfter(2f);
                     document.add(oPara);
                     
@@ -297,10 +302,8 @@ public class PdfService {
         return out.toByteArray();
     }
 
-    private String stripHtml(String html) {
-        return html
-            .replaceAll("(?i)<br\\s*/?>", "\n")
-            .replaceAll("<[^>]+>", "")
+    private String decodeHtmlEntities(String text) {
+        return text
             .replace("&nbsp;", " ")
             .replace("&amp;", "&")
             .replace("&lt;", "<")
@@ -309,15 +312,62 @@ public class PdfService {
             .replace("&#39;", "'");
     }
 
-    private void addRichText(Paragraph paragraph, String text, Font font) {
-        if (text == null) return;
-        String plain = stripHtml(text);
-        String[] lines = plain.split("\n", -1);
-        for (int i = 0; i < lines.length; i++) {
-            addLineRichText(paragraph, lines[i], font);
-            if (i < lines.length - 1) {
-                paragraph.add(Chunk.NEWLINE);
+    private Font derivedFont(Font base, boolean bold, boolean italic) {
+        int style = Font.NORMAL;
+        if (bold && italic) style = Font.BOLDITALIC;
+        else if (bold) style = Font.BOLD;
+        else if (italic) style = Font.ITALIC;
+        if (base.getBaseFont() != null) {
+            return new Font(base.getBaseFont(), base.getSize(), style);
+        }
+        return new Font(base.getFamily(), base.getSize(), style, base.getColor());
+    }
+
+    private static final java.util.regex.Pattern HTML_TAG_PATTERN =
+        java.util.regex.Pattern.compile("(?i)<(/?)\\s*(strong|b|em|i|u|br)(?:\\s[^>]*)?>|<[^>]+>");
+
+    private void addRichText(Paragraph paragraph, String html, Font baseFont) {
+        if (html == null) return;
+        java.util.regex.Matcher m = HTML_TAG_PATTERN.matcher(html);
+        int bold = (baseFont.getStyle() & Font.BOLD) != 0 ? 1 : 0;
+        int italic = (baseFont.getStyle() & Font.ITALIC) != 0 ? 1 : 0;
+        int lastEnd = 0;
+        StringBuilder pending = new StringBuilder();
+
+        while (m.find()) {
+            pending.append(html, lastEnd, m.start());
+            String closing = m.group(1);
+            String tag = m.group(2);
+
+            if (tag != null) {
+                String tl = tag.toLowerCase();
+                if (tl.equals("br")) {
+                    flushText(paragraph, pending.toString(), baseFont, bold, italic);
+                    pending.setLength(0);
+                    paragraph.add(Chunk.NEWLINE);
+                } else {
+                    flushText(paragraph, pending.toString(), baseFont, bold, italic);
+                    pending.setLength(0);
+                    boolean isClose = !closing.isEmpty();
+                    if (tl.equals("strong") || tl.equals("b")) bold += isClose ? -1 : 1;
+                    else if (tl.equals("em") || tl.equals("i")) italic += isClose ? -1 : 1;
+                }
             }
+            // unknown tags: just skip
+            lastEnd = m.end();
+        }
+        pending.append(html, lastEnd, html.length());
+        flushText(paragraph, pending.toString(), baseFont, bold, italic);
+    }
+
+    private void flushText(Paragraph paragraph, String raw, Font baseFont, int bold, int italic) {
+        if (raw.isEmpty()) return;
+        String text = decodeHtmlEntities(raw);
+        String[] lines = text.split("\n", -1);
+        Font f = derivedFont(baseFont, bold > 0, italic > 0);
+        for (int i = 0; i < lines.length; i++) {
+            if (!lines[i].isEmpty()) addLineRichText(paragraph, lines[i], f);
+            if (i < lines.length - 1) paragraph.add(Chunk.NEWLINE);
         }
     }
 

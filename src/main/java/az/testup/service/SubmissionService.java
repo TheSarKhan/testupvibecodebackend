@@ -626,6 +626,7 @@ public class SubmissionService {
                 .collect(Collectors.toList());
         if (examIds.isEmpty()) return List.of();
         return submissionRepository.findByExamIdInAndSubmittedAtIsNotNullAndIsFullyGradedFalse(examIds).stream()
+                .filter(s -> !Boolean.TRUE.equals(s.getHiddenFromTeacher()))
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
