@@ -251,12 +251,27 @@ public class PaymentController {
             }
 
             boolean isPaid = isPaidStatus(callbackStatus);
-            log.info("KB callback: isPaid from callbackStatus({})={}", callbackStatus, isPaid);
+            boolean isFailed = isFailedStatus(callbackStatus);
+            log.info("KB callback: callbackStatus={} isPaid={} isFailed={}", callbackStatus, isPaid, isFailed);
 
-            if (!isPaid) {
+            // Callback status qeyri-müəyyəndirsə (Preparing/Processing) — retry ilə API-ni sorğula.
+            // KB brauzer redirect-i transaction tamamlanmadan edə bilər.
+            if (!isPaid && !isFailed) {
+                int maxRetries = 5;
+                int retryDelayMs = 1500;
+                for (int i = 1; i <= maxRetries; i++) {
+                    try { Thread.sleep(retryDelayMs); } catch (InterruptedException ignored) {}
+                    String apiStatus = kapitalBankService.getOrderStatus(orderId);
+                    log.info("KB callback: retry {}/{} apiStatus={}", i, maxRetries, apiStatus);
+                    if (isPaidStatus(apiStatus)) { isPaid = true; break; }
+                    if (isFailedStatus(apiStatus)) { isFailed = true; break; }
+                }
+            } else if (!isPaid) {
+                // Callback-da failed gəlsə bir dəfə API-ni yoxla (status müvəqqəti ola bilər)
                 String apiStatus = kapitalBankService.getOrderStatus(orderId);
-                log.info("KB callback: API getOrderStatus returned={}", apiStatus);
-                isPaid = isPaidStatus(apiStatus);
+                log.info("KB callback: API confirm for failed callbackStatus, apiStatus={}", apiStatus);
+                if (isPaidStatus(apiStatus)) isPaid = true;
+                else if (isFailedStatus(apiStatus)) isFailed = true;
             }
 
             if (isPaid) {
@@ -266,13 +281,13 @@ public class PaymentController {
                         ? appBaseUrl + "/odenis/ugurlu?shareLink=" + order.getExam().getShareLink()
                         : appBaseUrl + "/odenis/ugurlu";
                 return ResponseEntity.status(302).header("Location", successUrl).build();
-            } else if (isFailedStatus(callbackStatus)) {
-                log.warn("KB callback: payment FAILED, status={}", callbackStatus);
+            } else if (isFailed) {
+                log.warn("KB callback: payment FAILED for order={}", orderId);
                 order.setStatus("FAILED");
                 paymentOrderRepository.save(order);
                 return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/red").build();
             } else {
-                log.warn("KB callback: status not confirmed yet ({}), keeping PENDING", callbackStatus);
+                log.warn("KB callback: status still unconfirmed after retries, keeping PENDING order={}", orderId);
                 order.setStatus("PENDING");
                 paymentOrderRepository.save(order);
                 return ResponseEntity.status(302).header("Location", appBaseUrl + "/odenis/ugurlu").build();
