@@ -8,6 +8,7 @@ import com.lowagie.text.*;
 import com.lowagie.text.Font;
 import com.lowagie.text.Image;
 import com.lowagie.text.pdf.BaseFont;
+import com.lowagie.text.pdf.PdfContentByte;
 import com.lowagie.text.pdf.PdfWriter;
 import com.lowagie.text.pdf.draw.LineSeparator;
 import lombok.RequiredArgsConstructor;
@@ -324,13 +325,15 @@ public class PdfService {
     }
 
     private static final java.util.regex.Pattern HTML_TAG_PATTERN =
-        java.util.regex.Pattern.compile("(?i)<(/?)\\s*(strong|b|em|i|u|br)(?:\\s[^>]*)?>|<[^>]+>");
+        java.util.regex.Pattern.compile("(?i)<(/?)\\s*(strong|b|em|i|u|s|strike|del|br)(?:\\s[^>]*)?>|<[^>]+>");
 
     private void addRichText(Paragraph paragraph, String html, Font baseFont) {
         if (html == null) return;
         java.util.regex.Matcher m = HTML_TAG_PATTERN.matcher(html);
         int bold = (baseFont.getStyle() & Font.BOLD) != 0 ? 1 : 0;
         int italic = (baseFont.getStyle() & Font.ITALIC) != 0 ? 1 : 0;
+        int underline = 0;
+        int strike = 0;
         int lastEnd = 0;
         StringBuilder pending = new StringBuilder();
 
@@ -342,42 +345,58 @@ public class PdfService {
             if (tag != null) {
                 String tl = tag.toLowerCase();
                 if (tl.equals("br")) {
-                    flushText(paragraph, pending.toString(), baseFont, bold, italic);
+                    flushText(paragraph, pending.toString(), baseFont, bold, italic, underline, strike);
                     pending.setLength(0);
                     paragraph.add(Chunk.NEWLINE);
                 } else {
-                    flushText(paragraph, pending.toString(), baseFont, bold, italic);
+                    flushText(paragraph, pending.toString(), baseFont, bold, italic, underline, strike);
                     pending.setLength(0);
                     boolean isClose = !closing.isEmpty();
                     if (tl.equals("strong") || tl.equals("b")) bold += isClose ? -1 : 1;
                     else if (tl.equals("em") || tl.equals("i")) italic += isClose ? -1 : 1;
+                    else if (tl.equals("u")) underline += isClose ? -1 : 1;
+                    else if (tl.equals("s") || tl.equals("strike") || tl.equals("del")) strike += isClose ? -1 : 1;
                 }
             }
             // unknown tags: just skip
             lastEnd = m.end();
         }
         pending.append(html, lastEnd, html.length());
-        flushText(paragraph, pending.toString(), baseFont, bold, italic);
+        flushText(paragraph, pending.toString(), baseFont, bold, italic, underline, strike);
     }
 
-    private void flushText(Paragraph paragraph, String raw, Font baseFont, int bold, int italic) {
+    private void flushText(Paragraph paragraph, String raw, Font baseFont, int bold, int italic, int underline, int strike) {
         if (raw.isEmpty()) return;
         String text = decodeHtmlEntities(raw);
         String[] lines = text.split("\n", -1);
         Font f = derivedFont(baseFont, bold > 0, italic > 0);
         for (int i = 0; i < lines.length; i++) {
-            if (!lines[i].isEmpty()) addLineRichText(paragraph, lines[i], f);
+            if (!lines[i].isEmpty()) addLineRichText(paragraph, lines[i], f, bold > 0, underline > 0, strike > 0);
             if (i < lines.length - 1) paragraph.add(Chunk.NEWLINE);
         }
     }
 
-    private void addLineRichText(Paragraph paragraph, String text, Font font) {
+    private Chunk styleChunk(Chunk chunk, Font font, boolean bold, boolean underline, boolean strike) {
+        if (bold && font.getBaseFont() != null) {
+            float strokeWidth = font.getSize() * 0.04f;
+            chunk.setTextRenderMode(PdfContentByte.TEXT_RENDER_MODE_FILL_STROKE, strokeWidth, Color.BLACK);
+        }
+        if (underline) {
+            chunk.setUnderline(Math.max(0.6f, font.getSize() * 0.06f), -font.getSize() * 0.15f);
+        }
+        if (strike) {
+            chunk.setUnderline(Math.max(0.6f, font.getSize() * 0.06f), font.getSize() * 0.3f);
+        }
+        return chunk;
+    }
+
+    private void addLineRichText(Paragraph paragraph, String text, Font font, boolean bold, boolean underline, boolean strike) {
         java.util.regex.Matcher matcher = LATEX_PATTERN.matcher(text);
         int lastEnd = 0;
         while (matcher.find()) {
             String plainText = text.substring(lastEnd, matcher.start());
             if (!plainText.isEmpty()) {
-                paragraph.add(new Chunk(plainText, font));
+                paragraph.add(styleChunk(new Chunk(plainText, font), font, bold, underline, strike));
             }
 
             // Group 1: $$...$$ (display), Group 2: $...$ (inline)
@@ -419,13 +438,13 @@ public class PdfService {
                     float yOffset = -displayHeight * 0.2f;
                     paragraph.add(new Chunk(iTextImage, 0, yOffset, true));
                 } catch (Exception e) {
-                    paragraph.add(new Chunk(matcher.group(0), font));
+                    paragraph.add(styleChunk(new Chunk(matcher.group(0), font), font, bold, underline, strike));
                 }
             }
             lastEnd = matcher.end();
         }
         if (lastEnd < text.length()) {
-            paragraph.add(new Chunk(text.substring(lastEnd), font));
+            paragraph.add(styleChunk(new Chunk(text.substring(lastEnd), font), font, bold, underline, strike));
         }
     }
 

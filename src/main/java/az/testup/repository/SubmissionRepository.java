@@ -18,6 +18,11 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
     List<Submission> findByExamIdInAndSubmittedAtIsNotNullAndIsFullyGradedFalse(List<Long> examIds);
     long countByExamIdAndSubmittedAtIsNotNull(Long examId);
     long countByExamIdAndSubmittedAtIsNotNullAndIsFullyGradedFalse(Long examId);
+
+    @Query("SELECT COUNT(s) FROM Submission s WHERE s.exam.id = :examId " +
+           "AND s.submittedAt IS NOT NULL AND s.isFullyGraded = false " +
+           "AND (s.hiddenFromTeacher IS NULL OR s.hiddenFromTeacher = false)")
+    long countPendingGradingByExamIdExcludingHidden(@Param("examId") Long examId);
     boolean existsByExamIdAndStudentIdAndSubmittedAtIsNotNull(Long examId, Long studentId);
     long countByExamIdAndStudentIdAndSubmittedAtIsNotNull(Long examId, Long studentId);
 

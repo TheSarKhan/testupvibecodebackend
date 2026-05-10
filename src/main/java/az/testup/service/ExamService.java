@@ -798,7 +798,7 @@ public class ExamService {
                 .collaborativeParentId(exam.getCollaborativeParentId())
                 .collaborativeSubjects(collaborativeSubjects)
                 .collaborativeTemplateSections(collaborativeTemplateSections)
-                .pendingManualCount(submissionRepository.countByExamIdAndSubmittedAtIsNotNullAndIsFullyGradedFalse(exam.getId()))
+                .pendingManualCount(submissionRepository.countPendingGradingByExamIdExcludingHidden(exam.getId()))
                 .averageRating(submissionRepository.findAverageRatingByExamId(exam.getId()))
                 .ratingCount(submissionRepository.countRatingsByExamId(exam.getId()))
                 .build();

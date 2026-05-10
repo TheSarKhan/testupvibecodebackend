@@ -39,7 +39,57 @@ public class GeminiService {
 
         String prompt = buildPrompt(req);
         String rawResponse = callGemini(prompt);
-        return parseResponse(rawResponse, req);
+        List<BankQuestionRequest> parsed = parseResponse(rawResponse, req);
+        List<BankQuestionRequest> filtered = filterValidLatex(parsed);
+
+        int requested = req.getCount() == null ? 0 : req.getCount();
+        if (filtered.size() < requested && filtered.size() < parsed.size()) {
+            GenerateQuestionsRequest retryReq = new GenerateQuestionsRequest();
+            retryReq.setSubjectId(req.getSubjectId());
+            retryReq.setSubjectName(req.getSubjectName());
+            retryReq.setTopicName(req.getTopicName());
+            retryReq.setDifficulty(req.getDifficulty());
+            retryReq.setQuestionType(req.getQuestionType());
+            retryReq.setCount(requested - filtered.size());
+            try {
+                String retryRaw = callGemini(buildPrompt(retryReq));
+                List<BankQuestionRequest> retryFiltered = filterValidLatex(parseResponse(retryRaw, retryReq));
+                filtered.addAll(retryFiltered);
+            } catch (Exception ignored) {}
+        }
+
+        for (int i = 0; i < filtered.size(); i++) filtered.get(i).setOrderIndex(i);
+        return filtered;
+    }
+
+    private List<BankQuestionRequest> filterValidLatex(List<BankQuestionRequest> questions) {
+        List<BankQuestionRequest> result = new ArrayList<>();
+        for (BankQuestionRequest q : questions) {
+            if (!hasValidLatex(q.getContent())) continue;
+            boolean optionsOk = q.getOptions() == null || q.getOptions().stream()
+                    .allMatch(o -> hasValidLatex(o.getContent()));
+            if (!optionsOk) continue;
+            if (q.getCorrectAnswer() != null && !hasValidLatex(q.getCorrectAnswer())) continue;
+            result.add(q);
+        }
+        return result;
+    }
+
+    private boolean hasValidLatex(String text) {
+        if (text == null || text.isBlank()) return true;
+        int beginCount = countMatches(text, "\\begin{");
+        int endCount   = countMatches(text, "\\end{");
+        if (beginCount != endCount) return false;
+        if (text.matches("(?s).*(^|[^\\\\])end\\{.*")) return false;
+        long dollars = text.chars().filter(c -> c == '$').count();
+        if (dollars % 2 != 0) return false;
+        return true;
+    }
+
+    private int countMatches(String text, String sub) {
+        int count = 0, idx = 0;
+        while ((idx = text.indexOf(sub, idx)) != -1) { count++; idx += sub.length(); }
+        return count;
     }
 
     // ── Math subjects ─────────────────────────────────────────────────────────
@@ -80,15 +130,16 @@ public class GeminiService {
 
         String latexNote = isMath ? """
 
-            LaTeX qaydaları (KaTeX formatı):
-            - İnline riyazi ifadə: $ifadə$ — məsələn: $x^2 + 3x - 4 = 0$
-            - Kəsrlər: $\\frac{a}{b}$ — məsələn: $\\frac{3}{4}$ (JSON-DA: \\\\frac)
-            - Kvadrat kök: $\\sqrt{x}$ — məsələn: $\\sqrt{16}$ (JSON-DA: \\\\sqrt)
-            - Üst dərəcə: $x^{2}$, alt indeks: $x_{1}$
-            - Vurmaq: $\\cdot$ — məsələn: $3 \\cdot x$ (JSON-DA: \\\\cdot)
-            - MATRİSLƏR: $\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$ — QEYDİ: kəsik üçün dörd arxa xətt, sonda \\end{} yazmalı
-            - QAYD: JSON-da LaTeX komandasının hər bir backslash DOUBLE-ESCAPE olmalı
-            - Bütün riyazi ifadə, ədəd, dəyişən LaTeX ilə yazılmalıdır
+            LaTeX qaydaları (KaTeX formatı) — CİDDİ ƏMƏL ET:
+            - HƏR riyazi ifadə MÜTLƏQ $...$ daxilində yazılmalıdır. $-siz LaTeX QADAĞANDIR.
+            - Sadə ədədlər/dəyişənlər: $x$, $5$, $-3$
+            - Kəsrlər: $\\frac{a}{b}$ — JSON-da \\\\frac kimi yazılır
+            - Kvadrat kök: $\\sqrt{x}$ — JSON-da \\\\sqrt
+            - Üst dərəcə: $x^{2}$; alt indeks: $x_{1}$
+            - Vurma: $\\cdot$ — JSON-da \\\\cdot
+            - QAYD: JSON-da hər backslash double-escape (\\\\) olmalı
+            - Matris, inteqral kimi mürəkkəb konstruksiyalardan istifadə ETMƏ — sadə tənliklərlə işlə
+            - \\begin{...} işlətsən, MUTLAQ uyğun \\end{...} ilə bağla və hamısını $...$ daxilinə sal
             """ : "";
 
         String typeInstruction;
@@ -100,7 +151,7 @@ public class GeminiService {
                 : "Açıq sual: tələbə qısa cavab yazır, correctAnswer düzgün cavabdır.";
 
             exampleJson = isMath
-                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ bərabərliyini həll edin. $x$ = ___\",\"correctAnswer\":\"$x = 4$\"},{\"content\":\"$\\\\frac{3}{4}$ ədədinin $\\\\frac{2}{3}$ hissəsini tapın.\",\"correctAnswer\":\"$\\\\frac{1}{2}$\"},{\"content\":\"$2 \\\\cdot \\\\begin{pmatrix} 1 & 2 \\\\\\\\ 3 & 4 \\\\end{pmatrix} + \\\\begin{pmatrix} 1 & 1 \\\\\\\\ 1 & 1 \\\\end{pmatrix}$ matris əməliyyatının nəticəsinin 1-ci sətir 1-ci sütun elementini tapın.\",\"correctAnswer\":\"4\"}]}"
+                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ bərabərliyini həll edin. $x$ = ___\",\"correctAnswer\":\"$x = 4$\"},{\"content\":\"$\\\\frac{3}{4}$ ədədinin $\\\\frac{2}{3}$ hissəsini tapın.\",\"correctAnswer\":\"$\\\\frac{1}{2}$\"}]}"
                 : "{\"questions\":[{\"content\":\"Azərbaycanın paytaxtı hansı şəhərdir?\",\"correctAnswer\":\"Bakı\"},{\"content\":\"Su hansı kimyəvi formulla ifadə olunur?\",\"correctAnswer\":\"H₂O\"}]}";
         } else if (isMulti) {
             typeInstruction = "Çox seçimli: 4 variant olmalıdır, 2 variant düzgündür (isCorrect: true), 2 variant səhvdir (isCorrect: false).";
@@ -121,12 +172,14 @@ public class GeminiService {
                 "Yaradılacaq sual sayı: " + req.getCount() + "\n" +
                 latexNote +
                 "\nQAYDALAR:\n" +
-                "1. Bütün suallar Azərbaycan dilində olmalıdır\n" +
-                "2. Variantlar real, məntiqi və aldadıcı olmalıdır — heç biri boş qoyulmamalıdır\n" +
-                "3. Hər sualda tam " + (isOpen ? "\"content\" və \"correctAnswer\"" : "\"content\" və 4 variant olan \"options\"") + " olmalıdır\n" +
-                "4. JSON obyektinin açarı \"questions\" olmalıdır\n" +
-                (isMath ? "5. Bütün riyazi ifadələr KaTeX formatında yazılmalıdır ($...$)\n" +
-                         "6. JSON Response-da backslash-lar DOUBLE-ESCAPE olmalı: content-də LaTeX komandaları tək backslash ilə yazılır\n" : "") +
+                "1. SUALLAR YALNIZ \"" + topic + "\" mövzusuna aid olmalıdır. Başqa mövzudan sual yaratmaq QƏTİ QADAĞANDIR.\n" +
+                "2. Bütün suallar Azərbaycan dilində olmalıdır\n" +
+                "3. Variantlar real, məntiqi və aldadıcı olmalıdır — heç biri boş qoyulmamalıdır\n" +
+                "4. Hər sualda tam " + (isOpen ? "\"content\" və \"correctAnswer\"" : "\"content\" və 4 variant olan \"options\"") + " olmalıdır\n" +
+                "5. JSON obyektinin açarı \"questions\" olmalıdır\n" +
+                (isMath ? "6. Bütün riyazi ifadələr KaTeX formatında YALNIZ $...$ daxilində yazılmalıdır\n" +
+                         "7. JSON Response-da backslash-lar DOUBLE-ESCAPE olmalı: content-də LaTeX komandaları tək backslash ilə yazılır\n" +
+                         "8. \\begin{...} işlədildikdə hökmən \\end{...} ilə bağlanmalı və hər ikisi $...$ içində olmalı\n" : "") +
                 "\nNÜMUNƏ FORMAT (məzmunu kopyalama, yalnız strukturu izlə):\n" +
                 exampleJson);
     }
