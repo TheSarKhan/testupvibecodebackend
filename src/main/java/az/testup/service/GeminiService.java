@@ -42,7 +42,7 @@ public class GeminiService {
         List<BankQuestionRequest> parsed = parseResponse(rawResponse, req);
         List<BankQuestionRequest> filtered = filterValidLatex(parsed);
 
-        int requested = req.getCount() == null ? 0 : req.getCount();
+        int requested = req.getCount();
         if (filtered.size() < requested && filtered.size() < parsed.size()) {
             GenerateQuestionsRequest retryReq = new GenerateQuestionsRequest();
             retryReq.setSubjectId(req.getSubjectId());
