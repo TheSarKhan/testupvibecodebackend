@@ -12,5 +12,6 @@ public class    TestupApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(TestupApplication.class, args);
+   System.out.println("TestupApplication started successfully!");
     }
 }
