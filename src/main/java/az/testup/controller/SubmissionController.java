@@ -6,8 +6,10 @@ import az.testup.dto.request.StartSubmissionRequest;
 import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.User;
+import az.testup.enums.AuditAction;
 import az.testup.exception.UnauthorizedException;
 import az.testup.repository.UserRepository;
+import az.testup.service.AuditLogService;
 import az.testup.service.SubmissionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +33,7 @@ public class SubmissionController {
 
     private final SubmissionService submissionService;
     private final UserRepository userRepository;
+    private final AuditLogService auditLogService;
 
     @PostMapping("/start/{shareLink}")
     public ResponseEntity<SubmissionResponse> startSubmission(
@@ -123,6 +126,11 @@ public class SubmissionController {
         headers.setContentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
         headers.setContentDisposition(ContentDisposition.attachment()
                 .filename(filename, StandardCharsets.UTF_8).build());
+
+        auditLogService.log(AuditAction.EXAM_RESULTS_EXPORTED, teacher.getEmail(), teacher.getFullName(),
+                "EXAM", "ID:" + examId,
+                "Excel ixracı, ölçü: " + data.length + " bayt");
+
         return ResponseEntity.ok().headers(headers).body(data);
     }
 

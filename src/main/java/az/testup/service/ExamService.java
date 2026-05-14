@@ -207,6 +207,11 @@ public class ExamService {
                     .exam(exam)
                     .build());
         }
+
+        boolean isPaid = amount != null && amount.compareTo(java.math.BigDecimal.ZERO) > 0;
+        auditLogService.log(AuditAction.EXAM_PURCHASED, student.getEmail(), student.getFullName(),
+                "EXAM", exam.getTitle(),
+                isPaid ? ("Məbləğ: " + amount + " AZN") : "Pulsuz imtahan");
     }
 
     /**
@@ -567,6 +572,9 @@ public class ExamService {
                 .expiresAt(expiresAt)
                 .build();
         examAccessCodeRepository.save(accessCode);
+
+        auditLogService.log(AuditAction.EXAM_ACCESS_CODE_GENERATED, teacher.getEmail(), teacher.getFullName(),
+                "EXAM", exam.getTitle(), "Kod: " + code + " (12 saat keçərli)");
 
         return Map.of("accessCode", code, "expiresAt", expiresAt.toString());
     }

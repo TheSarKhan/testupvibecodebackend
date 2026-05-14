@@ -4,8 +4,10 @@ import az.testup.dto.request.BankQuestionRequest;
 import az.testup.dto.request.GenerateExamRequest;
 import az.testup.dto.request.GenerateQuestionsRequest;
 import az.testup.entity.User;
+import az.testup.enums.AuditAction;
 import az.testup.exception.SubscriptionLimitExceededException;
 import az.testup.repository.UserRepository;
+import az.testup.service.AuditLogService;
 import az.testup.service.GeminiService;
 import az.testup.service.SubscriptionValidatorService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ public class AiController {
     private final GeminiService geminiService;
     private final SubscriptionValidatorService subscriptionValidatorService;
     private final UserRepository userRepository;
+    private final AuditLogService auditLogService;
 
     /**
      * GET /api/ai/usage
@@ -59,6 +62,10 @@ public class AiController {
             List<BankQuestionRequest> questions = geminiService.generateQuestions(req);
 
             subscriptionValidatorService.recordAiQuestions(user.getId(), questions.size());
+            auditLogService.log(AuditAction.AI_QUESTIONS_GENERATED, user.getEmail(), user.getFullName(),
+                    "AI", "Sual generasiyası",
+                    "Say: " + questions.size() + ", Fənn: " + req.getSubjectName()
+                            + (req.getTopicName() != null ? ", Mövzu: " + req.getTopicName() : ""));
             return ResponseEntity.ok(questions);
         } catch (SubscriptionLimitExceededException e) {
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
@@ -84,6 +91,9 @@ public class AiController {
             List<BankQuestionRequest> questions = geminiService.generateExam(req);
 
             subscriptionValidatorService.recordAiQuestions(user.getId(), questions.size());
+            auditLogService.log(AuditAction.AI_EXAM_GENERATED, user.getEmail(), user.getFullName(),
+                    "AI", "İmtahan generasiyası",
+                    "Sual sayı: " + questions.size() + ", Fənn: " + req.getSubjectName());
             return ResponseEntity.ok(questions);
         } catch (SubscriptionLimitExceededException e) {
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));

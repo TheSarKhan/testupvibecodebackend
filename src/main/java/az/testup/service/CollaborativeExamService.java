@@ -6,6 +6,7 @@ import az.testup.dto.response.CollaborativeExamResponse;
 import az.testup.dto.response.CollaboratorResponse;
 import az.testup.dto.response.CollaboratorSectionInfo;
 import az.testup.entity.*;
+import az.testup.enums.AuditAction;
 import az.testup.enums.CollaboratorStatus;
 import az.testup.enums.ExamStatus;
 import az.testup.enums.ExamType;
@@ -37,6 +38,7 @@ public class CollaborativeExamService {
     private final NotificationService notificationService;
     private final TemplateSectionRepository templateSectionRepository;
     private final TemplateRepository templateRepository;
+    private final AuditLogService auditLogService;
 
     // ─── Admin operations ───────────────────────────────────────────────────
 
@@ -132,6 +134,10 @@ public class CollaborativeExamService {
                     "Fənnlər: " + String.join(", ", assignedSubjects));
         }
 
+        auditLogService.log(AuditAction.COLLABORATIVE_EXAM_CREATED, admin.getEmail(), admin.getFullName(),
+                "COLLABORATIVE_EXAM", exam.getTitle(),
+                "Müəllim sayı: " + collaborators.size() + ", Tip: " + (isTemplate ? "TEMPLATE" : "FREE"));
+
         return toExamResponse(exam, collaborators);
     }
 
@@ -184,6 +190,9 @@ public class CollaborativeExamService {
         notificationService.send(teacher,
                 "Birgə İmtahan Təyinatı",
                 "\"" + exam.getTitle() + "\" imtahanı üçün sual əlavə etmək üçün seçildiniz.");
+
+        auditLogService.logCurrent(AuditAction.COLLABORATIVE_COLLABORATOR_ADDED, "COLLABORATIVE_EXAM",
+                exam.getTitle(), "Müəllim: " + teacher.getEmail());
 
         return toCollaboratorResponse(collab);
     }
@@ -253,6 +262,10 @@ public class CollaborativeExamService {
         notificationService.send(collab.getTeacher(),
                 "Suallarınız Təsdiqləndi",
                 "\"" + parentExam.getTitle() + "\" imtahanı üçün göndərdiyiniz suallar admin tərəfindən təsdiqləndi.");
+
+        auditLogService.logCurrent(AuditAction.COLLABORATIVE_DRAFT_APPROVED, "COLLABORATIVE_EXAM",
+                parentExam.getTitle(),
+                "Müəllim: " + collab.getTeacher().getEmail() + ", Sual sayı: " + draftExam.getQuestions().size());
     }
 
     @Transactional
@@ -273,6 +286,11 @@ public class CollaborativeExamService {
             msg += " Şərh: " + comment;
         }
         notificationService.send(collab.getTeacher(), "Suallarınız Geri Qaytarıldı", msg);
+
+        auditLogService.logCurrent(AuditAction.COLLABORATIVE_DRAFT_REJECTED, "COLLABORATIVE_EXAM",
+                collab.getCollaborativeExam().getTitle(),
+                "Müəllim: " + collab.getTeacher().getEmail()
+                        + (comment != null && !comment.isBlank() ? ", Şərh: " + comment : ""));
     }
 
     public long getPendingCount() {
@@ -393,6 +411,10 @@ public class CollaborativeExamService {
                 "Birgə İmtahan: Yeni Suallar",
                 teacher.getFullName() + " \"" + collab.getCollaborativeExam().getTitle() +
                 "\" imtahanı üçün suallar göndərdi. Təsdiq etmək üçün admin panelinə baxın.");
+
+        auditLogService.log(AuditAction.COLLABORATIVE_DRAFT_SUBMITTED, teacher.getEmail(), teacher.getFullName(),
+                "COLLABORATIVE_EXAM", collab.getCollaborativeExam().getTitle(),
+                "Sual sayı: " + collab.getDraftExam().getQuestions().size());
     }
 
     // ─── Mappers ─────────────────────────────────────────────────────────────

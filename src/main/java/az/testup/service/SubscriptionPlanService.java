@@ -3,6 +3,7 @@ package az.testup.service;
 import az.testup.dto.request.SubscriptionPlanRequest;
 import az.testup.dto.response.SubscriptionPlanResponse;
 import az.testup.entity.SubscriptionPlan;
+import az.testup.enums.AuditAction;
 import az.testup.repository.SubscriptionPlanRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,7 @@ import java.util.stream.Collectors;
 public class SubscriptionPlanService {
 
     private final SubscriptionPlanRepository subscriptionPlanRepository;
+    private final AuditLogService auditLogService;
 
     public List<SubscriptionPlanResponse> getAllPlans() {
         return subscriptionPlanRepository.findAll()
@@ -37,6 +39,8 @@ public class SubscriptionPlanService {
         }
         SubscriptionPlan plan = toEntity(request);
         SubscriptionPlan savedPlan = subscriptionPlanRepository.save(plan);
+        auditLogService.logCurrent(AuditAction.PLAN_CREATED, "PLAN", savedPlan.getName(),
+                "Qiymət: " + savedPlan.getPrice() + " AZN, Səviyyə: " + savedPlan.getLevel());
         return toResponse(savedPlan);
     }
 
@@ -47,15 +51,18 @@ public class SubscriptionPlanService {
 
         updateEntity(request, plan);
         SubscriptionPlan updatedPlan = subscriptionPlanRepository.save(plan);
+        auditLogService.logCurrent(AuditAction.PLAN_UPDATED, "PLAN", updatedPlan.getName(),
+                "Qiymət: " + updatedPlan.getPrice() + " AZN");
         return toResponse(updatedPlan);
     }
 
     @Transactional
     public void deletePlan(Long id) {
-        if (!subscriptionPlanRepository.existsById(id)) {
-            throw new RuntimeException("Subscription plan not found: " + id);
-        }
+        SubscriptionPlan plan = subscriptionPlanRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Subscription plan not found: " + id));
+        String name = plan.getName();
         subscriptionPlanRepository.deleteById(id);
+        auditLogService.logCurrent(AuditAction.PLAN_DELETED, "PLAN", name, null);
     }
 
     // ── Manual mapping ──

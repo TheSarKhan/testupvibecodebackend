@@ -6,6 +6,7 @@ import az.testup.dto.request.BankQuestionRequest;
 import az.testup.dto.request.BankSubjectRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
+import az.testup.enums.AuditAction;
 import az.testup.enums.Role;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
@@ -25,6 +26,7 @@ public class BankService {
 
     private final BankSubjectRepository subjectRepository;
     private final BankQuestionRepository questionRepository;
+    private final AuditLogService auditLogService;
 
     // ─── Subjects ────────────────────────────────────────────────────────────
 
@@ -53,7 +55,10 @@ public class BankService {
                 .owner(user)
                 .isGlobal(user.getRole() == Role.ADMIN)
                 .build();
-        return mapSubject(subjectRepository.save(subject));
+        BankSubject saved = subjectRepository.save(subject);
+        auditLogService.log(AuditAction.BANK_SUBJECT_CREATED, user.getEmail(), user.getFullName(),
+                "BANK_SUBJECT", saved.getName(), saved.getIsGlobal() ? "Qlobal" : "Şəxsi");
+        return mapSubject(saved);
     }
 
     @Transactional
@@ -62,13 +67,19 @@ public class BankService {
         if (req.getName() != null && !req.getName().isBlank()) {
             subject.setName(req.getName().trim());
         }
-        return mapSubject(subjectRepository.save(subject));
+        BankSubject saved = subjectRepository.save(subject);
+        auditLogService.log(AuditAction.BANK_SUBJECT_UPDATED, user.getEmail(), user.getFullName(),
+                "BANK_SUBJECT", saved.getName(), null);
+        return mapSubject(saved);
     }
 
     @Transactional
     public void deleteSubject(Long id, User user) {
         BankSubject subject = findSubjectOwned(id, user);
+        String name = subject.getName();
         subjectRepository.delete(subject);
+        auditLogService.log(AuditAction.BANK_SUBJECT_DELETED, user.getEmail(), user.getFullName(),
+                "BANK_SUBJECT", name, null);
     }
 
     // ─── Questions ───────────────────────────────────────────────────────────
@@ -106,7 +117,11 @@ public class BankService {
 
         applyOptions(q, req.getOptions());
         applyMatchingPairs(q, req.getMatchingPairs());
-        return mapQuestion(questionRepository.save(q));
+        BankQuestion savedQ = questionRepository.save(q);
+        auditLogService.log(AuditAction.BANK_QUESTION_CREATED, user.getEmail(), user.getFullName(),
+                "BANK_QUESTION", "ID:" + savedQ.getId(),
+                "Fənn: " + subject.getName() + ", Tip: " + savedQ.getQuestionType());
+        return mapQuestion(savedQ);
     }
 
     @Transactional
@@ -128,7 +143,11 @@ public class BankService {
         applyOptions(q, req.getOptions());
         q.getMatchingPairs().clear();
         applyMatchingPairs(q, req.getMatchingPairs());
-        return mapQuestion(questionRepository.save(q));
+        BankQuestion savedQ = questionRepository.save(q);
+        auditLogService.log(AuditAction.BANK_QUESTION_UPDATED, user.getEmail(), user.getFullName(),
+                "BANK_QUESTION", "ID:" + savedQ.getId(),
+                "Fənn: " + q.getSubject().getName());
+        return mapQuestion(savedQ);
     }
 
     @Transactional
@@ -136,7 +155,10 @@ public class BankService {
         BankQuestion q = questionRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı"));
         checkWriteAccess(q.getSubject(), user);
+        String subjectName = q.getSubject().getName();
         questionRepository.delete(q);
+        auditLogService.log(AuditAction.BANK_QUESTION_DELETED, user.getEmail(), user.getFullName(),
+                "BANK_QUESTION", "ID:" + id, "Fənn: " + subjectName);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────

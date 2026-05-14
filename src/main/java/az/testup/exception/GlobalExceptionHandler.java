@@ -1,6 +1,9 @@
 package az.testup.exception;
 
+import az.testup.enums.AuditAction;
+import az.testup.service.AuditLogService;
 import jakarta.validation.ConstraintViolationException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -21,7 +24,10 @@ import java.util.Map;
 
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+    private final AuditLogService auditLogService;
 
     // ──────────────────────────── Domain exceptions ────────────────────────────
 
@@ -108,6 +114,8 @@ public class GlobalExceptionHandler {
             return buildResponse(HttpStatus.CONFLICT, "Bu məlumat artıq mövcuddur");
         }
         log.error("Data integrity violation", ex);
+        auditLogService.logCurrent(AuditAction.SYSTEM_ERROR, "DB",
+                ex.getClass().getSimpleName(), trimMessage(msg));
         return buildResponse(HttpStatus.CONFLICT, "Verilənlər bazası xətası");
     }
 
@@ -116,7 +124,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
         log.error("Unhandled exception: {}", ex.getMessage(), ex);
+        auditLogService.logCurrent(AuditAction.SYSTEM_ERROR, "EXCEPTION",
+                ex.getClass().getSimpleName(), trimMessage(ex.getMessage()));
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Daxili server xətası baş verdi");
+    }
+
+    private String trimMessage(String msg) {
+        if (msg == null) return null;
+        return msg.length() > 500 ? msg.substring(0, 500) + "…" : msg;
     }
 
     // ───────────────────────────────────────────────────────────────────────────

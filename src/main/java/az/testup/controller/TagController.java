@@ -1,7 +1,9 @@
 package az.testup.controller;
 
 import az.testup.entity.Tag;
+import az.testup.enums.AuditAction;
 import az.testup.repository.TagRepository;
+import az.testup.service.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -15,6 +17,7 @@ import java.util.Map;
 public class TagController {
 
     private final TagRepository tagRepository;
+    private final AuditLogService auditLogService;
 
     /** GET /api/tags — public, returns all tag names sorted alphabetically */
     @GetMapping("/api/tags")
@@ -41,6 +44,7 @@ public class TagController {
             return ResponseEntity.badRequest().body(Map.of("error", "Bu teq artıq mövcuddur"));
         }
         Tag saved = tagRepository.save(Tag.builder().name(name).build());
+        auditLogService.logCurrent(AuditAction.TAG_CREATED, "TAG", saved.getName(), null);
         return ResponseEntity.ok(Map.of("id", saved.getId(), "name", saved.getName()));
     }
 
@@ -48,10 +52,12 @@ public class TagController {
     @DeleteMapping("/api/admin/tags/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deleteTag(@PathVariable Long id) {
-        if (!tagRepository.existsById(id)) {
+        Tag existing = tagRepository.findById(id).orElse(null);
+        if (existing == null) {
             return ResponseEntity.notFound().build();
         }
         tagRepository.deleteById(id);
+        auditLogService.logCurrent(AuditAction.TAG_DELETED, "TAG", existing.getName(), null);
         return ResponseEntity.ok().build();
     }
 

@@ -739,6 +739,12 @@ public class SubmissionService {
                     "\"" + submission.getExam().getTitle() + "\" imtahanı tam yoxlandı. Nəticənizə baxa bilərsiniz.");
         }
 
+        String studentEmail = submission.getStudent() != null ? submission.getStudent().getEmail() : "?";
+        auditLogService.log(AuditAction.SUBMISSION_MANUAL_GRADED, teacher.getEmail(), teacher.getFullName(),
+                "SUBMISSION", exam.getTitle(),
+                "Tələbə: " + studentEmail + ", Bal: " + answer.getScore()
+                        + (nowFullyGraded && !wasFullyGraded ? " (tam yoxlandı)" : ""));
+
         return mapToResponse(submission);
     }
 
@@ -982,6 +988,10 @@ public class SubmissionService {
         }
         submission.setHiddenFromTeacher(true);
         submissionRepository.save(submission);
+
+        String studentEmail = submission.getStudent() != null ? submission.getStudent().getEmail() : "?";
+        auditLogService.log(AuditAction.SUBMISSION_HIDDEN, teacher.getEmail(), teacher.getFullName(),
+                "SUBMISSION", exam.getTitle(), "Tələbə: " + studentEmail);
     }
 
     private List<SubjectStatResponse> buildSubjectStats(Submission submission) {

@@ -232,7 +232,10 @@ public class AdminService {
                 .orderIndex((int) count)
                 .subject(subject)
                 .build();
-        return subjectTopicRepository.save(topic);
+        SubjectTopic saved = subjectTopicRepository.save(topic);
+        auditLogService.logCurrent(AuditAction.TOPIC_ADDED, "TOPIC", saved.getName(),
+                "Fənn: " + subject.getName() + (gradeLevel != null ? ", Sinif: " + gradeLevel : ""));
+        return saved;
     }
 
     @Transactional
@@ -242,6 +245,8 @@ public class AdminService {
         if (!topic.getSubject().getId().equals(subjectId)) {
             throw new BadRequestException("Bu mövzu bu fənnə aid deyil");
         }
+        auditLogService.logCurrent(AuditAction.TOPIC_DELETED, "TOPIC", topic.getName(),
+                "Fənn: " + topic.getSubject().getName());
         subjectTopicRepository.deleteById(topicId);
     }
 
@@ -252,7 +257,9 @@ public class AdminService {
         if (color != null) subject.setColor(color);
         if (iconEmoji != null) subject.setIconEmoji(iconEmoji);
         if (description != null) subject.setDescription(description);
-        return subjectRepository.save(subject);
+        ExamSubject saved = subjectRepository.save(subject);
+        auditLogService.logCurrent(AuditAction.SUBJECT_UPDATED, "SUBJECT", saved.getName(), null);
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -315,6 +322,9 @@ public class AdminService {
                     .exam(exam)
                     .build());
         }
+
+        auditLogService.logCurrent(AuditAction.USER_EXAM_ASSIGNED, "USER", student.getEmail(),
+                "İmtahan: " + exam.getTitle());
     }
 
     // ───────── Notification broadcast ─────────

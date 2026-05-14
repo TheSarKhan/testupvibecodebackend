@@ -322,7 +322,10 @@ public class AdminController {
     public ResponseEntity<AdminExamResponse> setExamPrice(
             @PathVariable Long id,
             @RequestBody SetExamPriceRequest request) {
-        return ResponseEntity.ok(adminService.setExamPrice(id, request.price()));
+        AdminExamResponse resp = adminService.setExamPrice(id, request.price());
+        auditLogService.logCurrent(AuditAction.EXAM_PRICE_CHANGED, "EXAM", resp.title(),
+                "Yeni qiymət: " + request.price());
+        return ResponseEntity.ok(resp);
     }
 
     @DeleteMapping("/exams/{id}")
@@ -384,19 +387,27 @@ public class AdminController {
 
     @PostMapping("/templates")
     public ResponseEntity<TemplateResponse> createTemplate(@RequestBody TemplateRequest request) {
-        return ResponseEntity.ok(templateService.createTemplate(request, null));
+        TemplateResponse resp = templateService.createTemplate(request, null);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_CREATED, "TEMPLATE", resp.title(),
+                "Tip: " + resp.templateType());
+        return ResponseEntity.ok(resp);
     }
 
     @PutMapping("/templates/{id}")
     public ResponseEntity<TemplateResponse> updateTemplate(
             @PathVariable Long id,
             @RequestBody TemplateRequest request) {
-        return ResponseEntity.ok(templateService.updateTemplate(id, request));
+        TemplateResponse resp = templateService.updateTemplate(id, request);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_UPDATED, "TEMPLATE", resp.title(), null);
+        return ResponseEntity.ok(resp);
     }
 
     @DeleteMapping("/templates/{id}")
     public ResponseEntity<Void> deleteTemplate(@PathVariable Long id) {
+        String title = templateService.getAllTemplates().stream()
+                .filter(t -> t.id().equals(id)).map(TemplateResponse::title).findFirst().orElse("ID:" + id);
         templateService.deleteTemplate(id);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_DELETED, "TEMPLATE", title, null);
         return ResponseEntity.noContent().build();
     }
 
@@ -411,19 +422,27 @@ public class AdminController {
     public ResponseEntity<TemplateSubtitleResponse> createSubtitle(
             @PathVariable Long templateId,
             @RequestBody TemplateSubtitleRequest request) {
-        return ResponseEntity.ok(templateService.createSubtitle(templateId, request));
+        TemplateSubtitleResponse resp = templateService.createSubtitle(templateId, request);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_SUBTITLE_CREATED, "TEMPLATE_SUBTITLE",
+                resp.subtitle(), "Şablon ID: " + templateId);
+        return ResponseEntity.ok(resp);
     }
 
     @PutMapping("/subtitles/{id}")
     public ResponseEntity<TemplateSubtitleResponse> updateSubtitle(
             @PathVariable Long id,
             @RequestBody TemplateSubtitleRequest request) {
-        return ResponseEntity.ok(templateService.updateSubtitle(id, request));
+        TemplateSubtitleResponse resp = templateService.updateSubtitle(id, request);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_SUBTITLE_UPDATED, "TEMPLATE_SUBTITLE",
+                resp.subtitle(), null);
+        return ResponseEntity.ok(resp);
     }
 
     @DeleteMapping("/subtitles/{id}")
     public ResponseEntity<Void> deleteSubtitle(@PathVariable Long id) {
         templateService.deleteSubtitle(id);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_SUBTITLE_DELETED, "TEMPLATE_SUBTITLE",
+                "ID:" + id, null);
         return ResponseEntity.noContent().build();
     }
 
@@ -438,19 +457,27 @@ public class AdminController {
     public ResponseEntity<TemplateSectionResponse> createSection(
             @PathVariable Long subtitleId,
             @RequestBody TemplateSectionRequest request) {
-        return ResponseEntity.ok(templateService.createSection(subtitleId, request));
+        TemplateSectionResponse resp = templateService.createSection(subtitleId, request);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_SECTION_CREATED, "TEMPLATE_SECTION",
+                resp.subjectName(), "Altbaşlıq ID: " + subtitleId);
+        return ResponseEntity.ok(resp);
     }
 
     @PutMapping("/sections/{id}")
     public ResponseEntity<TemplateSectionResponse> updateSection(
             @PathVariable Long id,
             @RequestBody TemplateSectionRequest request) {
-        return ResponseEntity.ok(templateService.updateSection(id, request));
+        TemplateSectionResponse resp = templateService.updateSection(id, request);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_SECTION_UPDATED, "TEMPLATE_SECTION",
+                resp.subjectName(), null);
+        return ResponseEntity.ok(resp);
     }
 
     @DeleteMapping("/sections/{id}")
     public ResponseEntity<Void> deleteSection(@PathVariable Long id) {
         templateService.deleteSection(id);
+        auditLogService.logCurrent(AuditAction.TEMPLATE_SECTION_DELETED, "TEMPLATE_SECTION",
+                "ID:" + id, null);
         return ResponseEntity.noContent().build();
     }
 
@@ -495,7 +522,10 @@ public class AdminController {
                 .orderIndex(req.getOrderIndex() != null ? req.getOrderIndex() : 0)
                 .targetAudience(req.getTargetAudience() != null ? BannerAudience.valueOf(req.getTargetAudience()) : BannerAudience.ALL)
                 .build();
-        return ResponseEntity.ok(toBannerResponse(bannerRepository.save(banner)));
+        Banner saved = bannerRepository.save(banner);
+        auditLogService.logCurrent(AuditAction.BANNER_CREATED, "BANNER", saved.getTitle(),
+                "Pozisiya: " + saved.getPosition());
+        return ResponseEntity.ok(toBannerResponse(saved));
     }
 
     @PutMapping("/banners/{id}")
@@ -512,12 +542,16 @@ public class AdminController {
         if (req.getBgGradient() != null) banner.setBgGradient(req.getBgGradient());
         if (req.getOrderIndex() != null) banner.setOrderIndex(req.getOrderIndex());
         if (req.getTargetAudience() != null) banner.setTargetAudience(BannerAudience.valueOf(req.getTargetAudience()));
-        return ResponseEntity.ok(toBannerResponse(bannerRepository.save(banner)));
+        Banner saved = bannerRepository.save(banner);
+        auditLogService.logCurrent(AuditAction.BANNER_UPDATED, "BANNER", saved.getTitle(), null);
+        return ResponseEntity.ok(toBannerResponse(saved));
     }
 
     @DeleteMapping("/banners/{id}")
     public ResponseEntity<Void> deleteBanner(@PathVariable Long id) {
+        String title = bannerRepository.findById(id).map(Banner::getTitle).orElse("ID:" + id);
         bannerRepository.deleteById(id);
+        auditLogService.logCurrent(AuditAction.BANNER_DELETED, "BANNER", title, null);
         return ResponseEntity.noContent().build();
     }
 
