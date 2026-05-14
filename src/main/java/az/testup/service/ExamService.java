@@ -564,7 +564,7 @@ public class ExamService {
         }
 
         String code = CodeGenerator.generateAccessCode();
-        java.time.Instant expiresAt = java.time.Instant.now().plusSeconds(12 * 3600);
+        java.time.Instant expiresAt = java.time.Instant.now().plusSeconds(48 * 3600);
 
         ExamAccessCode accessCode = ExamAccessCode.builder()
                 .exam(exam)
@@ -574,7 +574,7 @@ public class ExamService {
         examAccessCodeRepository.save(accessCode);
 
         auditLogService.log(AuditAction.EXAM_ACCESS_CODE_GENERATED, teacher.getEmail(), teacher.getFullName(),
-                "EXAM", exam.getTitle(), "Kod: " + code + " (12 saat keçərli)");
+                "EXAM", exam.getTitle(), "Kod: " + code + " (48 saat keçərli)");
 
         return Map.of("accessCode", code, "expiresAt", expiresAt.toString());
     }
