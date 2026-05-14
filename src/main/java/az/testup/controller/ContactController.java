@@ -1,8 +1,10 @@
 package az.testup.controller;
 
 import az.testup.entity.ContactMessage;
+import az.testup.enums.AuditAction;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.ContactMessageRepository;
+import az.testup.service.AuditLogService;
 import az.testup.service.EmailService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -23,6 +25,7 @@ public class ContactController {
 
     private final ContactMessageRepository contactMessageRepository;
     private final EmailService emailService;
+    private final AuditLogService auditLogService;
 
     // ── Public: submit contact form ──
 
@@ -69,8 +72,13 @@ public class ContactController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> markRead(@PathVariable Long id) {
         contactMessageRepository.findById(id).ifPresent(m -> {
+            boolean wasUnread = !m.isRead();
             m.setRead(true);
             contactMessageRepository.save(m);
+            if (wasUnread) {
+                auditLogService.logCurrent(AuditAction.CONTACT_READ, "CONTACT",
+                        m.getEmail(), "Mövzu: " + m.getSubject());
+            }
         });
         return ResponseEntity.ok().build();
     }
@@ -78,7 +86,12 @@ public class ContactController {
     @DeleteMapping("/api/admin/contact-messages/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
+        ContactMessage msg = contactMessageRepository.findById(id).orElse(null);
         contactMessageRepository.deleteById(id);
+        if (msg != null) {
+            auditLogService.logCurrent(AuditAction.CONTACT_DELETED, "CONTACT",
+                    msg.getEmail(), "Mövzu: " + msg.getSubject());
+        }
         return ResponseEntity.noContent().build();
     }
 
@@ -112,6 +125,10 @@ public class ContactController {
             msg.setRead(true);
             contactMessageRepository.save(msg);
         }
+
+        auditLogService.logCurrent(AuditAction.CONTACT_REPLIED, "CONTACT",
+                msg.getEmail(), "Mövzu: " + req.subject()
+                        + ", Kanal: " + ("SENDPULSE".equalsIgnoreCase(req.channel()) ? "SendPulse" : "Gmail"));
 
         return ResponseEntity.ok(Map.of("message", "Cavab göndərildi"));
     }

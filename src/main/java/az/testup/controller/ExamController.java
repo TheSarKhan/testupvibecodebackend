@@ -6,8 +6,10 @@ import az.testup.entity.Exam;
 import az.testup.entity.PaymentOrder;
 import az.testup.entity.User;
 import az.testup.exception.UnauthorizedException;
+import az.testup.enums.AuditAction;
 import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.UserRepository;
+import az.testup.service.AuditLogService;
 import az.testup.service.ExamService;
 import az.testup.service.PdfService;
 import az.testup.service.SubscriptionValidatorService;
@@ -33,6 +35,7 @@ public class ExamController {
     private final PdfService pdfService;
     private final SubscriptionValidatorService subscriptionValidatorService;
     private final PaymentOrderRepository paymentOrderRepository;
+    private final AuditLogService auditLogService;
 
 
     @PostMapping
@@ -134,6 +137,10 @@ public class ExamController {
         }
 
         byte[] pdfBytes = pdfService.generateExamPdf(exam);
+
+        auditLogService.log(AuditAction.EXAM_PDF_DOWNLOADED, user.getEmail(), user.getFullName(),
+                "EXAM", exam.getTitle(),
+                "Rol: " + user.getRole() + ", Ölçü: " + pdfBytes.length + " bayt");
 
         return ResponseEntity.ok()
                 .header("Content-Type", "application/pdf")

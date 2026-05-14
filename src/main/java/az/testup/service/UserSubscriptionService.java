@@ -6,6 +6,7 @@ import az.testup.entity.SubscriptionPlan;
 import az.testup.entity.SubscriptionUsage;
 import az.testup.entity.User;
 import az.testup.entity.UserSubscription;
+import az.testup.enums.AuditAction;
 import az.testup.mapper.UserSubscriptionMapper;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.SubscriptionPlanRepository;
@@ -32,6 +33,7 @@ public class UserSubscriptionService {
     private final ExamRepository examRepository;
     private final UserRepository userRepository;
     private final UserSubscriptionMapper userSubscriptionMapper;
+    private final AuditLogService auditLogService;
 
     public List<UserSubscriptionResponse> getAllSubscriptions() {
         return userSubscriptionRepository.findAll()
@@ -89,6 +91,10 @@ public class UserSubscriptionService {
             current.setTransactionId(txId);
             current.setAmountPaid(current.getAmountPaid() + amountPaid);
             userSubscriptionRepository.save(current);
+            auditLogService.log(AuditAction.SUBSCRIPTION_RENEWED, user.getEmail(), user.getFullName(),
+                    "SUBSCRIPTION", newPlan.getName(),
+                    "Uzadıldı: +" + durationDays + " gün, Məbləğ: " + String.format("%.2f", amountPaid) + " AZN"
+                            + (txId != null ? ", TxId: " + txId : ""));
             return userSubscriptionMapper.toResponse(current);
         }
 

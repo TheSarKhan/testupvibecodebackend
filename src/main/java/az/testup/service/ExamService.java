@@ -181,9 +181,13 @@ public class ExamService {
     /**
      * Records a purchase of a paid exam by a student.
      * In this implementation, payment is assumed to have been completed externally.
+     * The {@code paidAmount} is the actual amount captured by the payment provider
+     * — passing it explicitly prevents a race where the admin changes
+     * {@code exam.price} between the user starting payment and activation.
+     * Pass {@code null} for free-exam paths (admin assignment, free purchase).
      */
     @Transactional
-    public void purchaseExam(String shareLink, User student) {
+    public void purchaseExam(String shareLink, User student, java.math.BigDecimal paidAmount) {
         Exam exam = examRepository.findByShareLinkAndDeletedFalse(shareLink)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
@@ -191,7 +195,14 @@ public class ExamService {
             return; // already purchased — idempotent
         }
 
-        java.math.BigDecimal amount = exam.getPrice() != null ? exam.getPrice() : java.math.BigDecimal.ZERO;
+        // Use the amount actually paid at the moment of the transaction.
+        // Fall back to current exam price only for free-exam paths (paidAmount=null).
+        java.math.BigDecimal amount;
+        if (paidAmount != null) {
+            amount = paidAmount;
+        } else {
+            amount = exam.getPrice() != null ? exam.getPrice() : java.math.BigDecimal.ZERO;
+        }
 
         ExamPurchase purchase = ExamPurchase.builder()
                 .user(student)
@@ -207,6 +218,17 @@ public class ExamService {
                     .exam(exam)
                     .build());
         }
+
+        boolean isPaid = amount.compareTo(java.math.BigDecimal.ZERO) > 0;
+        auditLogService.log(AuditAction.EXAM_PURCHASED, student.getEmail(), student.getFullName(),
+                "EXAM", exam.getTitle(),
+                isPaid ? ("Məbləğ: " + amount + " AZN") : "Pulsuz imtahan");
+    }
+
+    /** Backwards-compatible overload — uses current exam price (free-exam / admin-assigned path). */
+    @Transactional
+    public void purchaseExam(String shareLink, User student) {
+        purchaseExam(shareLink, student, null);
     }
 
     /**
@@ -567,6 +589,9 @@ public class ExamService {
                 .expiresAt(expiresAt)
                 .build();
         examAccessCodeRepository.save(accessCode);
+
+        auditLogService.log(AuditAction.EXAM_ACCESS_CODE_GENERATED, teacher.getEmail(), teacher.getFullName(),
+                "EXAM", exam.getTitle(), "Kod: " + code + " (12 saat keçərli)");
 
         return Map.of("accessCode", code, "expiresAt", expiresAt.toString());
     }

@@ -2,16 +2,22 @@ package az.testup.service;
 
 import az.testup.dto.response.AuditLogResponse;
 import az.testup.entity.AuditLog;
+import az.testup.entity.User;
 import az.testup.enums.AuditAction;
 import az.testup.repository.AuditLogRepository;
+import az.testup.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
@@ -20,31 +26,102 @@ import java.util.Map;
 public class AuditLogService {
 
     private final AuditLogRepository repository;
+    private final UserRepository userRepository;
 
-    // Category mapping
-    private static final Map<String, String> CATEGORY = Map.ofEntries(
-        Map.entry("USER_LOGIN", "AUTH"),
-        Map.entry("USER_LOGIN_FAILED", "AUTH"),
-        Map.entry("USER_REGISTERED", "AUTH"),
-        Map.entry("USER_ROLE_CHANGED", "USER"),
-        Map.entry("USER_DELETED", "USER"),
-        Map.entry("USER_TOGGLED", "USER"),
-        Map.entry("USER_EXAM_ASSIGNED", "USER"),
-        Map.entry("EXAM_CREATED", "EXAM"),
-        Map.entry("EXAM_DELETED", "EXAM"),
-        Map.entry("EXAM_SITE_PUBLISHED", "EXAM"),
-        Map.entry("EXAM_SITE_UNPUBLISHED", "EXAM"),
-        Map.entry("SUBJECT_ADDED", "CONTENT"),
-        Map.entry("SUBJECT_DELETED", "CONTENT"),
-        Map.entry("TOPIC_ADDED", "CONTENT"),
-        Map.entry("TOPIC_DELETED", "CONTENT"),
-        Map.entry("NOTIFICATION_SENT", "CONTENT"),
-        Map.entry("SUBSCRIPTION_PURCHASED", "PAYMENT"),
-        Map.entry("SUBSCRIPTION_SWITCHED", "PAYMENT"),
-        Map.entry("SUBSCRIPTION_ASSIGNED_MANUAL", "PAYMENT"),
-        Map.entry("SUBSCRIPTION_CANCELLED", "PAYMENT"),
-        Map.entry("SYSTEM_ERROR", "SYSTEM")
-    );
+    // Category mapping (action -> category shown in admin UI)
+    private static final Map<String, String> CATEGORY;
+    static {
+        Map<String, String> m = new HashMap<>();
+        // AUTH
+        m.put("USER_LOGIN", "AUTH");
+        m.put("USER_LOGIN_FAILED", "AUTH");
+        m.put("USER_REGISTERED", "AUTH");
+        m.put("PASSWORD_CHANGED", "AUTH");
+        m.put("PASSWORD_RESET_REQUESTED", "AUTH");
+        m.put("PASSWORD_RESET_COMPLETED", "AUTH");
+        // USER
+        m.put("USER_ROLE_CHANGED", "USER");
+        m.put("USER_DELETED", "USER");
+        m.put("USER_TOGGLED", "USER");
+        m.put("USER_EXAM_ASSIGNED", "USER");
+        // EXAM
+        m.put("EXAM_CREATED", "EXAM");
+        m.put("EXAM_UPDATED", "EXAM");
+        m.put("EXAM_DELETED", "EXAM");
+        m.put("EXAM_STATUS_CHANGED", "EXAM");
+        m.put("EXAM_SITE_PUBLISHED", "EXAM");
+        m.put("EXAM_SITE_UNPUBLISHED", "EXAM");
+        m.put("EXAM_PRICE_CHANGED", "EXAM");
+        m.put("EXAM_ACCESS_CODE_GENERATED", "EXAM");
+        m.put("EXAM_PURCHASED", "EXAM");
+        m.put("EXAM_PDF_DOWNLOADED", "EXAM");
+        m.put("EXAM_RESULTS_EXPORTED", "EXAM");
+        m.put("EXAM_STARTED", "EXAM");
+        m.put("EXAM_SUBMITTED", "EXAM");
+        m.put("SUBMISSION_MANUAL_GRADED", "EXAM");
+        m.put("SUBMISSION_HIDDEN", "EXAM");
+        m.put("COLLABORATIVE_EXAM_CREATED", "EXAM");
+        m.put("COLLABORATIVE_COLLABORATOR_ADDED", "EXAM");
+        m.put("COLLABORATIVE_DRAFT_SUBMITTED", "EXAM");
+        m.put("COLLABORATIVE_DRAFT_APPROVED", "EXAM");
+        m.put("COLLABORATIVE_DRAFT_REJECTED", "EXAM");
+        // CONTENT
+        m.put("SUBJECT_ADDED", "CONTENT");
+        m.put("SUBJECT_DELETED", "CONTENT");
+        m.put("SUBJECT_UPDATED", "CONTENT");
+        m.put("TOPIC_ADDED", "CONTENT");
+        m.put("TOPIC_DELETED", "CONTENT");
+        m.put("BANNER_CREATED", "CONTENT");
+        m.put("BANNER_UPDATED", "CONTENT");
+        m.put("BANNER_DELETED", "CONTENT");
+        m.put("TAG_CREATED", "CONTENT");
+        m.put("TAG_DELETED", "CONTENT");
+        m.put("TEMPLATE_CREATED", "CONTENT");
+        m.put("TEMPLATE_UPDATED", "CONTENT");
+        m.put("TEMPLATE_DELETED", "CONTENT");
+        m.put("TEMPLATE_SUBTITLE_CREATED", "CONTENT");
+        m.put("TEMPLATE_SUBTITLE_UPDATED", "CONTENT");
+        m.put("TEMPLATE_SUBTITLE_DELETED", "CONTENT");
+        m.put("TEMPLATE_SECTION_CREATED", "CONTENT");
+        m.put("TEMPLATE_SECTION_UPDATED", "CONTENT");
+        m.put("TEMPLATE_SECTION_DELETED", "CONTENT");
+        m.put("BANK_SUBJECT_CREATED", "CONTENT");
+        m.put("BANK_SUBJECT_UPDATED", "CONTENT");
+        m.put("BANK_SUBJECT_DELETED", "CONTENT");
+        m.put("BANK_QUESTION_CREATED", "CONTENT");
+        m.put("BANK_QUESTION_UPDATED", "CONTENT");
+        m.put("BANK_QUESTION_DELETED", "CONTENT");
+        m.put("NOTIFICATION_SENT", "CONTENT");
+        m.put("CONTACT_READ", "CONTENT");
+        m.put("CONTACT_REPLIED", "CONTENT");
+        m.put("CONTACT_DELETED", "CONTENT");
+        // AI
+        m.put("AI_QUESTIONS_GENERATED", "AI");
+        m.put("AI_EXAM_GENERATED", "AI");
+        // PAYMENT
+        m.put("PAYMENT_INITIATED", "PAYMENT");
+        m.put("PAYMENT_FAILED", "PAYMENT");
+        m.put("PAYMENT_AUTO_RECOVERED", "PAYMENT");
+        m.put("PAYMENT_PROVIDER_ERROR", "PAYMENT");
+        m.put("PAYMENT_UNAUTHORIZED_ACCESS", "PAYMENT");
+        m.put("PAYMENT_STORED_CARD_USED", "PAYMENT");
+        m.put("PAYMENT_REVERSED", "PAYMENT");
+        m.put("PAYMENT_RATE_LIMITED", "PAYMENT");
+        m.put("ORDER_CANCELLED", "PAYMENT");
+        m.put("ORDER_ORPHANED", "PAYMENT");
+        m.put("SUBSCRIPTION_PURCHASED", "PAYMENT");
+        m.put("SUBSCRIPTION_SWITCHED", "PAYMENT");
+        m.put("SUBSCRIPTION_RENEWED", "PAYMENT");
+        m.put("SUBSCRIPTION_ASSIGNED_MANUAL", "PAYMENT");
+        m.put("SUBSCRIPTION_CANCELLED", "PAYMENT");
+        m.put("SUBSCRIPTION_GIFTED", "PAYMENT");
+        m.put("PLAN_CREATED", "PAYMENT");
+        m.put("PLAN_UPDATED", "PAYMENT");
+        m.put("PLAN_DELETED", "PAYMENT");
+        // SYSTEM
+        m.put("SYSTEM_ERROR", "SYSTEM");
+        CATEGORY = Map.copyOf(m);
+    }
 
     @Async
     public void log(AuditAction action, String actorEmail, String actorName,
@@ -69,9 +146,32 @@ public class AuditLogService {
         log(action, actorEmail, actorName, targetType, targetName, null);
     }
 
+    /**
+     * Log an action using the current SecurityContext to resolve the actor.
+     * Falls back to "system" when no authentication is present.
+     */
+    public void logCurrent(AuditAction action, String targetType, String targetName, String details) {
+        String email = "system";
+        String name = "system";
+        try {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof UserDetails ud) {
+                email = ud.getUsername();
+                final String finalEmail = email;
+                name = userRepository.findByEmail(email)
+                        .map(User::getFullName)
+                        .orElse(finalEmail);
+            }
+        } catch (Exception ignored) {}
+        log(action, email, name, targetType, targetName, details);
+    }
+
+    public void logCurrent(AuditAction action, String targetType, String targetName) {
+        logCurrent(action, targetType, targetName, null);
+    }
+
     public Page<AuditLogResponse> getLogs(String actionStr, String category,
                                            String search, String period, Pageable pageable) {
-        // Validate action string (pass as String to native query)
         String actionParam = null;
         if (actionStr != null && !actionStr.isBlank()) {
             try { AuditAction.valueOf(actionStr); actionParam = actionStr; } catch (Exception ignored) {}

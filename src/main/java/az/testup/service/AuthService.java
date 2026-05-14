@@ -80,6 +80,9 @@ public class AuthService {
                         .build();
                 userSubscriptionRepository.save(gift);
                 giftPlanAssigned = true;
+                auditLogService.log(AuditAction.SUBSCRIPTION_GIFTED, user.getEmail(), user.getFullName(),
+                        "SUBSCRIPTION", basicPlan.get().getName(),
+                        "Yeni müəllim qeydiyyatı — 3 aylıq pulsuz Basic plan");
             }
         }
 
@@ -148,9 +151,18 @@ public class AuthService {
      */
     public void sendPasswordResetOtp(String email) {
         Optional<User> userOpt = userRepository.findByEmail(email);
-        if (userOpt.isEmpty()) return;
+        if (userOpt.isEmpty()) {
+            // Log attempts on non-existent emails too (account enumeration / abuse detection)
+            auditLogService.log(AuditAction.PASSWORD_RESET_REQUESTED, email, email,
+                    "AUTH", email, "İstifadəçi tapılmadı");
+            return;
+        }
         User user = userOpt.get();
-        if (user.getPassword() == null) return; // Google-only accounts cannot reset password
+        if (user.getPassword() == null) {
+            auditLogService.log(AuditAction.PASSWORD_RESET_REQUESTED, user.getEmail(), user.getFullName(),
+                    "AUTH", user.getEmail(), "Google hesabı — sıfırlama dəstəklənmir");
+            return;
+        }
 
         String otp = String.format("%06d", new Random().nextInt(1_000_000));
         redisTemplate.opsForValue().set(RESET_OTP_PREFIX + email, otp, OTP_TTL_MINUTES, TimeUnit.MINUTES);
@@ -164,6 +176,9 @@ public class AuthService {
                 "Şifrə Sıfırlama — testup.az",
                 emailService.buildHtmlRaw("Şifrə Sıfırlama Kodu", body),
                 null);
+
+        auditLogService.log(AuditAction.PASSWORD_RESET_REQUESTED, user.getEmail(), user.getFullName(),
+                "AUTH", user.getEmail(), "OTP göndərildi");
     }
 
     /**
@@ -185,6 +200,8 @@ public class AuthService {
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
         redisTemplate.delete(RESET_OTP_PREFIX + email);
+        auditLogService.log(AuditAction.PASSWORD_RESET_COMPLETED, user.getEmail(), user.getFullName(),
+                "AUTH", user.getEmail(), "OTP ilə yeniləndi");
     }
 
     public AuthResponse refreshToken(String refreshToken) {

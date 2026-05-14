@@ -1,5 +1,6 @@
 package az.testup.service;
 
+import az.testup.enums.AuditAction;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -17,6 +18,8 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class KapitalBankService {
+
+    private final AuditLogService auditLogService;
 
     private static final Logger log = LoggerFactory.getLogger(KapitalBankService.class);
 
@@ -68,16 +71,25 @@ public class KapitalBankService {
         Map<String, Object> body = Map.of("order", orderBody);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, buildHeaders());
 
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                baseUrl() + "/order",
-                HttpMethod.POST,
-                entity,
-                JsonNode.class
-        );
+        ResponseEntity<JsonNode> response;
+        try {
+            response = restTemplate.exchange(
+                    baseUrl() + "/order",
+                    HttpMethod.POST,
+                    entity,
+                    JsonNode.class
+            );
+        } catch (Exception ex) {
+            auditLogService.logCurrent(AuditAction.PAYMENT_PROVIDER_ERROR, "KAPITALBANK", "createOrder",
+                    "Amount: " + String.format("%.2f", amount) + " AZN, Xəta: " + ex.getMessage());
+            throw new RuntimeException("Kapital Bank əlaqə xətası: " + ex.getMessage(), ex);
+        }
 
         JsonNode json = response.getBody();
         if (json == null || !json.has("order")) {
             String msg = json != null ? json.path("errorDescription").asText("Unknown error") : "No response";
+            auditLogService.logCurrent(AuditAction.PAYMENT_PROVIDER_ERROR, "KAPITALBANK", "createOrder",
+                    "Amount: " + String.format("%.2f", amount) + " AZN, KB cavabı: " + msg);
             throw new RuntimeException("Kapital Bank error: " + msg);
         }
 
@@ -87,6 +99,8 @@ public class KapitalBankService {
         String pwd = order.path("password").asText();
 
         if (orderId.isBlank()) {
+            auditLogService.logCurrent(AuditAction.PAYMENT_PROVIDER_ERROR, "KAPITALBANK", "createOrder",
+                    "Boş orderId qaytardı");
             throw new RuntimeException("Kapital Bank returned empty orderId. Response: " + json);
         }
 
@@ -129,18 +143,27 @@ public class KapitalBankService {
     public String getOrderStatus(String orderId) {
         HttpEntity<Void> entity = new HttpEntity<>(buildHeaders());
 
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                baseUrl() + "/order/" + orderId + "?tranDetailLevel=2&tokenDetailLevel=2&orderDetailLevel=2",
-                HttpMethod.GET,
-                entity,
-                JsonNode.class
-        );
+        ResponseEntity<JsonNode> response;
+        try {
+            response = restTemplate.exchange(
+                    baseUrl() + "/order/" + orderId + "?tranDetailLevel=2&tokenDetailLevel=2&orderDetailLevel=2",
+                    HttpMethod.GET,
+                    entity,
+                    JsonNode.class
+            );
+        } catch (Exception ex) {
+            auditLogService.logCurrent(AuditAction.PAYMENT_PROVIDER_ERROR, "KAPITALBANK", "getOrderStatus",
+                    "OrderId: " + orderId + ", Xəta: " + ex.getMessage());
+            return "UNKNOWN";
+        }
 
         JsonNode json = response.getBody();
         log.info("Kapital Bank getOrderStatus raw response for {}: {}", orderId, json);
 
         if (json == null || !json.has("order")) {
             log.warn("Kapital Bank getOrderStatus unexpected response for {}: {}", orderId, json);
+            auditLogService.logCurrent(AuditAction.PAYMENT_PROVIDER_ERROR, "KAPITALBANK", "getOrderStatus",
+                    "OrderId: " + orderId + ", Gözlənilməz cavab");
             return "UNKNOWN";
         }
 
