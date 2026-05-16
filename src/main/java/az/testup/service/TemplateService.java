@@ -33,6 +33,7 @@ public class TemplateService {
     private final TemplateRepository templateRepository;
     private final TemplateSubtitleRepository subtitleRepository;
     private final TemplateSectionRepository sectionRepository;
+    private final az.testup.repository.ExamRepository examRepository;
 
     // ─── Templates ────────────────────────────────────────────────────────────
 
@@ -40,6 +41,57 @@ public class TemplateService {
         return templateRepository.findAllByOrderByCreatedAtDesc().stream()
                 .map(this::mapTemplate)
                 .collect(Collectors.toList());
+    }
+
+    public org.springframework.data.domain.Page<TemplateResponse> getAllTemplates(
+            org.springframework.data.domain.Pageable pageable) {
+        return getAllTemplates(null, pageable);
+    }
+
+    public az.testup.dto.response.TemplateStatsResponse getTemplateStats() {
+        List<TemplateResponse> all = getAllTemplates();
+        long totalUsage = all.stream().mapToLong(TemplateResponse::examCount).sum();
+        TemplateResponse top = all.stream()
+                .max((a, b) -> Long.compare(a.examCount(), b.examCount()))
+                .orElse(null);
+        TemplateResponse recent = all.stream()
+                .filter(t -> t.createdAt() != null)
+                .max((a, b) -> a.createdAt().compareTo(b.createdAt()))
+                .orElse(null);
+        return new az.testup.dto.response.TemplateStatsResponse(
+                all.size(),
+                totalUsage,
+                top != null ? new az.testup.dto.response.TemplateStatsResponse.TopTemplate(top.id(), top.title(), top.examCount()) : null,
+                recent != null ? new az.testup.dto.response.TemplateStatsResponse.RecentTemplate(recent.id(), recent.title(), recent.createdAt()) : null
+        );
+    }
+
+    public org.springframework.data.domain.Page<TemplateResponse> getAllTemplates(
+            String search, org.springframework.data.domain.Pageable pageable) {
+        List<TemplateResponse> all = getAllTemplates();
+        if (search != null && !search.isBlank()) {
+            String q = search.trim().toLowerCase();
+            all = all.stream().filter(t -> t.title() != null && t.title().toLowerCase().contains(q)).toList();
+        }
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = Math.min(from + pageable.getPageSize(), all.size());
+        return new org.springframework.data.domain.PageImpl<>(all.subList(from, to), pageable, all.size());
+    }
+
+    public org.springframework.data.domain.Page<TemplateSubtitleResponse> getSubtitlesByTemplate(
+            Long templateId, org.springframework.data.domain.Pageable pageable) {
+        List<TemplateSubtitleResponse> all = getSubtitlesByTemplate(templateId);
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = Math.min(from + pageable.getPageSize(), all.size());
+        return new org.springframework.data.domain.PageImpl<>(all.subList(from, to), pageable, all.size());
+    }
+
+    public org.springframework.data.domain.Page<TemplateSectionResponse> getSectionsBySubtitle(
+            Long subtitleId, org.springframework.data.domain.Pageable pageable) {
+        List<TemplateSectionResponse> all = getSectionsBySubtitle(subtitleId);
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = Math.min(from + pageable.getPageSize(), all.size());
+        return new org.springframework.data.domain.PageImpl<>(all.subList(from, to), pageable, all.size());
     }
 
     public List<TemplateResponse> getTemplatesByType(TemplateType type) {
@@ -80,6 +132,55 @@ public class TemplateService {
             throw new ResourceNotFoundException("Şablon tapılmadı");
         }
         templateRepository.deleteById(id);
+    }
+
+    @Transactional
+    public TemplateResponse cloneTemplate(Long sourceId) {
+        Template source = templateRepository.findById(sourceId)
+                .orElseThrow(() -> new ResourceNotFoundException("Şablon tapılmadı"));
+
+        Template copy = Template.builder()
+                .title(source.getTitle() + " (kopya)")
+                .templateType(source.getTemplateType())
+                .createdBy(source.getCreatedBy())
+                .build();
+
+        for (var srcSub : source.getSubtitles()) {
+            var subCopy = az.testup.entity.TemplateSubtitle.builder()
+                    .template(copy)
+                    .subtitle(srcSub.getSubtitle())
+                    .orderIndex(srcSub.getOrderIndex())
+                    .build();
+
+            for (var srcSec : srcSub.getSections()) {
+                var secCopy = az.testup.entity.TemplateSection.builder()
+                        .subtitle(subCopy)
+                        .subjectName(srcSec.getSubjectName())
+                        .questionCount(srcSec.getQuestionCount())
+                        .formula(srcSec.getFormula())
+                        .pointGroups(srcSec.getPointGroups())
+                        .maxScore(srcSec.getMaxScore())
+                        .allowCustomPoints(srcSec.isAllowCustomPoints())
+                        .orderIndex(srcSec.getOrderIndex())
+                        .build();
+
+                for (var srcTc : srcSec.getTypeCounts()) {
+                    secCopy.getTypeCounts().add(
+                            az.testup.entity.TemplateSectionTypeCount.builder()
+                                    .section(secCopy)
+                                    .questionType(srcTc.getQuestionType())
+                                    .passageType(srcTc.getPassageType())
+                                    .count(srcTc.getCount())
+                                    .orderIndex(srcTc.getOrderIndex())
+                                    .build()
+                    );
+                }
+                subCopy.getSections().add(secCopy);
+            }
+            copy.getSubtitles().add(subCopy);
+        }
+
+        return mapTemplate(templateRepository.save(copy));
     }
 
     // ─── Subtitles ────────────────────────────────────────────────────────────
@@ -224,8 +325,10 @@ public class TemplateService {
     }
 
     private TemplateResponse mapTemplate(Template t) {
+        long examCount = examRepository.countByTemplateIdAndDeletedFalse(t.getId());
         return new TemplateResponse(t.getId(), t.getTitle(),
                 t.getSubtitles() != null ? t.getSubtitles().size() : 0,
+                examCount,
                 t.getCreatedAt(),
                 t.getTemplateType() != null ? t.getTemplateType().name() : TemplateType.STANDARD.name());
     }

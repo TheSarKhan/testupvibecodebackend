@@ -23,6 +23,10 @@ public class BannerResponse {
     private String bgGradient;
     private Integer orderIndex;
     private String targetAudience;
+    private LocalDateTime startAt;
+    private LocalDateTime endAt;
+    private Long impressionCount;
+    private Long clickCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

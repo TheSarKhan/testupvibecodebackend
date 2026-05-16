@@ -5,9 +5,9 @@ services:
     image: postgres:16
     container_name: testup-postgres
     environment:
-      POSTGRES_DB: testup_db
-      POSTGRES_USER: testup_user
-      POSTGRES_PASSWORD: testup_pass
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5433:5432"
     volumes:

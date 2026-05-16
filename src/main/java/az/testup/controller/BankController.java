@@ -31,6 +31,19 @@ public class BankController {
         return ResponseEntity.ok(bankService.getSubjectsForUser(getUser(ud)));
     }
 
+    @GetMapping("/subjects/paged")
+    public ResponseEntity<org.springframework.data.domain.Page<BankSubjectResponse>> getSubjectsPaged(
+            @AuthenticationPrincipal UserDetails ud,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "12") int size) {
+        List<BankSubjectResponse> all = bankService.getSubjectsForUser(getUser(ud));
+        var pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = Math.min(from + pageable.getPageSize(), all.size());
+        return ResponseEntity.ok(new org.springframework.data.domain.PageImpl<>(
+                all.subList(from, to), pageable, all.size()));
+    }
+
     @PostMapping("/subjects")
     public ResponseEntity<BankSubjectResponse> createSubject(
             @RequestBody BankSubjectRequest req,
@@ -61,6 +74,20 @@ public class BankController {
             @PathVariable Long id,
             @AuthenticationPrincipal UserDetails ud) {
         return ResponseEntity.ok(bankService.getQuestions(id, getUser(ud)));
+    }
+
+    @GetMapping("/subjects/{id}/questions/paged")
+    public ResponseEntity<org.springframework.data.domain.Page<BankQuestionResponse>> getQuestionsPaged(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails ud,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        List<BankQuestionResponse> all = bankService.getQuestions(id, getUser(ud));
+        var pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = Math.min(from + pageable.getPageSize(), all.size());
+        return ResponseEntity.ok(new org.springframework.data.domain.PageImpl<>(
+                all.subList(from, to), pageable, all.size()));
     }
 
     @PostMapping("/questions")

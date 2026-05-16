@@ -161,9 +161,25 @@ public class AuditLogService {
 
     public Page<AuditLogResponse> getLogs(String actionStr, String category,
                                            String search, String period, Pageable pageable) {
+        return getLogs(actionStr, category, search, period, null, null, pageable);
+    }
+
+    public Page<AuditLogResponse> getLogs(String actionStr, String category, String search,
+                                           String period, String actor, String targetType,
+                                           Pageable pageable) {
         String actionParam = null;
         if (actionStr != null && !actionStr.isBlank()) {
             try { AuditAction.valueOf(actionStr); actionParam = actionStr; } catch (Exception ignored) {}
+        }
+
+        String actionsCsv = null;
+        if (category != null && !category.isBlank() && !"ALL".equalsIgnoreCase(category)) {
+            String catUpper = category.toUpperCase();
+            actionsCsv = CATEGORY.entrySet().stream()
+                    .filter(e -> catUpper.equals(e.getValue()))
+                    .map(Map.Entry::getKey)
+                    .reduce((a, b) -> a + "," + b)
+                    .orElse(null);
         }
 
         LocalDateTime since = switch (period == null ? "" : period) {
@@ -175,7 +191,10 @@ public class AuditLogService {
 
         Page<AuditLog> page = repository.search(
             actionParam,
+            actionsCsv,
             (search != null && !search.isBlank()) ? search : null,
+            (actor != null && !actor.isBlank()) ? actor : null,
+            (targetType != null && !targetType.isBlank()) ? targetType : null,
             since,
             pageable
         );

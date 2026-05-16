@@ -2,6 +2,8 @@ package az.testup.dto.request;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 @Data
 public class BannerRequest {
     private String title;
@@ -14,4 +16,6 @@ public class BannerRequest {
     private String bgGradient;
     private Integer orderIndex;
     private String targetAudience; // ALL | GUEST | TEACHER | STUDENT
+    private LocalDateTime startAt;
+    private LocalDateTime endAt;
 }

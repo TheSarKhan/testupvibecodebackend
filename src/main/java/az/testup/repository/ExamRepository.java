@@ -36,6 +36,18 @@ public interface ExamRepository extends JpaRepository<Exam, Long> {
 
     long countByStatus(ExamStatus status);
 
+    long countByTemplateIdAndDeletedFalse(Long templateId);
+
     List<Exam> findTop5ByDeletedFalseOrderByCreatedAtDesc();
+
+    @Query(value = "SELECT COUNT(DISTINCT exam_id) FROM exam_tags WHERE tag = :tag", nativeQuery = true)
+    long countExamsWithTag(@Param("tag") String tag);
+
+    @Query(value = "SELECT COUNT(*) FROM exams e WHERE e.deleted = false " +
+            "AND NOT EXISTS (SELECT 1 FROM exam_tags et WHERE et.exam_id = e.id)", nativeQuery = true)
+    long countUntaggedExams();
+
+    @Query(value = "SELECT tag, COUNT(DISTINCT exam_id) AS cnt FROM exam_tags GROUP BY tag", nativeQuery = true)
+    List<Object[]> tagUsageCounts();
 }
 

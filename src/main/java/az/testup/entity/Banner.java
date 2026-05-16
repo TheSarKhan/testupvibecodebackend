@@ -50,6 +50,20 @@ public class Banner {
     @Column(nullable = false)
     private Integer orderIndex;
 
+    @Column(name = "start_at")
+    private LocalDateTime startAt;
+
+    @Column(name = "end_at")
+    private LocalDateTime endAt;
+
+    @Builder.Default
+    @Column(name = "impression_count", nullable = false)
+    private Long impressionCount = 0L;
+
+    @Builder.Default
+    @Column(name = "click_count", nullable = false)
+    private Long clickCount = 0L;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

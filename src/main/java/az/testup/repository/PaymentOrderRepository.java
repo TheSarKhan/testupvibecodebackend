@@ -40,6 +40,9 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long
 
     List<PaymentOrder> findByStatusOrderByCreatedAtDesc(String status);
 
+    org.springframework.data.domain.Page<PaymentOrder> findByStatusOrderByCreatedAtDesc(
+            String status, org.springframework.data.domain.Pageable pageable);
+
     @Query(value = "SELECT COALESCE(SUM(amount), 0) FROM payment_orders WHERE status = 'PAID'", nativeQuery = true)
     Double totalRevenue();
 
@@ -54,4 +57,15 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long
 
     @Query(value = "SELECT sp.name AS plan_name, COALESCE(SUM(po.amount), 0) AS revenue, COUNT(po.id) AS orders FROM payment_orders po JOIN subscription_plans sp ON po.plan_id = sp.id WHERE po.status = 'PAID' GROUP BY sp.name ORDER BY revenue DESC", nativeQuery = true)
     List<Object[]> revenueByPlan();
+
+    @Query(value = "SELECT status, COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS total FROM payment_orders GROUP BY status", nativeQuery = true)
+    List<Object[]> statusBreakdown();
+
+    @Query("SELECT o FROM PaymentOrder o WHERE o.status = :status " +
+            "AND (:from IS NULL OR o.createdAt >= :from) " +
+            "AND (:to IS NULL OR o.createdAt < :to) " +
+            "ORDER BY o.createdAt DESC")
+    List<PaymentOrder> findForExport(@Param("status") String status,
+                                     @Param("from") LocalDateTime from,
+                                     @Param("to") LocalDateTime to);
 }

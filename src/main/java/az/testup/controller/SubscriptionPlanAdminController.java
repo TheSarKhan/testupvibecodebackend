@@ -25,6 +25,18 @@ public class SubscriptionPlanAdminController {
         return ResponseEntity.ok(subscriptionPlanService.getAllPlans());
     }
 
+    @GetMapping("/paged")
+    public ResponseEntity<org.springframework.data.domain.Page<SubscriptionPlanResponse>> getPagedPlans(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "12") int size) {
+        List<SubscriptionPlanResponse> all = subscriptionPlanService.getAllPlans();
+        var pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        int from = (int) Math.min(pageable.getOffset(), all.size());
+        int to = Math.min(from + pageable.getPageSize(), all.size());
+        return ResponseEntity.ok(new org.springframework.data.domain.PageImpl<>(
+                all.subList(from, to), pageable, all.size()));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<SubscriptionPlanResponse> getPlanById(@PathVariable Long id) {
         return ResponseEntity.ok(subscriptionPlanService.getPlanById(id));

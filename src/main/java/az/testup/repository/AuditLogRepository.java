@@ -14,27 +14,38 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
         value = """
             SELECT * FROM audit_logs a
             WHERE (CAST(:action AS TEXT) IS NULL OR a.action = CAST(:action AS TEXT))
+              AND (CAST(:actions AS TEXT) IS NULL OR a.action = ANY(string_to_array(CAST(:actions AS TEXT), ',')))
               AND (CAST(:search AS TEXT) IS NULL
                    OR a.actor_email ILIKE CONCAT('%', CAST(:search AS TEXT), '%')
                    OR a.actor_name  ILIKE CONCAT('%', CAST(:search AS TEXT), '%')
-                   OR a.target_name ILIKE CONCAT('%', CAST(:search AS TEXT), '%'))
+                   OR a.target_name ILIKE CONCAT('%', CAST(:search AS TEXT), '%')
+                   OR a.details     ILIKE CONCAT('%', CAST(:search AS TEXT), '%'))
+              AND (CAST(:actor AS TEXT) IS NULL OR a.actor_email ILIKE CONCAT('%', CAST(:actor AS TEXT), '%'))
+              AND (CAST(:targetType AS TEXT) IS NULL OR a.target_type = CAST(:targetType AS TEXT))
               AND (CAST(:since AS TIMESTAMP) IS NULL OR a.created_at >= CAST(:since AS TIMESTAMP))
             ORDER BY a.created_at DESC
         """,
         countQuery = """
             SELECT COUNT(*) FROM audit_logs a
             WHERE (CAST(:action AS TEXT) IS NULL OR a.action = CAST(:action AS TEXT))
+              AND (CAST(:actions AS TEXT) IS NULL OR a.action = ANY(string_to_array(CAST(:actions AS TEXT), ',')))
               AND (CAST(:search AS TEXT) IS NULL
                    OR a.actor_email ILIKE CONCAT('%', CAST(:search AS TEXT), '%')
                    OR a.actor_name  ILIKE CONCAT('%', CAST(:search AS TEXT), '%')
-                   OR a.target_name ILIKE CONCAT('%', CAST(:search AS TEXT), '%'))
+                   OR a.target_name ILIKE CONCAT('%', CAST(:search AS TEXT), '%')
+                   OR a.details     ILIKE CONCAT('%', CAST(:search AS TEXT), '%'))
+              AND (CAST(:actor AS TEXT) IS NULL OR a.actor_email ILIKE CONCAT('%', CAST(:actor AS TEXT), '%'))
+              AND (CAST(:targetType AS TEXT) IS NULL OR a.target_type = CAST(:targetType AS TEXT))
               AND (CAST(:since AS TIMESTAMP) IS NULL OR a.created_at >= CAST(:since AS TIMESTAMP))
         """,
         nativeQuery = true
     )
     Page<AuditLog> search(
         @Param("action") String action,
+        @Param("actions") String actions,
         @Param("search") String search,
+        @Param("actor") String actor,
+        @Param("targetType") String targetType,
         @Param("since") LocalDateTime since,
         Pageable pageable
     );
