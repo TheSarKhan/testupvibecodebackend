@@ -20,6 +20,7 @@ public class ExamResponse {
     private Long id;
     private String title;
     private String description;
+    private String explanationVideoUrl;
     private List<String> subjects;
     private ExamVisibility visibility;
     private ExamType examType;

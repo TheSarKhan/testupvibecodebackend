@@ -28,6 +28,10 @@ public class Exam {
 
     private String description;
 
+    /** Optional URL (YouTube / Vimeo / etc.) to a video explaining the exam, shown to students after submission */
+    @Column(name = "explanation_video_url", length = 500)
+    private String explanationVideoUrl;
+
     @ElementCollection
     @CollectionTable(name = "exam_subject_list", joinColumns = @JoinColumn(name = "exam_id"))
     @Column(name = "subject")

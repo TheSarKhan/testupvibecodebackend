@@ -4,6 +4,7 @@ import az.testup.enums.QuestionType;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Set;
 
 @Data
 public class BankQuestionRequest {
@@ -16,6 +17,8 @@ public class BankQuestionRequest {
     private String correctAnswer;
     private String topic;
     private az.testup.enums.Difficulty difficulty;
+    private String gradeLevel;
+    private Set<String> tags;
     private List<BankOptionRequest> options;
     private List<BankMatchingPairRequest> matchingPairs;
 }

@@ -45,6 +45,8 @@ public class SubmissionResponse {
     private String examType;
     private Integer questionCount;
     private String teacherName;
+    /** Optional explanation video URL set by the teacher — shown to students after they finish the exam */
+    private String explanationVideoUrl;
 
     /** Per-subject breakdown (only populated when exam has 2+ subjects) */
     private List<SubjectStatResponse> subjectStats;

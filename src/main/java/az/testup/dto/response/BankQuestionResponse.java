@@ -4,6 +4,7 @@ import az.testup.enums.QuestionType;
 import az.testup.enums.Difficulty;
 
 import java.util.List;
+import java.util.Set;
 
 public record BankQuestionResponse(
         Long id,
@@ -17,6 +18,8 @@ public record BankQuestionResponse(
         String correctAnswer,
         String topic,
         Difficulty difficulty,
+        String gradeLevel,
+        Set<String> tags,
         List<BankOptionResponse> options,
         List<BankMatchingPairResponse> matchingPairs,
         String createdAt

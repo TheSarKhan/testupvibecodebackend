@@ -114,18 +114,28 @@ public class PdfService {
 
         for (int i = 0; i < questions.size(); i++) {
             Question q = questions.get(i);
-            
+
+            boolean contentBlank = isContentEffectivelyEmpty(q.getContent());
+            boolean hasImage = q.getAttachedImage() != null && !q.getAttachedImage().trim().isEmpty();
+
             // Question Content
             Paragraph qPara = new Paragraph();
-            qPara.add(new Chunk((i + 1) + ". ", qFont));
-            addRichText(qPara, q.getContent(), qFont);
-            qPara.setSpacingBefore(15f);
-            qPara.setSpacingAfter(5f);
+            if (contentBlank && hasImage) {
+                // Image-only question: tight number label, no trailing gap
+                qPara.add(new Chunk((i + 1) + ".", qFont));
+                qPara.setSpacingBefore(15f);
+                qPara.setSpacingAfter(0f);
+            } else {
+                qPara.add(new Chunk((i + 1) + ". ", qFont));
+                addRichText(qPara, q.getContent(), qFont);
+                qPara.setSpacingBefore(15f);
+                qPara.setSpacingAfter(5f);
+            }
             document.add(qPara);
 
             // Question Image
-            if (q.getAttachedImage() != null && !q.getAttachedImage().trim().isEmpty()) {
-                addImageToDocument(document, q.getAttachedImage());
+            if (hasImage) {
+                addImageToDocument(document, q.getAttachedImage(), contentBlank);
             }
 
             // Question Type Specifics
@@ -235,10 +245,16 @@ public class PdfService {
         table.setBorderWidth(1);
         table.setWidth(100);
         table.setPadding(5);
-        
+
+        // Collect open-ended answers to render below the grid (they don't fit narrow cells)
+        java.util.List<int[]> openIndices = new java.util.ArrayList<>(); // i -> question index
+        java.util.List<String> openAnswers = new java.util.ArrayList<>();
+
         for (int i = 0; i < questions.size(); i++) {
             Question q = questions.get(i);
             String ans = "-";
+            boolean isOpen = q.getQuestionType() == QuestionType.OPEN_AUTO || q.getQuestionType() == QuestionType.OPEN_MANUAL;
+
             if (q.getQuestionType() == QuestionType.MCQ || q.getQuestionType() == QuestionType.TRUE_FALSE || q.getQuestionType() == QuestionType.MULTI_SELECT) {
                 List<Option> options = q.getOptions();
                 options.sort(Comparator.comparing(Option::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())));
@@ -254,7 +270,7 @@ public class PdfService {
                 List<az.testup.entity.MatchingPair> pairs = q.getMatchingPairs();
                 java.util.List<String> lefts = pairs.stream().map(az.testup.entity.MatchingPair::getLeftItem).filter(java.util.Objects::nonNull).distinct().toList();
                 java.util.List<String> rights = pairs.stream().map(az.testup.entity.MatchingPair::getRightItem).filter(java.util.Objects::nonNull).distinct().toList();
-                
+
                 StringBuilder sb = new StringBuilder();
                 for (int j = 0; j < lefts.size(); j++) {
                     String left = lefts.get(j);
@@ -277,11 +293,20 @@ public class PdfService {
                          ans = ans.replace("[", "").replace("]", "").replace("\"", "").replace(",", ", ");
                      } catch (Exception e) {}
                 }
+            } else if (isOpen) {
+                String raw = q.getCorrectAnswer() != null ? q.getCorrectAnswer() : q.getSampleAnswer();
+                if (raw != null && !isContentEffectivelyEmpty(raw)) {
+                    openIndices.add(new int[]{ i + 1 });
+                    openAnswers.add(raw);
+                    ans = "↓"; // pointer to section below
+                } else {
+                    ans = q.getQuestionType() == QuestionType.OPEN_MANUAL ? "Əl ilə" : "Açıq";
+                }
             } else {
                 ans = q.getCorrectAnswer() != null ? q.getCorrectAnswer() : (q.getSampleAnswer() != null ? q.getSampleAnswer() : "Açıq");
             }
 
-            
+
             Paragraph p = new Paragraph();
             p.add(new Chunk((i + 1) + ": ", oFont));
             addRichText(p, ans, oFont);
@@ -289,7 +314,7 @@ public class PdfService {
             table.addCell(cell);
         }
 
-        
+
         int rem = questions.size() % 5;
         if (rem != 0) {
             for (int k = 0; k < (5 - rem); k++) {
@@ -298,6 +323,25 @@ public class PdfService {
         }
 
         document.add(table);
+
+        // --- Open-ended answers (full width, below the grid) ---
+        if (!openAnswers.isEmpty()) {
+            Paragraph openHeader = new Paragraph("Açıq sualların cavabları", qFont);
+            openHeader.setSpacingBefore(20f);
+            openHeader.setSpacingAfter(10f);
+            document.add(openHeader);
+
+            for (int idx = 0; idx < openAnswers.size(); idx++) {
+                int qNum = openIndices.get(idx)[0];
+                String answer = openAnswers.get(idx);
+
+                Paragraph item = new Paragraph();
+                item.add(new Chunk(qNum + ". ", qFont));
+                addRichText(item, answer, oFont);
+                item.setSpacingAfter(8f);
+                document.add(item);
+            }
+        }
 
         document.close();
         return out.toByteArray();
@@ -470,8 +514,10 @@ public class PdfService {
     }
 
     private void addImageToDocument(Document document, String imageUrl) {
+        addImageToDocument(document, imageUrl, false);
+    }
 
-
+    private void addImageToDocument(Document document, String imageUrl, boolean tight) {
         try {
             Image img;
             if (imageUrl.startsWith("data:image")) {
@@ -482,21 +528,30 @@ public class PdfService {
             } else {
                 img = Image.getInstance(imageUrl);
             }
-            
+
             // Scaled image to fit the page width
             float maxWidth = PageSize.A4.getWidth() - 100; // margin
             if (img.getPlainWidth() > maxWidth) {
                 float percentage = (maxWidth / img.getPlainWidth()) * 100;
                 img.scalePercent(percentage);
-            } else if (img.getPlainWidth() < 100) {
-                // If the image is too small, maybe scale it up a bit? No, keep natural or cap it.
             }
-            img.setSpacingBefore(5f);
+            img.setSpacingBefore(tight ? 2f : 5f);
             img.setSpacingAfter(5f);
             document.add(img);
         } catch (Exception e) {
             log.warn("Could not add image to PDF: " + (imageUrl.length() > 100 ? imageUrl.substring(0, 100) + "..." : imageUrl), e);
         }
+    }
+
+    /** True when the question/option content is effectively empty after stripping HTML and whitespace. */
+    private boolean isContentEffectivelyEmpty(String html) {
+        if (html == null) return true;
+        String stripped = html
+            .replaceAll("(?i)<br\\s*/?>", "")
+            .replaceAll("<[^>]+>", "")
+            .replace("&nbsp;", " ")
+            .trim();
+        return stripped.isEmpty();
     }
 }
 

@@ -6,7 +6,9 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "bank_questions")
@@ -44,6 +46,17 @@ public class BankQuestion {
 
     @Enumerated(EnumType.STRING)
     private az.testup.enums.Difficulty difficulty;
+
+    /** "1-4", "5-8", "9-11", "Buraxılış", or null = all grades */
+    @Column(name = "grade_level", length = 32)
+    private String gradeLevel;
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "bank_question_tags",
+            joinColumns = @JoinColumn(name = "bank_question_id"))
+    @Column(name = "tag", length = 64)
+    @Builder.Default
+    private Set<String> tags = new HashSet<>();
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "bank_subject_id", nullable = false)

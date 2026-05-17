@@ -22,6 +22,9 @@ public class ExamRequest {
 
     private String description;
 
+    /** Optional URL to a video explanation shown to students after they finish the exam */
+    private String explanationVideoUrl;
+
     private List<String> subjects;
 
     @NotNull(message = "Visibility is required")

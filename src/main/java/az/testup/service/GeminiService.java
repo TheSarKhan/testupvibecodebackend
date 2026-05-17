@@ -38,7 +38,7 @@ public class GeminiService {
         }
 
         String prompt = buildPrompt(req);
-        String rawResponse = callGemini(prompt);
+        String rawResponse = callGroq(prompt, req);
         List<BankQuestionRequest> parsed = parseResponse(rawResponse, req);
         List<BankQuestionRequest> filtered = filterValidLatex(parsed);
 
@@ -52,7 +52,7 @@ public class GeminiService {
             retryReq.setQuestionType(req.getQuestionType());
             retryReq.setCount(requested - filtered.size());
             try {
-                String retryRaw = callGemini(buildPrompt(retryReq));
+                String retryRaw = callGroq(buildPrompt(retryReq), retryReq);
                 List<BankQuestionRequest> retryFiltered = filterValidLatex(parseResponse(retryRaw, retryReq));
                 filtered.addAll(retryFiltered);
             } catch (Exception ignored) {}
@@ -92,101 +92,245 @@ public class GeminiService {
         return count;
     }
 
-    // ── Math subjects ─────────────────────────────────────────────────────────
+    // ── Subject categorization ────────────────────────────────────────────────
 
     private static final java.util.Set<String> MATH_SUBJECTS = java.util.Set.of(
-        "Riyaziyyat", "Fizika", "Kimya", "Həndəsə", "Cəbr", "Triqonometriya"
+        "Riyaziyyat", "Fizika", "Kimya", "Həndəsə", "Cəbr", "Triqonometriya", "İnformatika"
     );
 
-    private boolean isMathSubject(String name) {
+    private static final java.util.Set<String> SCIENCE_SUBJECTS = java.util.Set.of(
+        "Biologiya", "Coğrafiya", "Astronomiya"
+    );
+
+    private static final java.util.Set<String> HISTORY_SUBJECTS = java.util.Set.of(
+        "Tarix", "Azərbaycan tarixi", "Ümumi tarix"
+    );
+
+    private static final java.util.Set<String> LANGUAGE_SUBJECTS = java.util.Set.of(
+        "Azərbaycan dili", "İngilis dili", "Rus dili", "Ədəbiyyat"
+    );
+
+    private boolean containsAny(String name, java.util.Set<String> set) {
         if (name == null) return false;
-        return MATH_SUBJECTS.stream().anyMatch(s -> name.toLowerCase().contains(s.toLowerCase()));
+        String lower = name.toLowerCase();
+        return set.stream().anyMatch(s -> lower.contains(s.toLowerCase()));
+    }
+
+    private boolean isMathSubject(String name) {
+        return containsAny(name, MATH_SUBJECTS);
+    }
+
+    private boolean isScienceSubject(String name) {
+        return containsAny(name, SCIENCE_SUBJECTS);
+    }
+
+    private boolean isHistorySubject(String name) {
+        return containsAny(name, HISTORY_SUBJECTS);
+    }
+
+    private boolean isLanguageSubject(String name) {
+        return containsAny(name, LANGUAGE_SUBJECTS);
+    }
+
+    /** Returns a subject-specific style/terminology cue to inject into the prompt. */
+    private String subjectStyleCue(String subjectName) {
+        if (isMathSubject(subjectName)) {
+            return "STİL: Hesablamadan əvvəl tələbənin başa düşməsini yoxla — formul yaddaşı yox, məntiq və tətbiq vacibdir. " +
+                   "Ədədlər saf və nəticəli olsun (mümkünsə tam ədəd / sadə kəsr). Süni \"71.4256\" kimi qəribə nəticələrdən qaç.";
+        }
+        if (isScienceSubject(subjectName)) {
+            return "STİL: Termin və anlayışlar dəqiq olsun (məs: \"fotosintez\", \"diffuziya\"). Müşahidə + səbəb-nəticə əlaqəsi ön planda olsun.";
+        }
+        if (isHistorySubject(subjectName)) {
+            return "STİL: Yalnız təsdiqlənmiş, ümumi qəbul olunan tarixi faktlardan istifadə et. Mübahisəli interpretasiyalardan qaç. " +
+                   "Tarix (il/əsr), şəxsiyyət və hadisə adlarının yazılışı düzgün olsun.";
+        }
+        if (isLanguageSubject(subjectName)) {
+            return "STİL: Qrammatik və leksik suallarda kontekst aydın olsun. Cümlələr təbii və müasir Azərbaycan dilində olsun. " +
+                   "Ədəbiyyat sualları üçün təkcə \"kim yazıb\" deyil, məna, üslub, təhlilə də toxun.";
+        }
+        return "STİL: Sual aydın, birmənalı və konkret olsun. Sual mətnində cavaba işarə olmasın.";
+    }
+
+    /** Returns the difficulty rubric — what \"easy/medium/hard\" actually means. */
+    private String difficultyRubric(String difficulty, boolean isMath) {
+        return switch (difficulty == null ? "MEDIUM" : difficulty) {
+            case "EASY" -> isMath
+                ? "ASAN: 1 addım, birbaşa formul tətbiqi və ya təriflərin xatırlanması. " +
+                  "Tələbə kalkulyator olmadan 30 saniyə içində həll edə bilməlidir."
+                : "ASAN: Yaddaşa əsaslanan, dərslikdə birbaşa keçən fakt və ya tərif. " +
+                  "Bir cümləyə sığan birmənalı cavab.";
+            case "HARD" -> isMath
+                ? "ÇƏTİN: 3+ addımlı, bir neçə anlayışın birləşdirilməsini tələb edən. " +
+                  "Sözlü məsələ və ya qarışıq tənlik. Olimpiada/buraxılış imtahanı səviyyəsi, " +
+                  "amma TƏHRİF EDİLMİŞ deyil — həll yolu məntiqi olmalıdır."
+                : "ÇƏTİN: Analiz, tətbiq və sintez tələb edən. Sadəcə yaddaş kifayət etmir — " +
+                  "anlayışları yeni kontekstdə birləşdirmək, fərqləndirmək və ya nəticə çıxarmaq lazımdır.";
+            default -> isMath
+                ? "ORTA: 2 addımlı tipik dərslik məsələsi. Standart tənlik və ya konsept tətbiqi. " +
+                  "Orta tələbə 1-2 dəqiqədə həll edə bilər."
+                : "ORTA: Sadəcə yaddaş deyil, anlayışı tələb edən. " +
+                  "Müqayisə, səbəb-nəticə və ya tətbiq sualı.";
+        };
     }
 
     // ── Prompt builder ────────────────────────────────────────────────────────
 
     private String buildSystemMessage() {
-        return "You are a professional exam question generator for Azerbaijani school curriculum. " +
-               "You MUST respond with VALID JSON ONLY — no markdown fences, no explanations, no extra text. " +
-               "The response must be a JSON object with a single key \"questions\" containing an array. " +
-               "CRITICAL: In JSON strings containing LaTeX, escape all backslashes properly. " +
-               "For example: to write \\frac in JSON, use the sequence: backslash backslash f r a c";
+        return """
+               You are an EXPERT Azerbaijani K-12 / university-prep exam author with 15+ years of pedagogical experience. \
+               You produce questions that real teachers would assign — pedagogically sound, factually correct, age-appropriate, \
+               and designed to discriminate between students who understand the material and those who don't.
+
+               OUTPUT CONTRACT — non-negotiable:
+               - Respond with ONE valid JSON object ONLY. No markdown fences, no prose, no explanations.
+               - Top-level key: "questions" → array.
+               - Every string must be valid JSON (escape quotes, newlines as \\n, backslashes doubled).
+               - Produce EXACTLY the requested number of questions — not fewer, not more.
+
+               QUALITY BAR — every question must satisfy ALL of these:
+               1. FACTUALLY CORRECT. If you are not 100% sure of the answer, do NOT include the question.
+               2. UNAMBIGUOUS. Exactly one interpretation; exactly one correct answer (or the requested number of correct answers for MULTI_SELECT).
+               3. NO GIVEAWAYS. The stem must not telegraph the answer. Avoid grammatical mismatches between stem and only-correct option.
+               4. PLAUSIBLE DISTRACTORS. Wrong options must reflect REAL student misconceptions — common errors, near-miss values, off-by-one mistakes, swapped terms. NEVER use joke options, obviously-wrong fillers, "Bütün yuxarıdakılar", "Heç biri", or repeats.
+               5. CALIBRATED LENGTH. Stem 1–3 sentences. Options short, parallel in length and structure.
+               6. DIVERSE BATCH. When multiple questions are requested, each must cover a DIFFERENT sub-topic, concept or cognitive level (recall → apply → analyze). Never produce near-duplicates.
+               7. CULTURALLY APPROPRIATE. Use Azerbaijani names, places, and curriculum context where relevant. Avoid Western-centric examples unless required by the topic.
+
+               BANNED PATTERNS — DO NOT produce any of these:
+               - "Aşağıdakılardan hansı düzgündür?" with one obviously-true option and three absurd ones.
+               - Options containing "Yuxarıdakıların hamısı" / "Heç biri".
+               - Trick questions whose answer depends on word-play rather than subject knowledge.
+               - Questions whose correct answer is literally restated in the stem.
+               - Numerical answers like "3.71428..." for school-level math — pick clean numbers.
+               - Stem in one language, options in another.
+
+               SELF-CHECK before emitting each question: solve it yourself, confirm the marked correct answer is correct, and confirm at least one distractor reflects a plausible misconception.""";
     }
 
     private String buildPrompt(GenerateQuestionsRequest req) {
-        String diff = switch (req.getDifficulty() == null ? "" : req.getDifficulty()) {
-            case "EASY" -> "Asan (sadə, birbaşa)";
-            case "HARD" -> "Çətin (mürəkkəb, çoxaddımlı)";
-            default     -> "Orta (kifayət qədər çətin)";
-        };
-
         String topic = (req.getTopicName() != null && !req.getTopicName().isBlank())
-            ? req.getTopicName() : "ümumi";
+            ? req.getTopicName().trim() : null;
 
         boolean isOpen  = "OPEN_AUTO".equals(req.getQuestionType())
                        || "FILL_IN_THE_BLANK".equals(req.getQuestionType());
+        boolean isFill  = "FILL_IN_THE_BLANK".equals(req.getQuestionType());
         boolean isMulti = "MULTI_SELECT".equals(req.getQuestionType());
         boolean isMath  = isMathSubject(req.getSubjectName());
 
+        String diffRubric = difficultyRubric(req.getDifficulty(), isMath);
+        String styleCue   = subjectStyleCue(req.getSubjectName());
+
         String latexNote = isMath ? """
 
-            LaTeX qaydaları (KaTeX formatı) — CİDDİ ƏMƏL ET:
-            - HƏR riyazi ifadə MÜTLƏQ $...$ daxilində yazılmalıdır. $-siz LaTeX QADAĞANDIR.
-            - Sadə ədədlər/dəyişənlər: $x$, $5$, $-3$
-            - Kəsrlər: $\\frac{a}{b}$ — JSON-da \\\\frac kimi yazılır
-            - Kvadrat kök: $\\sqrt{x}$ — JSON-da \\\\sqrt
-            - Üst dərəcə: $x^{2}$; alt indeks: $x_{1}$
-            - Vurma: $\\cdot$ — JSON-da \\\\cdot
-            - QAYD: JSON-da hər backslash double-escape (\\\\) olmalı
-            - Matris, inteqral kimi mürəkkəb konstruksiyalardan istifadə ETMƏ — sadə tənliklərlə işlə
-            - \\begin{...} işlətsən, MUTLAQ uyğun \\end{...} ilə bağla və hamısını $...$ daxilinə sal
-            """ : "";
+                LaTeX QAYDALARI (KaTeX) — kəsin əməl et:
+                - HƏR riyazi ifadə MÜTLƏQ `$...$` daxilində olsun. Çılpaq LaTeX (`$` olmadan) QADAĞANDIR.
+                - Adi ədədlər və dəyişənlər də: `$x$`, `$5$`, `$-3$`, `$\\pi$`.
+                - Kəsr: `$\\frac{a}{b}$` (JSON-da `\\\\frac`); kök: `$\\sqrt{x}$`; dərəcə: `$x^{2}$`; alt indeks: `$x_{1}$`; vurma: `$\\cdot$`.
+                - JSON-da hər `\\` mütləq `\\\\` kimi qoşalansın.
+                - `\\begin{...}` işlədilərsə qarşılıqlı `\\end{...}` ilə bağlansın və hər ikisi $...$ içində olsun.
+                - Mətndəki ÖLÇÜ VAHİDLƏRİ də formula daxilinə alın: `$10\\text{ m/s}$`, `$25^{\\circ}\\text{C}$`.
+                - QAÇIN: matris, çoxsətirli inteqral, mürəkkəb diaqramlar (yoxlanmır, riskli). Sadə tənliklərlə işlə.""" : "";
 
-        String typeInstruction;
+        String typeRules;
         String exampleJson;
 
-        if (isOpen) {
-            typeInstruction = "FILL_IN_THE_BLANK".equals(req.getQuestionType())
-                ? "Boşluq doldurma: cümlədə ___ (üç alt xətt) ilə boşluq qoyulur, correctAnswer boşluğun cavabıdır."
-                : "Açıq sual: tələbə qısa cavab yazır, correctAnswer düzgün cavabdır.";
-
+        if (isFill) {
+            typeRules = """
+                    SUAL TİPİ — BOŞLUQ DOLDURMA (FILL_IN_THE_BLANK):
+                    - Cümlədə MƏHZ BİR `___` (üç alt xətt) boşluq qoy.
+                    - Boşluqdan kənarda sual aydın və tam başa düşülən olsun.
+                    - `correctAnswer` yalnız boşluğa düşən söz/rəqəm/ifadə olmalıdır (tam cümlə yox).
+                    - Cavab QISA və birmənalı olsun (1-3 söz, və ya 1 ədəd).""";
             exampleJson = isMath
-                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ bərabərliyini həll edin. $x$ = ___\",\"correctAnswer\":\"$x = 4$\"},{\"content\":\"$\\\\frac{3}{4}$ ədədinin $\\\\frac{2}{3}$ hissəsini tapın.\",\"correctAnswer\":\"$\\\\frac{1}{2}$\"}]}"
-                : "{\"questions\":[{\"content\":\"Azərbaycanın paytaxtı hansı şəhərdir?\",\"correctAnswer\":\"Bakı\"},{\"content\":\"Su hansı kimyəvi formulla ifadə olunur?\",\"correctAnswer\":\"H₂O\"}]}";
+                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ tənliyində $x$ = ___\",\"correctAnswer\":\"$4$\"}]}"
+                : "{\"questions\":[{\"content\":\"Azərbaycanın paytaxtı ___ şəhəridir.\",\"correctAnswer\":\"Bakı\"}]}";
+        } else if (isOpen) {
+            typeRules = """
+                    SUAL TİPİ — AÇIQ SUAL (OPEN_AUTO):
+                    - Tələbə qısa cavab yazır (ad, ədəd, qısa ifadə).
+                    - Cavab birmənalı olsun — bir neçə \"düzgün\" formada yazıla bilməyəcək kimi.
+                    - Mümkünsə cavab tək söz / tək ədəd olsun (avtomatik yoxlama üçün).
+                    - `correctAnswer` standartlaşdırılmış formada yazılsın (lüğət/normativ forma).""";
+            exampleJson = isMath
+                ? "{\"questions\":[{\"content\":\"$f(x) = 2x^{2} - 3$ funksiyasında $f(2)$ qiymətini tapın.\",\"correctAnswer\":\"$5$\"}]}"
+                : "{\"questions\":[{\"content\":\"Azərbaycan Xalq Cümhuriyyəti hansı ildə elan olunub?\",\"correctAnswer\":\"1918\"}]}";
         } else if (isMulti) {
-            typeInstruction = "Çox seçimli: 4 variant olmalıdır, 2 variant düzgündür (isCorrect: true), 2 variant səhvdir (isCorrect: false).";
+            typeRules = """
+                    SUAL TİPİ — ÇOX SEÇİMLİ (MULTI_SELECT):
+                    - DƏQİQ 4 variant. DƏQİQ 2 DÜZGÜN (`isCorrect: true`), DƏQİQ 2 SƏHV (`isCorrect: false`).
+                    - Hər iki düzgün variant həqiqətən düzgün olmalı; hər iki səhv variant inandırıcı, lakin tam səhv.
+                    - Variantlar bir-birini istisna etməsin, lakin eyni şey OLMASIN.
+                    - Stem aydın göstərsin ki, BİRDƏN ÇOX cavab seçilməlidir (məs: \"Hansılar...\").""";
             exampleJson = isMath
-                ? "{\"questions\":[{\"content\":\"Hansı ədədlər $x^2 = 16$ tənliyinin həllidir?\",\"options\":[{\"text\":\"$x = 4$\",\"isCorrect\":true},{\"text\":\"$x = -4$\",\"isCorrect\":true},{\"text\":\"$x = 8$\",\"isCorrect\":false},{\"text\":\"$x = 2$\",\"isCorrect\":false}]}]}"
-                : "{\"questions\":[{\"content\":\"Hansılar Azərbaycan şəhərləridir?\",\"options\":[{\"text\":\"Gəncə\",\"isCorrect\":true},{\"text\":\"Şəki\",\"isCorrect\":true},{\"text\":\"Tiflis\",\"isCorrect\":false},{\"text\":\"Ankara\",\"isCorrect\":false}]}]}";
+                ? "{\"questions\":[{\"content\":\"Hansı ədədlər $x^{2} = 16$ tənliyinin həllidir?\",\"options\":[{\"text\":\"$x = 4$\",\"isCorrect\":true},{\"text\":\"$x = -4$\",\"isCorrect\":true},{\"text\":\"$x = 8$\",\"isCorrect\":false},{\"text\":\"$x = 16$\",\"isCorrect\":false}]}]}"
+                : "{\"questions\":[{\"content\":\"Hansı şəhərlər Azərbaycanın qədim mədəniyyət mərkəzləri sayılır?\",\"options\":[{\"text\":\"Gəncə\",\"isCorrect\":true},{\"text\":\"Şamaxı\",\"isCorrect\":true},{\"text\":\"İstanbul\",\"isCorrect\":false},{\"text\":\"Almatı\",\"isCorrect\":false}]}]}";
         } else {
-            typeInstruction = "Test (MCQ): 4 variant olmalıdır, yalnız 1 düzgündür (isCorrect: true), qalan 3 səhvdir (isCorrect: false). Variantlar məntiqi, aldadıcı olmalıdır.";
+            typeRules = """
+                    SUAL TİPİ — TEST (MCQ):
+                    - DƏQİQ 4 variant. DƏQİQ 1 DÜZGÜN (`isCorrect: true`), DƏQİQ 3 SƏHV (`isCorrect: false`).
+                    - DİSTRAKTOR (səhv variantlar) qaydası:
+                      • Hər biri TƏLƏBƏNİN EDƏCƏYİ KONKRET SƏHVƏ uyğun olmalı (məs: işarə səhvi, qatlanma səhvi, vahid qarışdırması).
+                      • Düzgün cavabla eyni format, uzunluq, üslubda yazılmalı.
+                      • Heç biri açıq-aydın absurd, gülməli və ya nəzəri cəhətdən imkansız olmasın.
+                    - Variantların sırası random olsun (düzgün cavab həmişə eyni yerdə qalmasın).""";
             exampleJson = isMath
-                ? "{\"questions\":[{\"content\":\"$3x - 7 = 8$ tənliyini həll edin.\",\"options\":[{\"text\":\"$x = 5$\",\"isCorrect\":true},{\"text\":\"$x = 3$\",\"isCorrect\":false},{\"text\":\"$x = 7$\",\"isCorrect\":false},{\"text\":\"$x = 1$\",\"isCorrect\":false}]},{\"content\":\"$\\\\frac{2}{3} + \\\\frac{1}{6}$ əməliyyatının nəticəsi nədir?\",\"options\":[{\"text\":\"$\\\\frac{5}{6}$\",\"isCorrect\":true},{\"text\":\"$\\\\frac{3}{9}$\",\"isCorrect\":false},{\"text\":\"$\\\\frac{1}{2}$\",\"isCorrect\":false},{\"text\":\"$\\\\frac{3}{6}$\",\"isCorrect\":false}]}]}"
-                : "{\"questions\":[{\"content\":\"Azərbaycan müstəqilliyini neçənci ildə bərpa etdi?\",\"options\":[{\"text\":\"1991\",\"isCorrect\":true},{\"text\":\"1993\",\"isCorrect\":false},{\"text\":\"1988\",\"isCorrect\":false},{\"text\":\"2001\",\"isCorrect\":false}]}]}";
+                ? "{\"questions\":[{\"content\":\"$3x - 7 = 8$ tənliyini həll edin.\",\"options\":[{\"text\":\"$x = 5$\",\"isCorrect\":true},{\"text\":\"$x = -5$\",\"isCorrect\":false},{\"text\":\"$x = 15$\",\"isCorrect\":false},{\"text\":\"$x = \\\\frac{1}{5}$\",\"isCorrect\":false}]}]}"
+                : "{\"questions\":[{\"content\":\"Azərbaycan müstəqilliyini bərpa etdi:\",\"options\":[{\"text\":\"18 oktyabr 1991\",\"isCorrect\":true},{\"text\":\"28 may 1918\",\"isCorrect\":false},{\"text\":\"30 avqust 1991\",\"isCorrect\":false},{\"text\":\"1 yanvar 1992\",\"isCorrect\":false}]}]}";
         }
 
-        return ("Fənn: " + req.getSubjectName() + "\n" +
-                "Mövzu: " + topic + "\n" +
-                "Çətinlik: " + diff + "\n" +
-                "Sual tipi: " + typeInstruction + "\n" +
-                "Yaradılacaq sual sayı: " + req.getCount() + "\n" +
-                latexNote +
-                "\nQAYDALAR:\n" +
-                "1. SUALLAR YALNIZ \"" + topic + "\" mövzusuna aid olmalıdır. Başqa mövzudan sual yaratmaq QƏTİ QADAĞANDIR.\n" +
-                "2. Bütün suallar Azərbaycan dilində olmalıdır\n" +
-                "3. Variantlar real, məntiqi və aldadıcı olmalıdır — heç biri boş qoyulmamalıdır\n" +
-                "4. Hər sualda tam " + (isOpen ? "\"content\" və \"correctAnswer\"" : "\"content\" və 4 variant olan \"options\"") + " olmalıdır\n" +
-                "5. JSON obyektinin açarı \"questions\" olmalıdır\n" +
-                (isMath ? "6. Bütün riyazi ifadələr KaTeX formatında YALNIZ $...$ daxilində yazılmalıdır\n" +
-                         "7. JSON Response-da backslash-lar DOUBLE-ESCAPE olmalı: content-də LaTeX komandaları tək backslash ilə yazılır\n" +
-                         "8. \\begin{...} işlədildikdə hökmən \\end{...} ilə bağlanmalı və hər ikisi $...$ içində olmalı\n" : "") +
-                "\nNÜMUNƏ FORMAT (məzmunu kopyalama, yalnız strukturu izlə):\n" +
-                exampleJson);
+        String topicLine = topic != null
+            ? "MÖVZU: \"" + topic + "\" — bütün suallar BU ALT-MÖVZUNUN ƏHATƏSİNDƏ qalmalı, kənara çıxmamalı."
+            : "MÖVZU: Mövzu göstərilməyib — fənn üzrə MƏRKƏZİ, dərslikdə təməl sayılan mövzulardan seç.";
+
+        String diversityRule = req.getCount() > 1
+            ? "BATCH DIVERSITY: " + req.getCount() + " sual yaradılır — hər biri MÜXTƏLİF alt-konsept, " +
+              "fərqli cognitive səviyyə (xatırlamaq / tətbiq etmək / təhlil etmək) və ya fərqli ssenari sınasın. " +
+              "Eyni şablonun kiçik dəyişikliyi yox, HƏQİQİ MÜXTƏLİFLİK."
+            : "";
+
+        return ("FƏNN: " + req.getSubjectName() + "\n" +
+                topicLine + "\n" +
+                "ÇƏTİNLİK SƏVİYYƏSİ: " + diffRubric + "\n" +
+                styleCue + "\n" +
+                (diversityRule.isEmpty() ? "" : diversityRule + "\n") +
+                "DİL: Azərbaycan dili (təmiz, müasir orfoqrafiya).\n" +
+                "SUAL SAYI: DƏQİQ " + req.getCount() + " sual.\n" +
+                latexNote + "\n\n" +
+                typeRules + "\n\n" +
+                "JSON SXEMİ:\n" +
+                "{ \"questions\": [ { \"content\": string" +
+                (isOpen ? ", \"correctAnswer\": string"
+                        : ", \"options\": [{ \"text\": string, \"isCorrect\": boolean }, … 4 ədəd]") +
+                " }, … " + req.getCount() + " ədəd ] }\n\n" +
+                "STRUKTUR NÜMUNƏSİ (məzmunu kopyalama, yalnız format):\n" +
+                exampleJson + "\n\n" +
+                "İndi yuxarıdakı QAYDALARA tam əməl edərək " + req.getCount() + " yüksək keyfiyyətli sual yarat. " +
+                "YALNIZ JSON cavab ver.");
     }
 
     // ── API call ──────────────────────────────────────────────────────────────
 
-    private String callGemini(String prompt) {
+    /**
+     * Subject-aware temperature:
+     * - Math / science: lower temperature → more deterministic, fewer factual errors.
+     * - Humanities / language: higher temperature → richer variation.
+     */
+    private double temperatureFor(GenerateQuestionsRequest req) {
+        if (isMathSubject(req.getSubjectName())) return 0.45;
+        if (isScienceSubject(req.getSubjectName())) return 0.55;
+        if (isHistorySubject(req.getSubjectName())) return 0.55;
+        if (isLanguageSubject(req.getSubjectName())) return 0.75;
+        return 0.65;
+    }
+
+    /** Stricter prompts produce longer JSON — scale token budget with batch size. */
+    private int maxTokensFor(GenerateQuestionsRequest req) {
+        int perQuestion = isMathSubject(req.getSubjectName()) ? 450 : 350;
+        return Math.min(8192, 800 + perQuestion * Math.max(1, req.getCount()));
+    }
+
+    private String callGroq(String prompt, GenerateQuestionsRequest req) {
         RestTemplate rest = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -199,11 +343,16 @@ public class GeminiService {
                 {"role": "system", "content": %s},
                 {"role": "user",   "content": %s}
               ],
-              "temperature": 0.7,
-              "max_tokens": 4096,
+              "temperature": %s,
+              "top_p": 0.9,
+              "max_tokens": %d,
               "response_format": {"type": "json_object"}
             }
-            """.formatted(toJsonString(buildSystemMessage()), toJsonString(prompt));
+            """.formatted(
+                toJsonString(buildSystemMessage()),
+                toJsonString(prompt),
+                String.format(java.util.Locale.ROOT, "%.2f", temperatureFor(req)),
+                maxTokensFor(req));
 
         HttpEntity<String> entity = new HttpEntity<>(body, headers);
         ResponseEntity<String> response = rest.postForEntity(GROQ_URL, entity, String.class);
@@ -322,21 +471,77 @@ public class GeminiService {
         List<BankQuestionRequest> all = new ArrayList<>();
         if (req.getTypeCounts() == null || req.getTypeCounts().isEmpty()) return all;
 
-        for (Map.Entry<String, Integer> entry : req.getTypeCounts().entrySet()) {
-            int count = entry.getValue();
+        // Total questions across all types — used to enforce coherence (no near-duplicates across batches).
+        int totalRequested = req.getTypeCounts().values().stream().mapToInt(Integer::intValue).sum();
+
+        // Stable ordering for deterministic generation order (MCQ first, then MULTI_SELECT, then opens).
+        List<String> orderedTypes = new ArrayList<>(req.getTypeCounts().keySet());
+        orderedTypes.sort(Comparator.comparingInt(this::typePriority));
+
+        List<String> usedHints = new ArrayList<>();
+
+        for (String type : orderedTypes) {
+            int count = req.getTypeCounts().getOrDefault(type, 0);
             if (count <= 0) continue;
 
             GenerateQuestionsRequest qReq = new GenerateQuestionsRequest();
             qReq.setSubjectName(req.getSubjectName());
-            qReq.setTopicName(req.getTopicName());
+            // Append exam-level coherence hint so each batch knows it's part of a larger exam
+            // and must avoid overlapping sub-topics with previously generated batches.
+            qReq.setTopicName(buildExamScopedTopic(req.getTopicName(), totalRequested, usedHints));
             qReq.setDifficulty(req.getDifficulty() != null ? req.getDifficulty() : "MEDIUM");
-            qReq.setQuestionType(entry.getKey());
+            qReq.setQuestionType(type);
             qReq.setCount(Math.min(count, 15));
 
             List<BankQuestionRequest> generated = generateQuestions(qReq);
             all.addAll(generated);
+
+            // Remember a few sub-topics from this batch so the next batch can be told to avoid them.
+            for (int i = 0; i < Math.min(2, generated.size()); i++) {
+                String c = generated.get(i).getContent();
+                if (c != null && !c.isBlank()) {
+                    usedHints.add(c.substring(0, Math.min(80, c.length())));
+                }
+            }
         }
+
+        for (int i = 0; i < all.size(); i++) all.get(i).setOrderIndex(i);
         return all;
+    }
+
+    private int typePriority(String type) {
+        return switch (type == null ? "" : type) {
+            case "MCQ" -> 1;
+            case "MULTI_SELECT" -> 2;
+            case "FILL_IN_THE_BLANK" -> 3;
+            case "OPEN_AUTO" -> 4;
+            case "OPEN_MANUAL" -> 5;
+            default -> 9;
+        };
+    }
+
+    /**
+     * For multi-type exams, fold the exam-level scope and previously generated stem hints
+     * into the per-batch topic so the model can avoid near-duplicate coverage across types.
+     */
+    private String buildExamScopedTopic(String baseTopic, int totalQuestions, List<String> previousHints) {
+        StringBuilder sb = new StringBuilder();
+        if (baseTopic != null && !baseTopic.isBlank()) {
+            sb.append(baseTopic.trim());
+        }
+        if (totalQuestions > 1) {
+            if (sb.length() > 0) sb.append(" — ");
+            sb.append("bu sual partiyası ").append(totalQuestions)
+              .append(" suallıq vahid imtahanın bir hissəsidir; başqa sual tiplərində də suallar olacaq.");
+        }
+        if (!previousHints.isEmpty()) {
+            sb.append(" Aşağıdakı stem-lərlə örtüşmə və ya yaxın təkrar QADAĞANDIR: ");
+            for (int i = 0; i < previousHints.size(); i++) {
+                if (i > 0) sb.append(" | ");
+                sb.append("\"").append(previousHints.get(i).replace("\"", "'")).append("\"");
+            }
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private QuestionType mapQuestionType(String type) {

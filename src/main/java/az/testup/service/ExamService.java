@@ -108,6 +108,7 @@ public class ExamService {
         Exam exam = Exam.builder()
                 .title(request.getTitle())
                 .description(request.getDescription())
+                .explanationVideoUrl(request.getExplanationVideoUrl())
                 .subjects(request.getSubjects() != null ? new ArrayList<>(request.getSubjects()) : new ArrayList<>())
                 .visibility(request.getVisibility())
                 .examType(request.getExamType())
@@ -292,6 +293,7 @@ public class ExamService {
 
         exam.setTitle(request.getTitle());
         exam.setDescription(request.getDescription());
+        exam.setExplanationVideoUrl(request.getExplanationVideoUrl());
         exam.getSubjects().clear();
         if (request.getSubjects() != null) exam.getSubjects().addAll(request.getSubjects());
         exam.setVisibility(request.getVisibility());
@@ -612,6 +614,7 @@ public class ExamService {
         Exam clone = Exam.builder()
                 .title(original.getTitle() + " (Kopya)")
                 .description(original.getDescription())
+                .explanationVideoUrl(original.getExplanationVideoUrl())
                 .subjects(new ArrayList<>(original.getSubjects()))
                 .visibility(original.getVisibility())
                 .examType(original.getExamType())
@@ -782,6 +785,7 @@ public class ExamService {
                 .id(exam.getId())
                 .title(exam.getTitle())
                 .description(exam.getDescription())
+                .explanationVideoUrl(exam.getExplanationVideoUrl())
                 .subjects(exam.getSubjects())
                 .visibility(exam.getVisibility())
                 .examType(exam.getExamType())

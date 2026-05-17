@@ -77,28 +77,52 @@ public class PaymentController {
 
         double totalAmount = plan.getPrice() * months;
 
-        // Credit: monetary value of remaining days on current plan
+        // ── Prorate: monetary value of remaining time on current plan ──
+        // We compute the credit in AZN of the unused portion of the active
+        // subscription (only for plan SWITCH, not same-plan renewal).
+        //
+        // Daily rate falls back to the current plan's listed price/30 when
+        // amountPaid is 0 (e.g. manually-assigned subs). Remaining time uses
+        // fractional days (hours/24.0) so the user never loses a partial day.
         double creditAzn = 0.0;
+        LocalDateTime now = LocalDateTime.now();
         Optional<UserSubscription> currentOpt = userSubscriptionRepository
-                .findActiveSubscriptionByUserIdAndDate(user.getId(), LocalDateTime.now());
+                .findActiveSubscriptionByUserIdAndDate(user.getId(), now);
         if (currentOpt.isPresent()) {
             UserSubscription current = currentOpt.get();
             boolean isSamePlan = current.getPlan().getId().equals(plan.getId());
-            if (!isSamePlan && current.getAmountPaid() > 0) {
-                long totalDays = ChronoUnit.DAYS.between(current.getStartDate(), current.getEndDate());
-                long remainingDays = ChronoUnit.DAYS.between(LocalDateTime.now(), current.getEndDate());
-                if (totalDays > 0 && remainingDays > 0) {
-                    double oldDailyRate = current.getAmountPaid() / totalDays;
-                    creditAzn = oldDailyRate * remainingDays;
+            if (!isSamePlan) {
+                long totalSeconds = ChronoUnit.SECONDS.between(current.getStartDate(), current.getEndDate());
+                long remainingSeconds = ChronoUnit.SECONDS.between(now, current.getEndDate());
+                if (totalSeconds > 0 && remainingSeconds > 0) {
+                    double totalDaysExact = totalSeconds / 86400.0;
+                    double remainingDaysExact = remainingSeconds / 86400.0;
+                    double oldDailyRate = current.getAmountPaid() > 0
+                            ? current.getAmountPaid() / totalDaysExact
+                            : current.getPlan().getPrice() / 30.0;
+                    creditAzn = oldDailyRate * remainingDaysExact;
+                    // Cap credit at the listed value of the remaining time on the
+                    // current plan — defends against over-credit if amountPaid was
+                    // inflated by previous credits (compounding).
+                    double remainingListedValue = (current.getPlan().getPrice() / 30.0) * remainingDaysExact;
+                    if (creditAzn > remainingListedValue) {
+                        creditAzn = remainingListedValue;
+                    }
                 }
             }
         }
+        // Round credit to 2 decimal places (AZN cents) — avoids long fractions
+        // propagating into the duration calculation.
+        creditAzn = Math.round(creditAzn * 100.0) / 100.0;
 
         // Value wallet: total economic value = credit + new charge
         double chargeAmount = Math.max(0.0, totalAmount - creditAzn);
+        chargeAmount = Math.round(chargeAmount * 100.0) / 100.0;
         double totalValue = creditAzn + chargeAmount;
-        // Duration in days derived from total value at new plan's daily rate
-        long durationDays = (long) (totalValue / (plan.getPrice() / 30.0));
+        // Duration in days derived from total value at new plan's daily rate.
+        // Use Math.round (not cast) so users don't lose a day from fractional truncation.
+        double newDailyRate = plan.getPrice() / 30.0;
+        long durationDays = Math.max(1L, Math.round(totalValue / newDailyRate));
 
         // Free switch: credit covers entire cost
         if (chargeAmount == 0.0) {

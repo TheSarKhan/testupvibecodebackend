@@ -963,6 +963,7 @@ public class SubmissionService {
                 .examType(exam.getExamType() != null ? exam.getExamType().name() : null)
                 .questionCount(totalQuestions)
                 .teacherName(exam.getTeacher() != null ? exam.getTeacher().getFullName() : null)
+                .explanationVideoUrl(exam.getExplanationVideoUrl())
                 .build();
 
         List<SubjectStatResponse> stats = buildSubjectStats(submission);

@@ -7,17 +7,31 @@ import az.testup.dto.request.BankSubjectRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.*;
 import az.testup.enums.AuditAction;
+import az.testup.enums.Difficulty;
+import az.testup.enums.QuestionType;
 import az.testup.enums.Role;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.BankQuestionRepository;
 import az.testup.repository.BankSubjectRepository;
+import az.testup.repository.ExamSubjectRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -26,6 +40,7 @@ public class BankService {
 
     private final BankSubjectRepository subjectRepository;
     private final BankQuestionRepository questionRepository;
+    private final ExamSubjectRepository examSubjectRepository;
     private final AuditLogService auditLogService;
 
     // ─── Subjects ────────────────────────────────────────────────────────────
@@ -34,7 +49,6 @@ public class BankService {
     public List<BankSubjectResponse> getSubjectsForUser(User user) {
         List<BankSubject> own = subjectRepository.findByOwnerIdOrderByCreatedAtDesc(user.getId());
 
-        // Global (admin-created) subjects that the user doesn't already own
         List<BankSubject> global = subjectRepository.findByIsGlobalTrueOrderByCreatedAtDesc()
                 .stream()
                 .filter(g -> !g.getOwner().getId().equals(user.getId()))
@@ -82,19 +96,119 @@ public class BankService {
                 "BANK_SUBJECT", name, null);
     }
 
-    // ─── Questions ───────────────────────────────────────────────────────────
+    // ─── Questions: list / filter / page / sort ──────────────────────────────
 
     @Transactional(readOnly = true)
     public List<BankQuestionResponse> getQuestions(Long subjectId, User user) {
         BankSubject subject = subjectRepository.findById(subjectId)
                 .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
-        // Access: own subject OR global
         if (!subject.getOwner().getId().equals(user.getId()) && !subject.getIsGlobal()) {
             throw new BadRequestException("Bu fənnə giriş icazəniz yoxdur");
         }
         return questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(subjectId)
                 .stream().map(this::mapQuestion).collect(Collectors.toList());
     }
+
+    /**
+     * Filtered/sorted paginated questions.
+     *
+     * @param sort one of: order, newest, oldest, difficulty_asc, difficulty_desc, topic, points_desc, points_asc
+     */
+    @Transactional(readOnly = true)
+    public Page<BankQuestionResponse> getQuestionsFiltered(
+            Long subjectId, User user,
+            String search, String topic, Difficulty difficulty,
+            QuestionType type, String gradeLevel, Set<String> tags,
+            String sort, int page, int size) {
+
+        BankSubject subject = subjectRepository.findById(subjectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
+        if (!subject.getOwner().getId().equals(user.getId()) && !subject.getIsGlobal()) {
+            throw new BadRequestException("Bu fənnə giriş icazəniz yoxdur");
+        }
+
+        List<BankQuestion> all = questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(subjectId);
+
+        // Filter
+        String q = search == null ? null : search.trim().toLowerCase(Locale.ROOT);
+        List<BankQuestion> filtered = all.stream().filter(bq -> {
+            if (topic != null && !topic.isBlank() && !topic.equalsIgnoreCase(bq.getTopic())) return false;
+            if (difficulty != null && bq.getDifficulty() != difficulty) return false;
+            if (type != null && bq.getQuestionType() != type) return false;
+            if (gradeLevel != null && !gradeLevel.isBlank() && !gradeLevel.equalsIgnoreCase(bq.getGradeLevel())) return false;
+            if (tags != null && !tags.isEmpty()) {
+                Set<String> qt = bq.getTags() == null ? Set.of() : bq.getTags();
+                if (qt.stream().noneMatch(tags::contains)) return false;
+            }
+            if (q != null && !q.isEmpty()) {
+                if (matches(bq.getContent(), q)) return true;
+                if (matches(bq.getCorrectAnswer(), q)) return true;
+                if (bq.getOptions() != null
+                        && bq.getOptions().stream().anyMatch(o -> matches(o.getContent(), q))) return true;
+                if (bq.getMatchingPairs() != null
+                        && bq.getMatchingPairs().stream().anyMatch(mp ->
+                                matches(mp.getLeftItem(), q) || matches(mp.getRightItem(), q))) return true;
+                return false;
+            }
+            return true;
+        }).collect(Collectors.toList());
+
+        // Sort
+        Comparator<BankQuestion> cmp = sortComparator(sort);
+        filtered.sort(cmp);
+
+        // Page
+        int total = filtered.size();
+        int from = Math.min(page * size, total);
+        int to = Math.min(from + size, total);
+        List<BankQuestionResponse> slice = filtered.subList(from, to)
+                .stream().map(this::mapQuestion).toList();
+        return new PageImpl<>(slice, PageRequest.of(page, size), total);
+    }
+
+    private boolean matches(String value, String q) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(q);
+    }
+
+    private Comparator<BankQuestion> sortComparator(String sort) {
+        Comparator<BankQuestion> byOrder = Comparator
+                .comparing(BankQuestion::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(BankQuestion::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()));
+        if (sort == null) return byOrder;
+        return switch (sort) {
+            case "newest" -> Comparator.comparing(BankQuestion::getCreatedAt,
+                    Comparator.nullsLast(Comparator.reverseOrder()));
+            case "oldest" -> Comparator.comparing(BankQuestion::getCreatedAt,
+                    Comparator.nullsLast(Comparator.naturalOrder()));
+            case "difficulty_asc" -> Comparator.comparing(
+                    (BankQuestion b) -> difficultyWeight(b.getDifficulty()))
+                    .thenComparing(byOrder);
+            case "difficulty_desc" -> Comparator.comparing(
+                    (BankQuestion b) -> -difficultyWeight(b.getDifficulty()))
+                    .thenComparing(byOrder);
+            case "topic" -> Comparator.comparing(
+                    (BankQuestion b) -> b.getTopic() == null ? "~" : b.getTopic().toLowerCase(Locale.ROOT))
+                    .thenComparing(byOrder);
+            case "points_desc" -> Comparator.comparing(
+                    BankQuestion::getPoints, Comparator.nullsLast(Comparator.reverseOrder()))
+                    .thenComparing(byOrder);
+            case "points_asc" -> Comparator.comparing(
+                    BankQuestion::getPoints, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(byOrder);
+            default -> byOrder;
+        };
+    }
+
+    private int difficultyWeight(Difficulty d) {
+        if (d == null) return 99;
+        return switch (d) {
+            case EASY -> 1;
+            case MEDIUM -> 2;
+            case HARD -> 3;
+        };
+    }
+
+    // ─── Questions: CRUD ─────────────────────────────────────────────────────
 
     @Transactional
     public BankQuestionResponse createQuestion(User user, BankQuestionRequest req) {
@@ -110,8 +224,10 @@ public class BankService {
                 .points(req.getPoints() != null ? req.getPoints() : 1.0)
                 .orderIndex(req.getOrderIndex() != null ? req.getOrderIndex() : nextOrder)
                 .correctAnswer(req.getCorrectAnswer())
-                .topic(req.getTopic())
+                .topic(normalizeText(req.getTopic()))
                 .difficulty(req.getDifficulty())
+                .gradeLevel(normalizeText(req.getGradeLevel()))
+                .tags(normalizeTags(req.getTags()))
                 .subject(subject)
                 .build();
 
@@ -136,8 +252,13 @@ public class BankService {
         q.setPoints(req.getPoints() != null ? req.getPoints() : 1.0);
         if (req.getOrderIndex() != null) q.setOrderIndex(req.getOrderIndex());
         q.setCorrectAnswer(req.getCorrectAnswer());
-        q.setTopic(req.getTopic());
+        q.setTopic(normalizeText(req.getTopic()));
         q.setDifficulty(req.getDifficulty());
+        q.setGradeLevel(normalizeText(req.getGradeLevel()));
+        if (q.getTags() == null) q.setTags(new HashSet<>());
+        q.getTags().clear();
+        Set<String> newTags = normalizeTags(req.getTags());
+        if (newTags != null) q.getTags().addAll(newTags);
 
         q.getOptions().clear();
         applyOptions(q, req.getOptions());
@@ -161,6 +282,124 @@ public class BankService {
                 "BANK_QUESTION", "ID:" + id, "Fənn: " + subjectName);
     }
 
+    @Transactional
+    public int bulkDelete(User user, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        List<BankQuestion> qs = questionRepository.findAllById(ids);
+        int deleted = 0;
+        for (BankQuestion q : qs) {
+            if (q.getSubject().getOwner().getId().equals(user.getId()) || user.getRole() == Role.ADMIN) {
+                questionRepository.delete(q);
+                deleted++;
+            }
+        }
+        if (deleted > 0) {
+            auditLogService.log(AuditAction.BANK_QUESTION_DELETED, user.getEmail(), user.getFullName(),
+                    "BANK_QUESTION", "BULK", "Silinən sual sayı: " + deleted);
+        }
+        return deleted;
+    }
+
+    @Transactional
+    public BankQuestionResponse cloneQuestion(Long id, User user) {
+        BankQuestion src = questionRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı"));
+        checkWriteAccess(src.getSubject(), user);
+
+        int nextOrder = (int) questionRepository.countBySubjectId(src.getSubject().getId());
+        BankQuestion copy = BankQuestion.builder()
+                .content(src.getContent())
+                .attachedImage(src.getAttachedImage())
+                .questionType(src.getQuestionType())
+                .points(src.getPoints())
+                .orderIndex(nextOrder)
+                .correctAnswer(src.getCorrectAnswer())
+                .topic(src.getTopic())
+                .difficulty(src.getDifficulty())
+                .gradeLevel(src.getGradeLevel())
+                .tags(src.getTags() == null ? new HashSet<>() : new HashSet<>(src.getTags()))
+                .subject(src.getSubject())
+                .build();
+        if (src.getOptions() != null) {
+            for (BankOption o : src.getOptions()) {
+                copy.getOptions().add(BankOption.builder()
+                        .content(o.getContent()).isCorrect(o.getIsCorrect())
+                        .orderIndex(o.getOrderIndex()).attachedImage(o.getAttachedImage())
+                        .question(copy).build());
+            }
+        }
+        if (src.getMatchingPairs() != null) {
+            for (BankMatchingPair mp : src.getMatchingPairs()) {
+                copy.getMatchingPairs().add(BankMatchingPair.builder()
+                        .leftItem(mp.getLeftItem()).rightItem(mp.getRightItem())
+                        .orderIndex(mp.getOrderIndex()).question(copy).build());
+            }
+        }
+        BankQuestion saved = questionRepository.save(copy);
+        auditLogService.log(AuditAction.BANK_QUESTION_CREATED, user.getEmail(), user.getFullName(),
+                "BANK_QUESTION", "ID:" + saved.getId(), "Klon mənbə: " + src.getId());
+        return mapQuestion(saved);
+    }
+
+    @Transactional
+    public void reorder(Long subjectId, User user, List<Long> orderedIds) {
+        BankSubject subject = subjectRepository.findById(subjectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
+        checkWriteAccess(subject, user);
+        if (orderedIds == null) return;
+        Map<Long, Integer> orderMap = new HashMap<>();
+        for (int i = 0; i < orderedIds.size(); i++) orderMap.put(orderedIds.get(i), i);
+        List<BankQuestion> qs = questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(subjectId);
+        for (BankQuestion q : qs) {
+            Integer idx = orderMap.get(q.getId());
+            if (idx != null) q.setOrderIndex(idx);
+        }
+        questionRepository.saveAll(qs);
+    }
+
+    // ─── Stats ───────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getStats(Long subjectId, User user) {
+        BankSubject subject = subjectRepository.findById(subjectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
+        if (!subject.getOwner().getId().equals(user.getId()) && !subject.getIsGlobal()) {
+            throw new BadRequestException("Bu fənnə giriş icazəniz yoxdur");
+        }
+        List<BankQuestion> qs = questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(subjectId);
+
+        Map<String, Long> byType = qs.stream()
+                .collect(Collectors.groupingBy(b -> b.getQuestionType().name(), Collectors.counting()));
+        Map<String, Long> byDifficulty = qs.stream()
+                .filter(b -> b.getDifficulty() != null)
+                .collect(Collectors.groupingBy(b -> b.getDifficulty().name(), Collectors.counting()));
+        Map<String, Long> byGrade = qs.stream()
+                .filter(b -> b.getGradeLevel() != null && !b.getGradeLevel().isBlank())
+                .collect(Collectors.groupingBy(BankQuestion::getGradeLevel, Collectors.counting()));
+        long topics = qs.stream()
+                .map(BankQuestion::getTopic)
+                .filter(t -> t != null && !t.isBlank())
+                .distinct().count();
+        Set<String> tagSet = new HashSet<>();
+        qs.forEach(b -> { if (b.getTags() != null) tagSet.addAll(b.getTags()); });
+
+        LocalDateTime lastAdded = qs.stream()
+                .map(BankQuestion::getCreatedAt)
+                .filter(t -> t != null)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("total", qs.size());
+        stats.put("topics", topics);
+        stats.put("tagsCount", tagSet.size());
+        stats.put("byType", byType);
+        stats.put("byDifficulty", byDifficulty);
+        stats.put("byGrade", byGrade);
+        stats.put("lastAddedAt", lastAdded == null ? null : lastAdded.toString());
+        return stats;
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private BankSubject findSubjectOwned(Long id, User user) {
@@ -176,6 +415,20 @@ public class BankService {
         if (!subject.getOwner().getId().equals(user.getId()) && user.getRole() != Role.ADMIN) {
             throw new BadRequestException("Bu əməliyyat üçün icazəniz yoxdur");
         }
+    }
+
+    private String normalizeText(String v) {
+        if (v == null) return null;
+        String t = v.trim();
+        return t.isEmpty() ? null : t;
+    }
+
+    private Set<String> normalizeTags(Set<String> tags) {
+        if (tags == null) return new HashSet<>();
+        return tags.stream()
+                .filter(t -> t != null && !t.trim().isEmpty())
+                .map(t -> t.trim().toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(HashSet::new));
     }
 
     private void applyOptions(BankQuestion q, List<BankOptionRequest> opts) {
@@ -204,12 +457,44 @@ public class BankService {
     }
 
     private BankSubjectResponse mapSubject(BankSubject s) {
-        int count = (int) questionRepository.countBySubjectId(s.getId());
+        // All questions for this subject (small lists; OK for index page).
+        List<BankQuestion> qs = questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(s.getId());
+
+        int easy = 0, medium = 0, hard = 0;
+        Set<String> topicSet = new HashSet<>();
+        LocalDateTime last = null;
+        for (BankQuestion q : qs) {
+            if (q.getDifficulty() != null) {
+                switch (q.getDifficulty()) {
+                    case EASY -> easy++;
+                    case MEDIUM -> medium++;
+                    case HARD -> hard++;
+                }
+            }
+            if (q.getTopic() != null && !q.getTopic().isBlank()) topicSet.add(q.getTopic());
+            if (q.getCreatedAt() != null && (last == null || q.getCreatedAt().isAfter(last))) {
+                last = q.getCreatedAt();
+            }
+        }
+
+        // Subject metadata (icon, color) from matching ExamSubject by name (if exists)
+        String iconEmoji = null;
+        String color = null;
+        var meta = examSubjectRepository.findByName(s.getName()).orElse(null);
+        if (meta != null) {
+            iconEmoji = meta.getIconEmoji();
+            color = meta.getColor();
+        }
+
         return new BankSubjectResponse(
                 s.getId(), s.getName(),
                 s.getOwner().getId(), s.getOwner().getFullName(),
-                s.getIsGlobal(), count,
-                s.getCreatedAt() != null ? s.getCreatedAt().toString() : null
+                s.getIsGlobal(), qs.size(),
+                s.getCreatedAt() != null ? s.getCreatedAt().toString() : null,
+                iconEmoji, color,
+                easy, medium, hard,
+                topicSet.size(),
+                last == null ? null : last.toString()
         );
     }
 
@@ -225,6 +510,8 @@ public class BankService {
                 q.getContent(), q.getAttachedImage(), q.getQuestionType(),
                 q.getPoints(), q.getOrderIndex(), q.getCorrectAnswer(),
                 q.getTopic(), q.getDifficulty(),
+                q.getGradeLevel(),
+                q.getTags() == null ? Set.of() : new HashSet<>(q.getTags()),
                 opts, pairs,
                 q.getCreatedAt() != null ? q.getCreatedAt().toString() : null
         );

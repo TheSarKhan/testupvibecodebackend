@@ -66,7 +66,10 @@ public class UserSubscriptionService {
                 .orElseThrow(() -> new RuntimeException("Plan not found: " + request.getPlanId()));
 
         int months = request.getDurationMonths() != null ? request.getDurationMonths() : 1;
-        long durationDays = request.getDurationDays() != null ? request.getDurationDays() : (long) months * 30;
+        long durationDays = request.getDurationDays() != null && request.getDurationDays() > 0
+                ? request.getDurationDays()
+                : (long) months * 30;
+        if (durationDays <= 0) durationDays = 30; // safety: never create a zero/negative-length sub
         String provider = request.getPaymentProvider() != null ? request.getPaymentProvider() : "MANUAL";
         String txId = request.getTransactionId();
         double amountPaid = request.getAmountPaid() != null ? request.getAmountPaid() : 0.0;
@@ -76,25 +79,25 @@ public class UserSubscriptionService {
         Optional<UserSubscription> currentOpt = userSubscriptionRepository
                 .findActiveSubscriptionByUserIdAndDate(user.getId(), now);
 
-        if (currentOpt.isEmpty()) {
-            return save(user, newPlan, now, now.plusDays(durationDays), provider, txId, amountPaid);
-        }
-
-        UserSubscription current = currentOpt.get();
-
-        if (current.getPlan().getId().equals(newPlan.getId())) {
-            // RENEWAL: same plan — extend end date by durationDays, accumulate amountPaid
+        // RENEWAL: same plan as the currently-active subscription → extend end date
+        if (currentOpt.isPresent() && currentOpt.get().getPlan().getId().equals(newPlan.getId())) {
+            UserSubscription current = currentOpt.get();
             current.setEndDate(current.getEndDate().plusDays(durationDays));
             current.setPaymentProvider(provider);
             current.setTransactionId(txId);
             current.setAmountPaid(current.getAmountPaid() + amountPaid);
-            userSubscriptionRepository.save(current);
-            return userSubscriptionMapper.toResponse(current);
+            return userSubscriptionMapper.toResponse(userSubscriptionRepository.save(current));
         }
 
-        // PLAN SWITCH (any direction): immediate, duration from value wallet
-        current.setActive(false);
-        userSubscriptionRepository.save(current);
+        // NEW SUBSCRIPTION or PLAN SWITCH (any direction):
+        // Bulk-deactivate ALL is_active=true rows for this user FIRST and flush —
+        // this prevents the uq_user_subscriptions_one_active_per_user unique
+        // index from firing when Hibernate flushes the INSERT before the UPDATE.
+        // The bulk @Modifying query is executed and flushed by the persistence
+        // provider before any pending in-memory changes, satisfying the constraint.
+        userSubscriptionRepository.deactivateAllForUser(user.getId());
+        userSubscriptionRepository.flush();
+
         return save(user, newPlan, now, now.plusDays(durationDays), provider, txId, amountPaid);
     }
 
