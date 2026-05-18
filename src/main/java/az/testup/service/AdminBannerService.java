@@ -93,8 +93,13 @@ public class AdminBannerService {
 
     @Transactional
     public void deleteBanner(Long id) {
-        String title = bannerRepository.findById(id).map(Banner::getTitle).orElse("ID:" + id);
-        bannerRepository.deleteById(id);
+        Banner banner = bannerRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Banner tapılmadı"));
+        String title = banner.getTitle();
+        bannerRepository.delete(banner);
+        bannerRepository.flush();
+        // Audit log is a best-effort side-effect; logCurrent already swallows
+        // any failure so the business transaction is never compromised.
         auditLogService.logCurrent(AuditAction.BANNER_DELETED, "BANNER", title, null);
     }
 
