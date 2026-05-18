@@ -20,5 +20,9 @@ public record CollaboratorResponse(
         Instant submittedAt,
         Instant createdAt,
         /** Template sections assigned to this teacher (empty = free mode) */
-        List<CollaboratorSectionInfo> templateSections
+        List<CollaboratorSectionInfo> templateSections,
+        /** Per-question review breakdown of the current draft */
+        Integer pendingCount,
+        Integer approvedCount,
+        Integer rejectedCount
 ) {}

@@ -13,6 +13,7 @@ import az.testup.entity.PaymentOrder;
 import az.testup.entity.StudentSavedExam;
 import az.testup.enums.AuditAction;
 import az.testup.enums.ExamStatus;
+import az.testup.enums.QuestionReviewStatus;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.exception.UnauthorizedException;
@@ -291,6 +292,30 @@ public class ExamService {
             throw new RuntimeException("Bu imtahanı redaktə etmək icazəniz yoxdur");
         }
 
+        // Collab drafts must respect template-section question count caps. Frontend hides
+        // the "Sual əlavə et" button when the count is locked, but nothing stops a teacher
+        // from posting extras via the API directly. Validate per-subject against each
+        // assigned section's declared questionCount before any mutation.
+        if (exam.getCollaborativeParentId() != null
+                && exam.getTemplateSections() != null
+                && !exam.getTemplateSections().isEmpty()
+                && request.getQuestions() != null) {
+            java.util.Map<String, Integer> bySubject = new java.util.HashMap<>();
+            for (az.testup.dto.request.QuestionRequest qReq : request.getQuestions()) {
+                String s = qReq.getSubjectGroup();
+                if (s == null) continue;
+                bySubject.merge(s, 1, Integer::sum);
+            }
+            for (TemplateSection sec : exam.getTemplateSections()) {
+                int actual = bySubject.getOrDefault(sec.getSubjectName(), 0);
+                Integer allowed = sec.getQuestionCount();
+                if (allowed != null && actual > allowed) {
+                    throw new BadRequestException(sec.getSubjectName() + " bölməsində maksimum "
+                            + allowed + " sual ola bilər (siz " + actual + " göndərdiniz)");
+                }
+            }
+        }
+
         exam.setTitle(request.getTitle());
         exam.setDescription(request.getDescription());
         exam.setExplanationVideoUrl(request.getExplanationVideoUrl());
@@ -458,6 +483,12 @@ public class ExamService {
     }
 
     private void updateQuestionFromRequest(Question question, QuestionRequest req) {
+        // Phase 4: collaborative-draft questions that were APPROVED need to revert to
+        // PENDING when their content changes so the admin re-reviews the new version.
+        // Snapshot the question BEFORE mutating, then compare AFTER.
+        boolean wasApproved = question.getReviewStatus() == QuestionReviewStatus.APPROVED;
+        String oldFingerprint = wasApproved ? fingerprintQuestion(question) : null;
+
         String content = req.getContent() != null ? req.getContent() : req.getText();
         question.setContent(content);
         question.setAttachedImage(req.getAttachedImage());
@@ -527,6 +558,57 @@ public class ExamService {
         } else {
             question.getMatchingPairs().clear();
         }
+
+        // Phase 4 tail: if any meaningful field of an APPROVED draft question changed,
+        // demote back to PENDING so the admin re-reviews. orderIndex changes alone do
+        // NOT trigger re-review.
+        if (wasApproved) {
+            String newFingerprint = fingerprintQuestion(question);
+            if (!java.util.Objects.equals(oldFingerprint, newFingerprint)) {
+                question.setReviewStatus(QuestionReviewStatus.PENDING);
+                question.setReviewComment(null);
+            }
+        }
+    }
+
+    /**
+     * Fingerprint a question's reviewable surface — content, attachments, answer key,
+     * options (sorted by orderIndex), matching pairs (sorted). orderIndex itself and
+     * collection ids are intentionally excluded so option-id renumbering on save does
+     * not trip a false "content changed" detection.
+     */
+    private String fingerprintQuestion(Question q) {
+        StringBuilder sb = new StringBuilder(256);
+        sb.append("c=").append(q.getContent()).append('|');
+        sb.append("img=").append(q.getAttachedImage()).append('|');
+        sb.append("ans=").append(q.getCorrectAnswer()).append('|');
+        sb.append("sam=").append(q.getSampleAnswer()).append('|');
+        sb.append("typ=").append(q.getQuestionType()).append('|');
+        sb.append("pts=").append(q.getPoints()).append('|');
+        sb.append("sub=").append(q.getSubjectGroup()).append('|');
+        sb.append("opts=[");
+        if (q.getOptions() != null) {
+            q.getOptions().stream()
+                    .sorted(java.util.Comparator.comparing(
+                            o -> o.getOrderIndex() != null ? o.getOrderIndex() : 0))
+                    .forEach(o -> sb.append('(')
+                            .append(o.getContent()).append(',')
+                            .append(o.getIsCorrect()).append(',')
+                            .append(o.getAttachedImage()).append(')'));
+        }
+        sb.append("]|pairs=[");
+        if (q.getMatchingPairs() != null) {
+            q.getMatchingPairs().stream()
+                    .sorted(java.util.Comparator.comparing(
+                            p -> p.getOrderIndex() != null ? p.getOrderIndex() : 0))
+                    .forEach(p -> sb.append('(')
+                            .append(p.getLeftItem()).append(',')
+                            .append(p.getRightItem()).append(',')
+                            .append(p.getAttachedImageLeft()).append(',')
+                            .append(p.getAttachedImageRight()).append(')'));
+        }
+        sb.append(']');
+        return sb.toString();
     }
 
     private Option mapToOption(OptionRequest oReq, Question question) {
@@ -694,7 +776,18 @@ public class ExamService {
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
-        if (!exam.getTeacher().getId().equals(teacher.getId())) {
+        boolean isAdmin = teacher.getRole() == az.testup.enums.Role.ADMIN;
+
+        // A collaborative draft (exam.collaborativeParentId != null) is a piece of an
+        // admin-owned parent — a section teacher must NOT be able to delete it here. If
+        // it goes, the collaborator entry points to a dangling exam id and the whole
+        // collab exam breaks. Only admins can remove a collab draft (via the parent flow).
+        if (exam.getCollaborativeParentId() != null && !isAdmin) {
+            throw new BadRequestException(
+                    "Bu birgə imtahan draft-ıdır. Silmək üçün admin ilə əlaqə saxlayın.");
+        }
+
+        if (!isAdmin && !exam.getTeacher().getId().equals(teacher.getId())) {
              throw new RuntimeException("Bu əməliyyat üçün icazəniz yoxdur");
         }
 
@@ -828,6 +921,8 @@ public class ExamService {
                 .subjectGroup(q.getSubjectGroup())
                 .options(q.getOptions().stream().map(this::mapToOptionResponse).collect(Collectors.toList()))
                 .matchingPairs(q.getMatchingPairs().stream().map(this::mapToPairResponse).collect(Collectors.toList()))
+                .reviewStatus(q.getReviewStatus())
+                .reviewComment(q.getReviewComment())
                 .build();
     }
 

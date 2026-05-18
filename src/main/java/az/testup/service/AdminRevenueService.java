@@ -61,14 +61,20 @@ public class AdminRevenueService {
 
         List<RevenueStatsResponse.RecentPayment> recent = new ArrayList<>();
         for (PaymentOrder o : paymentOrderRepository.findTop10ByStatusOrderByCreatedAtDesc("PAID")) {
+            // PaymentOrder is either a subscription (plan set) or an exam purchase (exam
+            // set, plan null). Display the relevant title in the "plan" slot so both kinds
+            // surface in the recent-payments feed without an NPE.
+            String label = o.getPlan() != null
+                    ? o.getPlan().getName()
+                    : (o.getExam() != null ? o.getExam().getTitle() : "—");
             recent.add(new RevenueStatsResponse.RecentPayment(
                     o.getOrderId(),
-                    o.getUser().getEmail(),
-                    o.getUser().getFullName(),
-                    o.getPlan().getName(),
+                    o.getUser() != null ? o.getUser().getEmail() : "",
+                    o.getUser() != null ? o.getUser().getFullName() : "",
+                    label,
                     o.getAmount(),
                     o.getDurationDays(),
-                    o.getCreatedAt().toString()
+                    o.getCreatedAt() != null ? o.getCreatedAt().toString() : ""
             ));
         }
 
@@ -131,17 +137,19 @@ public class AdminRevenueService {
 
     private PendingOrderResponse toPendingResponse(PaymentOrder o) {
         boolean isExam = o.getExam() != null;
-        String planName = isExam ? ("İmtahan: " + o.getExam().getTitle()) : o.getPlan().getName();
+        String planName = isExam
+                ? ("İmtahan: " + o.getExam().getTitle())
+                : (o.getPlan() != null ? o.getPlan().getName() : "(silinmiş plan)");
         return new PendingOrderResponse(
                 o.getId(),
                 o.getOrderId(),
-                o.getUser().getEmail(),
-                o.getUser().getFullName(),
+                o.getUser() != null ? o.getUser().getEmail() : "",
+                o.getUser() != null ? o.getUser().getFullName() : "",
                 planName,
                 o.getAmount(),
                 o.getDurationDays(),
                 o.getMonths(),
-                o.getCreatedAt().toString(),
+                o.getCreatedAt() != null ? o.getCreatedAt().toString() : "",
                 isExam
         );
     }

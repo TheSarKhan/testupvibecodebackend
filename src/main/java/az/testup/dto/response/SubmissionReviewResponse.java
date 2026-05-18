@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 @Data
 @Builder
@@ -28,4 +29,12 @@ public class SubmissionReviewResponse {
     private Double templateScorePercent;
     private Double templateTotalScore;
     private Double templateTotalMaxScore;
+    /**
+     * Question IDs the current viewer is allowed to manually grade. Admin / parent exam
+     * owner sees the full set; a collaborative-exam section teacher only sees the ids of
+     * questions whose subjectGroup falls inside their assignment. The frontend hides the
+     * grading panel for any OPEN_MANUAL question whose id is not in this set, so section
+     * teachers never see a "grade" button they would just hit a 401 on.
+     */
+    private Set<Long> gradableQuestionIds;
 }

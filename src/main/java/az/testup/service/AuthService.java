@@ -76,7 +76,9 @@ public class AuthService {
                         .endDate(now.plusMonths(3))
                         .isActive(true)
                         .paymentProvider("GIFT")
-                        .transactionId("WELCOME_GIFT")
+                        // transaction_id has a unique constraint — postfix with user id so
+                        // every gifted subscription gets its own value.
+                        .transactionId("WELCOME_GIFT_" + user.getId())
                         .build();
                 userSubscriptionRepository.save(gift);
                 giftPlanAssigned = true;

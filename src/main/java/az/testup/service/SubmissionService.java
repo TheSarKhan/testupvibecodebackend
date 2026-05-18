@@ -17,6 +17,7 @@ import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.AnswerRepository;
 import az.testup.repository.ExamAccessCodeRepository;
+import az.testup.repository.ExamCollaboratorRepository;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.PaymentOrderRepository;
@@ -57,6 +58,20 @@ public class SubmissionService {
     private final NotificationService notificationService;
     private final AuditLogService auditLogService;
     private final ExamAccessCodeRepository examAccessCodeRepository;
+    private final ExamCollaboratorRepository examCollaboratorRepository;
+
+    /**
+     * For a collaborative exam, returns the section teacher's subjects if {@code user} is a
+     * collaborator on that exam — otherwise null. Used by grading-auth to scope a section
+     * teacher to questions whose subjectGroup falls inside their assigned set.
+     */
+    private java.util.Set<String> findCollabSubjectsFor(Exam exam, User user) {
+        if (exam == null || user == null || !exam.isCollaborative()) return null;
+        return examCollaboratorRepository
+                .findByCollaborativeExamIdAndTeacherId(exam.getId(), user.getId())
+                .map(c -> new java.util.HashSet<>(c.getSubjects()))
+                .orElse(null);
+    }
 
     @Transactional
     public SubmissionResponse startSubmission(String shareLink, StartSubmissionRequest request, User student) {
@@ -574,9 +589,18 @@ public class SubmissionService {
         Submission submission = submissionRepository.findById(submissionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Nəticə tapılmadı"));
 
-        // Verify that the student owns this submission or is viewing their own result
-        if (student != null && submission.getStudent() != null && !submission.getStudent().getId().equals(student.getId())) {
-            throw new UnauthorizedException("Bu nəticəni görməmə icazəniz yoxdur");
+        // Verify that the viewer is: the student themselves, the exam owner / admin, or a
+        // collaborator on the parent exam (so section teachers can open the submission to
+        // grade their own questions).
+        if (student != null && submission.getStudent() != null
+                && !submission.getStudent().getId().equals(student.getId())) {
+            Exam exam = submission.getExam();
+            boolean isAdmin = student.getRole() == az.testup.enums.Role.ADMIN;
+            boolean isOwner = exam.getTeacher() != null && exam.getTeacher().getId().equals(student.getId());
+            boolean isCollab = !isAdmin && !isOwner && findCollabSubjectsFor(exam, student) != null;
+            if (!isAdmin && !isOwner && !isCollab) {
+                throw new UnauthorizedException("Bu nəticəni görməmə icazəniz yoxdur");
+            }
         }
 
         return mapToResponse(submission);
@@ -657,7 +681,10 @@ public class SubmissionService {
 
         Exam exam = submission.getExam();
         boolean isAdmin = teacher.getRole() == az.testup.enums.Role.ADMIN;
-        if (!isAdmin && (exam.getTeacher() == null || !exam.getTeacher().getId().equals(teacher.getId()))) {
+        boolean isOwner = exam.getTeacher() != null && exam.getTeacher().getId().equals(teacher.getId());
+        java.util.Set<String> collabSubjects = isAdmin || isOwner ? null : findCollabSubjectsFor(exam, teacher);
+        boolean isSectionCollab = collabSubjects != null;
+        if (!isAdmin && !isOwner && !isSectionCollab) {
             throw new az.testup.exception.UnauthorizedException("Bu imtahanı yoxlamaq hüququnuz yoxdur");
         }
 
@@ -672,6 +699,15 @@ public class SubmissionService {
 
         if (answer.getQuestion().getQuestionType() != QuestionType.OPEN_MANUAL) {
             throw new BadRequestException("Bu sual tipi manuel yoxlama tələb etmir");
+        }
+
+        // Section teachers may only grade questions inside their assigned subjects.
+        if (isSectionCollab) {
+            String qSubject = answer.getQuestion().getSubjectGroup();
+            if (qSubject == null || !collabSubjects.contains(qSubject)) {
+                throw new az.testup.exception.UnauthorizedException(
+                        "Bu sual sizin bölmənizə aid deyil");
+            }
         }
 
         double fraction = request.getFraction() != null ? request.getFraction() : 0.0;
@@ -1243,8 +1279,13 @@ public class SubmissionService {
         if (submission.getStudent() != null) {
             boolean isStudent = student != null && submission.getStudent().getId().equals(student.getId());
             boolean isTeacher = student != null && submission.getExam().getTeacher().getId().equals(student.getId());
+            boolean isAdmin   = student != null && student.getRole() == az.testup.enums.Role.ADMIN;
+            // Collaborative exam: any assigned section teacher may view the full submission
+            // (they grade only their own questions via the grade-answer endpoint).
+            boolean isSectionCollab = !isStudent && !isTeacher && !isAdmin
+                    && findCollabSubjectsFor(submission.getExam(), student) != null;
 
-            if (!isStudent && !isTeacher) {
+            if (!isStudent && !isTeacher && !isAdmin && !isSectionCollab) {
                 throw new BadRequestException("Bu imtahan nəticəsinə baxmaq hüququnuz yoxdur");
             }
         }
@@ -1340,6 +1381,26 @@ public class SubmissionService {
             reviewTotalMaxScore = reviewStats.stream().filter(s -> s.getSectionMaxScore() != null).mapToDouble(SubjectStatResponse::getSectionMaxScore).sum();
         }
 
+        // Compute the per-viewer gradable-question set so the frontend can hide the
+        // grading panel for questions outside a section teacher's assignment. Admin and
+        // the parent exam owner can grade everything; a collab section teacher can grade
+        // only OPEN_MANUAL questions whose subjectGroup is in their collaborator subjects.
+        java.util.Set<Long> gradable = new java.util.HashSet<>();
+        if (student != null) {
+            boolean isAdmin = student.getRole() == az.testup.enums.Role.ADMIN;
+            boolean isOwner = exam.getTeacher() != null && exam.getTeacher().getId().equals(student.getId());
+            java.util.Set<String> sectionSubjects = (isAdmin || isOwner) ? null : findCollabSubjectsFor(exam, student);
+            for (Question q : allQuestions) {
+                if (q.getQuestionType() != QuestionType.OPEN_MANUAL) continue;
+                if (isAdmin || isOwner) {
+                    gradable.add(q.getId());
+                } else if (sectionSubjects != null && q.getSubjectGroup() != null
+                        && sectionSubjects.contains(q.getSubjectGroup())) {
+                    gradable.add(q.getId());
+                }
+            }
+        }
+
         return SubmissionReviewResponse.builder()
                 .id(submission.getId())
                 .examId(exam.getId())
@@ -1356,6 +1417,7 @@ public class SubmissionService {
                 .templateScorePercent(submission.getTemplateScorePercent())
                 .templateTotalScore(reviewTotalScore)
                 .templateTotalMaxScore(reviewTotalMaxScore)
+                .gradableQuestionIds(gradable)
                 .build();
     }
 

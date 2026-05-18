@@ -39,10 +39,22 @@ public class AdminExamService {
     public AdminExamResponse toggleSitePublished(Long examId) {
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
-        exam.setSitePublished(!exam.isSitePublished());
+        boolean newSitePublished = !exam.isSitePublished();
+        exam.setSitePublished(newSitePublished);
+
+        // Site-publish only flips a flag; the public catalog ALSO filters by status —
+        // exams that are still DRAFT never appear even when sitePublished=true. For
+        // collaborative exams (admin-owned parent), the parent stays DRAFT until someone
+        // explicitly moves it past DRAFT. Auto-promote on first site-publish so admins
+        // don't have to chase a second "publish" button to make the exam visible to
+        // students. Unpublishing leaves status alone — the admin can re-publish later.
+        if (newSitePublished && exam.getStatus() == ExamStatus.DRAFT) {
+            exam.setStatus(ExamStatus.PUBLISHED);
+        }
+
         AdminExamResponse response = toResponse(examRepository.save(exam));
         auditLogService.log(
-                exam.isSitePublished() ? AuditAction.EXAM_SITE_PUBLISHED : AuditAction.EXAM_SITE_UNPUBLISHED,
+                newSitePublished ? AuditAction.EXAM_SITE_PUBLISHED : AuditAction.EXAM_SITE_UNPUBLISHED,
                 "admin", "Admin", "EXAM", exam.getTitle(), null);
         return response;
     }

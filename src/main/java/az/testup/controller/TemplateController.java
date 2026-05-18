@@ -18,11 +18,22 @@ public class TemplateController {
 
     private final TemplateService templateService;
 
+    /**
+     * Returns every active template regardless of legacy templateType. The olimpiada vs
+     * standard distinction has been retired — both kinds are surfaced through this single
+     * endpoint and the editor treats them uniformly via the template's pointGroups +
+     * allowCustomPoints config.
+     */
     @GetMapping
     public ResponseEntity<List<TemplateResponse>> getAllTemplates() {
-        return ResponseEntity.ok(templateService.getTemplatesByType(TemplateType.STANDARD));
+        return ResponseEntity.ok(templateService.getAllTemplates());
     }
 
+    /**
+     * @deprecated Olimpiada-only listing is no longer surfaced in the UI. Kept so older
+     * clients keep working; new code should call {@link #getAllTemplates()} instead.
+     */
+    @Deprecated
     @GetMapping("/olimpiyada")
     public ResponseEntity<List<TemplateResponse>> getOlimpiyadaTemplates() {
         return ResponseEntity.ok(templateService.getTemplatesByType(TemplateType.OLIMPIYADA));

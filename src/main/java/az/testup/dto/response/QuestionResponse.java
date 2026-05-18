@@ -1,5 +1,6 @@
 package az.testup.dto.response;
 
+import az.testup.enums.QuestionReviewStatus;
 import az.testup.enums.QuestionType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -23,4 +24,8 @@ public class QuestionResponse {
     private String subjectGroup;
     private List<OptionResponse> options;
     private List<MatchingPairResponse> matchingPairs;
+    /** Per-question review state inside a collaborative draft (null otherwise). */
+    private QuestionReviewStatus reviewStatus;
+    /** Admin's per-question comment when reviewStatus = REJECTED. */
+    private String reviewComment;
 }

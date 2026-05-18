@@ -5,6 +5,7 @@ import az.testup.dto.request.CreateCollaborativeExamRequest;
 import az.testup.dto.request.RejectDraftRequest;
 import az.testup.dto.response.CollaborativeExamResponse;
 import az.testup.dto.response.CollaboratorResponse;
+import az.testup.dto.response.CollaboratorStatsResponse;
 import az.testup.entity.User;
 import az.testup.repository.UserRepository;
 import az.testup.service.CollaborativeExamService;
@@ -76,10 +77,48 @@ public class CollaborativeExamController {
         return ResponseEntity.ok().build();
     }
 
+    /** Approve a single draft question (hybrid review). */
+    @PostMapping("/api/admin/questions/{questionId}/approve")
+    public ResponseEntity<Void> approveQuestion(@PathVariable Long questionId) {
+        collaborativeExamService.approveQuestion(questionId);
+        return ResponseEntity.ok().build();
+    }
+
+    /** Reject a single draft question with a comment visible to the teacher. */
+    @PostMapping("/api/admin/questions/{questionId}/reject")
+    public ResponseEntity<Void> rejectQuestion(
+            @PathVariable Long questionId,
+            @RequestBody RejectDraftRequest request) {
+        collaborativeExamService.rejectQuestion(questionId, request.comment());
+        return ResponseEntity.ok().build();
+    }
+
+    /** Close a review round; recomputes collaborator status from per-question states. */
+    @PostMapping("/api/admin/collaborators/{id}/finalize")
+    public ResponseEntity<Void> finalizeReview(@PathVariable Long id) {
+        collaborativeExamService.finalizeReview(id);
+        return ResponseEntity.ok().build();
+    }
+
     @GetMapping("/api/admin/collaborative-exams/pending-count")
     public ResponseEntity<Map<String, Long>> getPendingCount() {
         long count = collaborativeExamService.getPendingCount();
         return ResponseEntity.ok(Map.of("count", count));
+    }
+
+    /**
+     * One-click publish: sets sitePublished + status=PUBLISHED + visibility=PUBLIC together.
+     * Use this instead of the regular PUT /exams/{id} or PATCH .../toggle-site-published
+     * for collaborative exams.
+     */
+    @PostMapping("/api/admin/collaborative-exams/{id}/publish")
+    public ResponseEntity<CollaborativeExamResponse> publishCollaborativeExam(@PathVariable Long id) {
+        return ResponseEntity.ok(collaborativeExamService.publishCollaborativeExam(id));
+    }
+
+    @PostMapping("/api/admin/collaborative-exams/{id}/unpublish")
+    public ResponseEntity<CollaborativeExamResponse> unpublishCollaborativeExam(@PathVariable Long id) {
+        return ResponseEntity.ok(collaborativeExamService.unpublishCollaborativeExam(id));
     }
 
     // ─── Teacher endpoints ────────────────────────────────────────────────────
@@ -107,5 +146,17 @@ public class CollaborativeExamController {
         User teacher = resolveUser(userDetails);
         collaborativeExamService.submitDraft(draftExamId, teacher);
         return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Statistics scoped to one collaborator's section. The assigned teacher sees only their
+     * own slice; admins can request stats for any collaborator.
+     */
+    @GetMapping("/api/collaborative-exams/collaborator/{collaboratorId}/stats")
+    public ResponseEntity<CollaboratorStatsResponse> getCollaboratorStats(
+            @PathVariable Long collaboratorId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User requester = resolveUser(userDetails);
+        return ResponseEntity.ok(collaborativeExamService.getCollaboratorStats(collaboratorId, requester));
     }
 }
