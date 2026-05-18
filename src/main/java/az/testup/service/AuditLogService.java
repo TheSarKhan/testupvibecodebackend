@@ -6,8 +6,9 @@ import az.testup.entity.User;
 import az.testup.enums.AuditAction;
 import az.testup.repository.AuditLogRepository;
 import az.testup.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
@@ -23,11 +24,27 @@ import java.util.Map;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AuditLogService {
 
     private final AuditLogRepository repository;
     private final UserRepository userRepository;
+
+    /**
+     * Self-injection (lazy to break the dependency cycle). Required so that
+     * calls to {@link #log} from within {@link #logCurrent} go through the
+     * Spring proxy and the {@code @Transactional(REQUIRES_NEW)} on log()
+     * actually takes effect. Plain {@code this.log(...)} would bypass it.
+     */
+    private final AuditLogService self;
+
+    @Autowired
+    public AuditLogService(AuditLogRepository repository,
+                           UserRepository userRepository,
+                           @Lazy AuditLogService self) {
+        this.repository = repository;
+        this.userRepository = userRepository;
+        this.self = self;
+    }
 
     // Category mapping (action -> category shown in admin UI)
     private static final Map<String, String> CATEGORY;
@@ -130,18 +147,19 @@ public class AuditLogService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void log(AuditAction action, String actorEmail, String actorName,
                     String targetType, String targetName, String details) {
-        try {
-            repository.save(AuditLog.builder()
-                .action(action)
-                .actorEmail(actorEmail)
-                .actorName(actorName)
-                .targetType(targetType)
-                .targetName(targetName)
-                .details(details)
-                .build());
-        } catch (Exception e) {
-            log.warn("Audit log yazılarkən xəta: {}", e.getMessage());
-        }
+        // NOTE: do NOT swallow exceptions here. If we catch them, Hibernate has
+        // already marked the session as rollback-only and Spring will then throw
+        // UnexpectedRollbackException on commit (which leaks back to the
+        // business caller). Letting the exception propagate makes REQUIRES_NEW
+        // roll back its own transaction cleanly and surface the REAL cause.
+        repository.save(AuditLog.builder()
+            .action(action)
+            .actorEmail(actorEmail)
+            .actorName(actorName)
+            .targetType(targetType)
+            .targetName(targetName)
+            .details(details)
+            .build());
     }
 
     // Convenience overload without details
@@ -154,10 +172,10 @@ public class AuditLogService {
      * Log an action using the current SecurityContext to resolve the actor.
      * Falls back to "system" when no authentication is present.
      *
-     * REQUIRES_NEW: see {@link #log} — guarantees that audit-log failures do
-     * not roll back the calling service's transaction.
+     * This method NEVER throws. Audit logging is a side-effect — a failure
+     * here must never break the business action that triggered it. The full
+     * stack trace is logged so the underlying cause is still investigable.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logCurrent(AuditAction action, String targetType, String targetName, String details) {
         String email = "system";
         String name = "system";
@@ -171,7 +189,19 @@ public class AuditLogService {
                         .orElse(finalEmail);
             }
         } catch (Exception ignored) {}
-        log(action, email, name, targetType, targetName, details);
+
+        // Self-injection so the @Transactional(REQUIRES_NEW) on log() actually
+        // fires through the Spring proxy (direct this.log() would bypass it
+        // and run in the caller's transaction — defeating the whole point).
+        try {
+            self.log(action, email, name, targetType, targetName, details);
+        } catch (Exception e) {
+            // Includes UnexpectedRollbackException from the inner commit and
+            // any underlying persistence failure. Keep the stack so a real
+            // bug (e.g. column constraint, missing enum value) is visible.
+            log.warn("Audit log uğursuz oldu (action={}, target={}): {}",
+                    action, targetName, e.toString(), e);
+        }
     }
 
     public void logCurrent(AuditAction action, String targetType, String targetName) {
