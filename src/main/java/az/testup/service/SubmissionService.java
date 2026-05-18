@@ -1401,11 +1401,25 @@ public class SubmissionService {
             }
         }
 
+        // Test taker identity — registered student or guest. The frontend review
+        // header (and statistics preview) needs at least a display name; we
+        // surface email too for teacher context.
+        Long studentId = submission.getStudent() != null ? submission.getStudent().getId() : null;
+        String studentName = submission.getStudent() != null
+                ? submission.getStudent().getFullName()
+                : submission.getGuestName();
+        String studentEmail = submission.getStudent() != null ? submission.getStudent().getEmail() : null;
+        boolean isGuest = submission.getStudent() == null;
+
         return SubmissionReviewResponse.builder()
                 .id(submission.getId())
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
                 .examSubject(exam.getSubjects() != null && !exam.getSubjects().isEmpty() ? exam.getSubjects().get(0) : null)
+                .studentId(studentId)
+                .studentName(studentName)
+                .studentEmail(studentEmail)
+                .isGuest(isGuest)
                 .totalScore(submission.getTotalScore())
                 .maxScore(submission.getMaxScore())
                 .startedAt(submission.getStartedAt())

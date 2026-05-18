@@ -18,6 +18,13 @@ public class SubmissionReviewResponse {
     private Long examId;
     private String examTitle;
     private String examSubject;
+
+    /** Test taker — student account when registered, guest name otherwise. */
+    private Long studentId;
+    private String studentName;
+    private String studentEmail;
+    /** True when the submission came from a guest (no registered account). */
+    private Boolean isGuest;
     private Double totalScore;
     private Double maxScore;
     private Instant startedAt;

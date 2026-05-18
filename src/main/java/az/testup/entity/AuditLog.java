@@ -17,8 +17,15 @@ public class AuditLog {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * Stored as VARCHAR via EnumType.STRING. The explicit columnDefinition
+     * prevents Hibernate from auto-generating a CHECK constraint that becomes
+     * stale every time we add a new value to {@link AuditAction}. Validation
+     * happens at the JVM layer (enum parsing), so a DB-level CHECK only causes
+     * production failures when the enum grows.
+     */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, length = 64, columnDefinition = "varchar(64)")
     private AuditAction action;
 
     /** Who performed the action */
