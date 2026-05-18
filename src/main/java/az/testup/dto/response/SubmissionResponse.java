@@ -17,6 +17,8 @@ public class SubmissionResponse {
     private Long id;
     private Long examId;
     private String examTitle;
+    /** Id of the registered student who owns this submission. Null for guest submissions. */
+    private Long studentId;
     private String studentName;
     private Double totalScore;
     private Double maxScore;

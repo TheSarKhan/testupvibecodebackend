@@ -981,6 +981,7 @@ public class SubmissionService {
                 .id(submission.getId())
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
+                .studentId(submission.getStudent() != null ? submission.getStudent().getId() : null)
                 .studentName(submission.getStudent() != null ? submission.getStudent().getFullName() : submission.getGuestName())
                 .totalScore(submission.getTotalScore())
                 .maxScore(submission.getMaxScore())
