@@ -10,11 +10,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -112,7 +113,21 @@ public class AuditLogService {
         CATEGORY = Map.copyOf(m);
     }
 
-    @Async
+    /**
+     * Persist an audit log entry.
+     *
+     * REQUIRES_NEW propagation: each audit-log write runs in its own transaction,
+     * so a failure here (e.g. constraint violation, DB hiccup) never marks the
+     * caller's transaction as rollback-only. This prevents the
+     * UnexpectedRollbackException trap where the business action succeeds but
+     * a swallowed audit-log error still poisons the outer Hibernate session.
+     *
+     * Note: @Async is intentionally NOT used here. Self-invocation from
+     * {@link #logCurrent} bypasses the proxy, so @Async would silently no-op
+     * and (worse) couple the call to the parent transaction. REQUIRES_NEW is
+     * the deliberate, reliable choice.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void log(AuditAction action, String actorEmail, String actorName,
                     String targetType, String targetName, String details) {
         try {
@@ -138,7 +153,11 @@ public class AuditLogService {
     /**
      * Log an action using the current SecurityContext to resolve the actor.
      * Falls back to "system" when no authentication is present.
+     *
+     * REQUIRES_NEW: see {@link #log} — guarantees that audit-log failures do
+     * not roll back the calling service's transaction.
      */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logCurrent(AuditAction action, String targetType, String targetName, String details) {
         String email = "system";
         String name = "system";
