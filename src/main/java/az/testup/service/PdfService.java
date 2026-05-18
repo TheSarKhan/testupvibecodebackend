@@ -121,8 +121,14 @@ public class PdfService {
             // Question Content
             Paragraph qPara = new Paragraph();
             if (contentBlank && hasImage) {
-                // Image-only question: tight number label, no trailing gap
+                // Image-only question: tight number label, no trailing gap.
+                // iText otherwise gives the label paragraph the full
+                // font.leading (≈ 1.5× font size) of vertical space, which
+                // looks like a large hole between "5." and the image. Shrink
+                // the leading to the font size itself so the label hugs the
+                // image directly below.
                 qPara.add(new Chunk((i + 1) + ".", qFont));
+                qPara.setLeading(qFont.getSize() + 1f);
                 qPara.setSpacingBefore(15f);
                 qPara.setSpacingAfter(0f);
             } else {
@@ -535,7 +541,11 @@ public class PdfService {
                 float percentage = (maxWidth / img.getPlainWidth()) * 100;
                 img.scalePercent(percentage);
             }
-            img.setSpacingBefore(tight ? 2f : 5f);
+            // For image-only questions the label paragraph above already
+            // collapses to a single line — start the image flush against it
+            // (zero spacingBefore) so the number sits right on top of the
+            // picture instead of floating in empty space.
+            img.setSpacingBefore(tight ? 0f : 5f);
             img.setSpacingAfter(5f);
             document.add(img);
         } catch (Exception e) {

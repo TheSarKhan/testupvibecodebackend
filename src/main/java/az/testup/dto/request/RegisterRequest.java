@@ -3,7 +3,6 @@ package az.testup.dto.request;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -22,7 +21,7 @@ public class RegisterRequest {
     private String password;
 
     @NotBlank(message = "Telefon nömrəsi boş ola bilməz")
-    @Pattern(regexp = "^\\+?[0-9]{7,15}$", message = "Düzgün telefon nömrəsi daxil edin")
+    @Size(max = 20, message = "Telefon nömrəsi 20 simvoldan uzun ola bilməz")
     private String phoneNumber;
 
     @NotBlank(message = "Rol boş ola bilməz")

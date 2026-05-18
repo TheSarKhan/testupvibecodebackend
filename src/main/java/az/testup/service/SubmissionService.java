@@ -82,10 +82,9 @@ public class SubmissionService {
             throw new BadRequestException("Bu imtahan hazırda bağlıdır. Müəllimlə əlaqə saxlayın.");
         }
 
-        // Teachers and admins cannot take exams
-        if (student != null && (student.getRole() == Role.TEACHER || student.getRole() == Role.ADMIN)) {
-            throw new BadRequestException("Müəllimlər və adminlər imtahan işləyə bilməz.");
-        }
+        // (Removed previous block that blocked teachers and admins from taking
+        // exams. The product now allows any account to start a submission so
+        // teachers can self-test exams end-to-end before publishing.)
 
         if (exam.getVisibility() == ExamVisibility.PRIVATE) {
             if (request.getAccessCode() == null || request.getAccessCode().isBlank()) {
