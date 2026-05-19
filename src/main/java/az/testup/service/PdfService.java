@@ -605,14 +605,24 @@ public class PdfService {
     private void renderPassageHeader(Document document, Passage passage, Font qFont, Font oFont, Font metaFont) {
         try {
             boolean isText = passage.getPassageType() == PassageType.TEXT;
-            String title = passage.getTitle();
-            if (title == null || title.isBlank()) {
-                title = isText ? "Mətn parçası" : "Dinləmə mətni";
-            }
+            // Always show a TYPE label first ("MƏTN PARÇASI" / "DİNLƏMƏ MƏTNİ")
+            // so the two passage kinds are visually distinct even when the
+            // teacher leaves the optional title blank. Previously both fell
+            // back to a generic "Mətn parçası"/"Dinləmə mətni" title and the
+            // student couldn't tell whether the audio task was actually a
+            // reading task by accident.
+            String typeLabel = isText ? "MƏTN PARÇASI" : "DİNLƏMƏ MƏTNİ";
+            String customTitle = (passage.getTitle() != null && !passage.getTitle().isBlank())
+                    ? passage.getTitle().trim() : null;
+
             Paragraph header = new Paragraph();
-            header.add(new Chunk(title, qFont));
             header.setSpacingBefore(18f);
             header.setSpacingAfter(4f);
+            header.add(new Chunk(typeLabel, derivedFont(metaFont, true, false)));
+            if (customTitle != null) {
+                header.add(new Chunk("  ·  ", metaFont));
+                header.add(new Chunk(customTitle, qFont));
+            }
             document.add(header);
 
             if (isText) {
@@ -627,8 +637,10 @@ public class PdfService {
                     addImageToDocument(document, passage.getAttachedImage());
                 }
             } else {
+                // LISTENING: PDF can't play audio. Make the constraint obvious
+                // so the student doesn't expect text here.
                 Paragraph note = new Paragraph(
-                        "[Dinləmə tapşırığı — audio onlayn imtahan versiyasında mövcuddur.]",
+                        "🎧 Bu dinləmə tapşırığıdır — audio yalnız onlayn imtahan versiyasında səslənir.",
                         metaFont
                 );
                 note.setSpacingAfter(4f);

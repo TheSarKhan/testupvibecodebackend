@@ -145,9 +145,26 @@ public class GeminiService {
             return "STİL: Yalnız təsdiqlənmiş, ümumi qəbul olunan tarixi faktlardan istifadə et. Mübahisəli interpretasiyalardan qaç. " +
                    "Tarix (il/əsr), şəxsiyyət və hadisə adlarının yazılışı düzgün olsun.";
         }
+        // Azərbaycan dili is its own discipline (grammar / orthography /
+        // syntax / lexicology). We have to be loud about NOT generating
+        // literature or art-history questions when the teacher picks it,
+        // because the model otherwise drifts into Nizami / Füzuli / musiqi
+        // factoids that don't belong on a language test.
+        if (subjectName != null && subjectName.toLowerCase().contains("azərbaycan dili")) {
+            return "STİL: YALNIZ Azərbaycan dili (qrammatika / orfoqrafiya / sintaksis / leksikologiya / morfologiya / fonetika) sualları yarat. " +
+                   "QADAĞAN olunan mövzular: ƏDƏBİYYAT (yazıçı, şair, əsər təhlili, ədəbi cərəyan), musiqi, incəsənət, tarix faktları, coğrafiya. " +
+                   "Bu kateqoriyalardan birini sual mətninə qarışdırma. Hər sual qrammatik və ya leksik qaydaya əsaslansın " +
+                   "(məs: söz növləri, hal şəkilçiləri, vurğu, durğu işarələri, sinonim/antonim, etimologiya, cümlə üzvləri). " +
+                   "Cümlələr təbii və müasir Azərbaycan dilində olsun.";
+        }
+        if (subjectName != null && subjectName.toLowerCase().contains("ədəbiyyat")) {
+            return "STİL: Ədəbiyyat sualı yarat — yazıçı, əsər, ədəbi cərəyan, üslub, məna və təhlil. " +
+                   "Təkcə \"kim yazıb\" deyil, məna və üslub təhlilinə də toxun. " +
+                   "Qrammatik suallardan və başqa fənn mövzularından qaç.";
+        }
         if (isLanguageSubject(subjectName)) {
-            return "STİL: Qrammatik və leksik suallarda kontekst aydın olsun. Cümlələr təbii və müasir Azərbaycan dilində olsun. " +
-                   "Ədəbiyyat sualları üçün təkcə \"kim yazıb\" deyil, məna, üslub, təhlilə də toxun.";
+            return "STİL: Qrammatik və leksik suallarda kontekst aydın olsun. Cümlələr təbii və müasir dildə olsun. " +
+                   "Yalnız seçilən dilə aid sualları yarat — başqa fənn mövzularını qarışdırma.";
         }
         return "STİL: Sual aydın, birmənalı və konkret olsun. Sual mətnində cavaba işarə olmasın.";
     }
@@ -453,6 +470,22 @@ public class GeminiService {
                 // correctAnswer (OPEN_AUTO / FILL_IN_THE_BLANK)
                 if (item.containsKey("correctAnswer")) {
                     q.setCorrectAnswer((String) item.get("correctAnswer"));
+                }
+
+                // Strict guard for the open question families: the AI is
+                // explicitly told to emit `correctAnswer`, but it sometimes
+                // omits it for FILL_IN_THE_BLANK and leaves the teacher with
+                // a question that can't be auto-graded. As a fallback, try
+                // to pluck the blank value from the question text — if the
+                // teacher used the convention `... ___ ...` with the answer
+                // appended after the blank we can't do anything; otherwise
+                // skip the question rather than insert a half-broken one.
+                String questionType = qt;
+                boolean needsAnswer = "OPEN_AUTO".equals(questionType)
+                        || "FILL_IN_THE_BLANK".equals(questionType);
+                if (needsAnswer && (q.getCorrectAnswer() == null || q.getCorrectAnswer().isBlank())) {
+                    log.warn("AI question {} skipped — no correctAnswer for {}", item, questionType);
+                    continue;
                 }
 
                 q.setMatchingPairs(new ArrayList<>());

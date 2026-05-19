@@ -6,6 +6,9 @@ import az.testup.entity.PaymentOrder;
 import az.testup.entity.SubscriptionPlan;
 import az.testup.entity.User;
 import az.testup.entity.UserSubscription;
+import az.testup.exception.BadRequestException;
+import az.testup.exception.ResourceNotFoundException;
+import az.testup.exception.UnauthorizedException;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.PaymentOrderRepository;
@@ -58,18 +61,41 @@ public class PaymentController {
             @AuthenticationPrincipal UserDetails principal,
             @RequestBody Map<String, Object> body) {
 
+        // Wrap the whole flow in a try/catch so any backend hiccup (KapitalBank
+        // unreachable, audit log constraint, …) surfaces a meaningful 4xx
+        // message instead of bubbling up to the generic 500 "Daxili server
+        // xətası baş verdi" toast. The detailed error still lands in the
+        // server log via the global handler if we re-throw a specific type.
+        try {
         if (principal == null) {
             return ResponseEntity.status(401).body(Map.of("message", "Giriş tələb olunur"));
         }
 
-        Long planId = Long.valueOf(body.get("planId").toString());
-        int months = body.containsKey("months") ? Integer.parseInt(body.get("months").toString()) : 1;
+        if (body == null || body.get("planId") == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Plan seçimi tələb olunur"));
+        }
+        Long planId;
+        try {
+            planId = Long.valueOf(body.get("planId").toString());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Plan id-si yanlışdır"));
+        }
+        int months = body.containsKey("months") && body.get("months") != null
+                ? Integer.parseInt(body.get("months").toString())
+                : 1;
+        if (months <= 0 || months > 24) months = 1;
 
         User user = userRepository.findByEmail(principal.getUsername())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElse(null);
+        if (user == null) {
+            return ResponseEntity.status(401).body(Map.of("message", "Hesab tapılmadı, yenidən daxil olun"));
+        }
 
         SubscriptionPlan plan = subscriptionPlanRepository.findById(planId)
-                .orElseThrow(() -> new RuntimeException("Plan not found"));
+                .orElse(null);
+        if (plan == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Plan tapılmadı"));
+        }
 
         // Defensive null guards: SubscriptionPlan.price is a boxed Double in
         // the entity and older rows can be null. Without these guards any
@@ -186,6 +212,19 @@ public class PaymentController {
                 "durationDays", durationDays,
                 "months", months
         ));
+        } catch (BadRequestException | ResourceNotFoundException | UnauthorizedException e) {
+            // Re-throw domain exceptions so the global handler turns them
+            // into a proper 4xx with the original message.
+            throw e;
+        } catch (Exception e) {
+            // KapitalBank, audit log, DB hiccup — surface the cause to the
+            // user as a 400 rather than letting it become "Daxili server
+            // xətası baş verdi" with no actionable info.
+            log.error("Payment initiate failed", e);
+            String msg = e.getMessage();
+            if (msg == null || msg.isBlank()) msg = "Ödəniş başladıla bilmədi, yenidən cəhd edin";
+            return ResponseEntity.badRequest().body(Map.of("message", msg));
+        }
     }
 
     @PostMapping("/verify")
