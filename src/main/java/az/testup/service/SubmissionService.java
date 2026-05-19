@@ -82,9 +82,22 @@ public class SubmissionService {
             throw new BadRequestException("Bu imtahan hazırda bağlıdır. Müəllimlə əlaqə saxlayın.");
         }
 
-        // (Removed previous block that blocked teachers and admins from taking
-        // exams. The product now allows any account to start a submission so
-        // teachers can self-test exams end-to-end before publishing.)
+        // PRIVATE (coded) exams are only meant for students: one-time access
+        // codes are issued by the owning teacher to specific students, and a
+        // foreign teacher joining would burn a code that was meant for the
+        // student it was sent to. The exam's OWN teacher can still preview
+        // the exam from the editor — they don't go through this flow. Free
+        // (PUBLIC) exams stay open for everyone (teachers, admins, students)
+        // so authors can still self-test their public exams end-to-end.
+        if (exam.getVisibility() == ExamVisibility.PRIVATE
+                && student != null
+                && (student.getRole() == Role.TEACHER || student.getRole() == Role.ADMIN)) {
+            boolean isOwner = exam.getTeacher() != null
+                    && exam.getTeacher().getId().equals(student.getId());
+            if (!isOwner) {
+                throw new BadRequestException("Kodlu imtahanlara yalnız tələbələr qoşula bilər.");
+            }
+        }
 
         if (exam.getVisibility() == ExamVisibility.PRIVATE) {
             if (request.getAccessCode() == null || request.getAccessCode().isBlank()) {
