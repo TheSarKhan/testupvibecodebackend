@@ -7,8 +7,11 @@ import az.testup.enums.QuestionType;
 import com.lowagie.text.*;
 import com.lowagie.text.Font;
 import com.lowagie.text.Image;
+import com.lowagie.text.Rectangle;
 import com.lowagie.text.pdf.BaseFont;
 import com.lowagie.text.pdf.PdfContentByte;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 import com.lowagie.text.pdf.draw.LineSeparator;
 import lombok.RequiredArgsConstructor;
@@ -118,30 +121,52 @@ public class PdfService {
             boolean contentBlank = isContentEffectivelyEmpty(q.getContent());
             boolean hasImage = q.getAttachedImage() != null && !q.getAttachedImage().trim().isEmpty();
 
-            // Question Content
-            Paragraph qPara = new Paragraph();
+            // Image-only question: render the number and image inside a
+            // single-cell table with `setKeepTogether(true)`. This prevents
+            // iText from page-breaking after the "5." line and pushing the
+            // image to the next page (which produced a huge visual gap), and
+            // also keeps padding tight so the number sits flush above the
+            // image with no surrounding whitespace.
             if (contentBlank && hasImage) {
-                // Image-only question: tight number label, no trailing gap.
-                // iText otherwise gives the label paragraph the full
-                // font.leading (≈ 1.5× font size) of vertical space, which
-                // looks like a large hole between "5." and the image. Shrink
-                // the leading to the font size itself so the label hugs the
-                // image directly below.
-                qPara.add(new Chunk((i + 1) + ".", qFont));
-                qPara.setLeading(qFont.getSize() + 1f);
-                qPara.setSpacingBefore(15f);
-                qPara.setSpacingAfter(0f);
+                PdfPTable tightBlock = new PdfPTable(1);
+                tightBlock.setWidthPercentage(100);
+                tightBlock.setSpacingBefore(15f);
+                tightBlock.setSpacingAfter(5f);
+                tightBlock.setKeepTogether(true);
+
+                PdfPCell numberCell = new PdfPCell(new Phrase((i + 1) + ".", qFont));
+                numberCell.setBorder(Rectangle.NO_BORDER);
+                numberCell.setPaddingTop(0f);
+                numberCell.setPaddingBottom(0f);
+                numberCell.setPaddingLeft(0f);
+                tightBlock.addCell(numberCell);
+
+                try {
+                    Image inlineImg = loadAndScaleImage(q.getAttachedImage());
+                    if (inlineImg != null) {
+                        PdfPCell imgCell = new PdfPCell();
+                        imgCell.setBorder(Rectangle.NO_BORDER);
+                        imgCell.setPaddingTop(0f);
+                        imgCell.setPaddingBottom(0f);
+                        imgCell.setPaddingLeft(0f);
+                        imgCell.addElement(inlineImg);
+                        tightBlock.addCell(imgCell);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not embed image for image-only question", e);
+                }
+                document.add(tightBlock);
             } else {
+                Paragraph qPara = new Paragraph();
                 qPara.add(new Chunk((i + 1) + ". ", qFont));
                 addRichText(qPara, q.getContent(), qFont);
                 qPara.setSpacingBefore(15f);
                 qPara.setSpacingAfter(5f);
-            }
-            document.add(qPara);
+                document.add(qPara);
 
-            // Question Image
-            if (hasImage) {
-                addImageToDocument(document, q.getAttachedImage(), contentBlank);
+                if (hasImage) {
+                    addImageToDocument(document, q.getAttachedImage(), false);
+                }
             }
 
             // Question Type Specifics
@@ -517,6 +542,31 @@ public class PdfService {
 
     private float maxWidthForCell() {
         return (PageSize.A4.getWidth() - 100) / 2;
+    }
+
+    /**
+     * Load an image (DataURL or remote URL) and scale it to fit the page
+     * width. Returns null if the image couldn't be loaded — the caller
+     * should fall back to a text representation. Extracted from
+     * {@link #addImageToDocument} so cells in tightBlock tables can embed
+     * the same Image instance without going through document.add().
+     */
+    private Image loadAndScaleImage(String imageUrl) throws Exception {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
+        Image img;
+        if (imageUrl.startsWith("data:image")) {
+            String base64Data = imageUrl.substring(imageUrl.indexOf(",") + 1);
+            byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64Data);
+            img = Image.getInstance(decodedBytes);
+        } else {
+            img = Image.getInstance(imageUrl);
+        }
+        float maxWidth = PageSize.A4.getWidth() - 100;
+        if (img.getPlainWidth() > maxWidth) {
+            float percentage = (maxWidth / img.getPlainWidth()) * 100;
+            img.scalePercent(percentage);
+        }
+        return img;
     }
 
     private void addImageToDocument(Document document, String imageUrl) {

@@ -71,11 +71,16 @@ public class PaymentController {
         SubscriptionPlan plan = subscriptionPlanRepository.findById(planId)
                 .orElseThrow(() -> new RuntimeException("Plan not found"));
 
-        if (plan.getPrice() <= 0) {
+        // Defensive null guards: SubscriptionPlan.price is a boxed Double in
+        // the entity and older rows can be null. Without these guards any
+        // arithmetic below NPEs and the controller returns a 500
+        // ("Daxili server xətası") to the user.
+        double newPrice = plan.getPrice() != null ? plan.getPrice() : 0.0;
+        if (newPrice <= 0) {
             return ResponseEntity.badRequest().body(Map.of("message", "Bu plan pulsuz olduğu üçün birbaşa aktivdir"));
         }
 
-        double totalAmount = plan.getPrice() * months;
+        double totalAmount = newPrice * months;
 
         // ── Prorate: monetary value of remaining time on current plan ──
         // We compute the credit in AZN of the unused portion of the active
@@ -90,8 +95,17 @@ public class PaymentController {
                 .findActiveSubscriptionByUserIdAndDate(user.getId(), now);
         if (currentOpt.isPresent()) {
             UserSubscription current = currentOpt.get();
-            boolean isSamePlan = current.getPlan().getId().equals(plan.getId());
-            if (!isSamePlan) {
+            // Same defensive pattern — any of these references can be null on
+            // legacy/manually-assigned subscription rows; bail out of the
+            // credit calculation rather than 500-ing.
+            SubscriptionPlan currentPlan = current.getPlan();
+            double currentPlanPrice = (currentPlan != null && currentPlan.getPrice() != null)
+                    ? currentPlan.getPrice() : 0.0;
+            boolean isSamePlan = currentPlan != null && currentPlan.getId() != null
+                    && currentPlan.getId().equals(plan.getId());
+            if (!isSamePlan
+                    && current.getStartDate() != null
+                    && current.getEndDate() != null) {
                 long totalSeconds = ChronoUnit.SECONDS.between(current.getStartDate(), current.getEndDate());
                 long remainingSeconds = ChronoUnit.SECONDS.between(now, current.getEndDate());
                 if (totalSeconds > 0 && remainingSeconds > 0) {
@@ -99,12 +113,12 @@ public class PaymentController {
                     double remainingDaysExact = remainingSeconds / 86400.0;
                     double oldDailyRate = current.getAmountPaid() > 0
                             ? current.getAmountPaid() / totalDaysExact
-                            : current.getPlan().getPrice() / 30.0;
+                            : currentPlanPrice / 30.0;
                     creditAzn = oldDailyRate * remainingDaysExact;
                     // Cap credit at the listed value of the remaining time on the
                     // current plan — defends against over-credit if amountPaid was
                     // inflated by previous credits (compounding).
-                    double remainingListedValue = (current.getPlan().getPrice() / 30.0) * remainingDaysExact;
+                    double remainingListedValue = (currentPlanPrice / 30.0) * remainingDaysExact;
                     if (creditAzn > remainingListedValue) {
                         creditAzn = remainingListedValue;
                     }
