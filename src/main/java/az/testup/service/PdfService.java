@@ -2,7 +2,9 @@ package az.testup.service;
 
 import az.testup.entity.Exam;
 import az.testup.entity.Option;
+import az.testup.entity.Passage;
 import az.testup.entity.Question;
+import az.testup.enums.PassageType;
 import az.testup.enums.QuestionType;
 import com.lowagie.text.*;
 import com.lowagie.text.Font;
@@ -112,8 +114,57 @@ public class PdfService {
         document.add(new LineSeparator());
         document.add(new Paragraph(" "));
 
-        List<Question> questions = exam.getQuestions();
-        questions.sort(Comparator.comparing(Question::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())));
+        // Build the display-ordered list of items: standalone questions
+        // (q.getPassage() == null) interleaved with passages (each passage
+        // owns its own sub-list of questions). Sorting by orderIndex puts
+        // them in the order the teacher arranged in the editor. Passage
+        // text/audio is then rendered as a header above its questions —
+        // previously the loop only walked exam.getQuestions() and skipped
+        // passage content entirely, so passage-based questions appeared in
+        // the PDF without the prose they were meant to be answered against.
+        List<Question> allQuestions = exam.getQuestions();
+        List<Question> standaloneQuestions = allQuestions.stream()
+                .filter(q -> q.getPassage() == null)
+                .sorted(Comparator.comparing(Question::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        List<Passage> passagesByOrder = exam.getPassages() == null
+                ? List.<Passage>of()
+                : exam.getPassages().stream()
+                    .sorted(Comparator.comparing(Passage::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
+                    .toList();
+
+        // Merge them, sorted by orderIndex. We tag each item with its order so
+        // the final sort is stable for items that share an index.
+        java.util.List<Object> ordered = new java.util.ArrayList<>();
+        ordered.addAll(standaloneQuestions);
+        ordered.addAll(passagesByOrder);
+        ordered.sort((a, b) -> {
+            int oa = (a instanceof Question) ? java.util.Objects.requireNonNullElse(((Question) a).getOrderIndex(), Integer.MAX_VALUE)
+                                              : java.util.Objects.requireNonNullElse(((Passage) a).getOrderIndex(), Integer.MAX_VALUE);
+            int ob = (b instanceof Question) ? java.util.Objects.requireNonNullElse(((Question) b).getOrderIndex(), Integer.MAX_VALUE)
+                                              : java.util.Objects.requireNonNullElse(((Passage) b).getOrderIndex(), Integer.MAX_VALUE);
+            return Integer.compare(oa, ob);
+        });
+
+        // Final flat list of (Question, displayNumber) pairs in render order,
+        // produced by expanding each Passage into its child questions. The
+        // answer-key page later iterates this same flat list so numbering
+        // stays consistent.
+        java.util.List<Question> renderOrder = new java.util.ArrayList<>();
+        for (Object item : ordered) {
+            if (item instanceof Passage p) {
+                renderPassageHeader(document, p, qFont, oFont, metaFont);
+                allQuestions.stream()
+                        .filter(q -> q.getPassage() != null && q.getPassage().getId().equals(p.getId()))
+                        .sorted(Comparator.comparing(Question::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
+                        .forEach(renderOrder::add);
+            } else if (item instanceof Question q) {
+                renderOrder.add(q);
+            }
+        }
+
+        // Use renderOrder as the iteration list for the rest of the method.
+        List<Question> questions = renderOrder;
 
         for (int i = 0; i < questions.size(); i++) {
             Question q = questions.get(i);
@@ -542,6 +593,50 @@ public class PdfService {
 
     private float maxWidthForCell() {
         return (PageSize.A4.getWidth() - 100) / 2;
+    }
+
+    /**
+     * Render the passage header — title, body text (TEXT type) or audio
+     * notice (LISTENING type), and an optional attached image — directly
+     * into the document. The passage block sits above its child questions
+     * so the student has the source material in front of them when
+     * answering.
+     */
+    private void renderPassageHeader(Document document, Passage passage, Font qFont, Font oFont, Font metaFont) {
+        try {
+            boolean isText = passage.getPassageType() == PassageType.TEXT;
+            String title = passage.getTitle();
+            if (title == null || title.isBlank()) {
+                title = isText ? "Mətn parçası" : "Dinləmə mətni";
+            }
+            Paragraph header = new Paragraph();
+            header.add(new Chunk(title, qFont));
+            header.setSpacingBefore(18f);
+            header.setSpacingAfter(4f);
+            document.add(header);
+
+            if (isText) {
+                String body = passage.getTextContent();
+                if (body != null && !body.isBlank()) {
+                    Paragraph bodyPara = new Paragraph();
+                    addRichText(bodyPara, body, oFont);
+                    bodyPara.setSpacingAfter(6f);
+                    document.add(bodyPara);
+                }
+                if (passage.getAttachedImage() != null && !passage.getAttachedImage().isBlank()) {
+                    addImageToDocument(document, passage.getAttachedImage());
+                }
+            } else {
+                Paragraph note = new Paragraph(
+                        "[Dinləmə tapşırığı — audio onlayn imtahan versiyasında mövcuddur.]",
+                        metaFont
+                );
+                note.setSpacingAfter(4f);
+                document.add(note);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to render passage header in PDF", e);
+        }
     }
 
     /**
