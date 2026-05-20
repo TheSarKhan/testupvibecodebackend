@@ -49,4 +49,10 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
         @Param("since") LocalDateTime since,
         Pageable pageable
     );
+
+    @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.action = az.testup.enums.AuditAction.SYSTEM_ERROR AND a.createdAt >= :since")
+    long countSystemErrorsSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT a FROM AuditLog a ORDER BY a.createdAt DESC")
+    List<AuditLog> findRecentActivity(Pageable pageable);
 }

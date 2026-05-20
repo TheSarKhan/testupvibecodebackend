@@ -49,5 +49,30 @@ public interface ExamRepository extends JpaRepository<Exam, Long> {
 
     @Query(value = "SELECT tag, COUNT(DISTINCT exam_id) AS cnt FROM exam_tags GROUP BY tag", nativeQuery = true)
     List<Object[]> tagUsageCounts();
+
+    long countByStatusAndDeletedFalse(ExamStatus status);
+
+    @Query(value = """
+            SELECT e.teacher_id, COUNT(DISTINCT e.id) AS exam_count,
+                   COALESCE((SELECT COUNT(*) FROM submissions s WHERE s.exam_id IN
+                       (SELECT id FROM exams WHERE teacher_id = e.teacher_id AND deleted = false)), 0) AS sub_count
+            FROM exams e
+            WHERE e.deleted = false
+            GROUP BY e.teacher_id
+            ORDER BY exam_count DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Object[]> findTopTeachersByExamCount(@Param("limit") int limit);
+
+    @Query(value = """
+            SELECT e.id, e.title, e.status, u.full_name,
+                   (SELECT COUNT(*) FROM submissions s WHERE s.exam_id = e.id AND s.submitted_at IS NOT NULL) AS sub_count
+            FROM exams e
+            JOIN users u ON e.teacher_id = u.id
+            WHERE e.deleted = false
+            ORDER BY sub_count DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Object[]> findTopExamsBySubmissions(@Param("limit") int limit);
 }
 
