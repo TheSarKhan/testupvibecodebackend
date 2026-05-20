@@ -7,6 +7,7 @@ import az.testup.dto.request.SubmitExamRequest;
 import az.testup.dto.response.*;
 import az.testup.entity.User;
 import az.testup.enums.AuditAction;
+import az.testup.enums.Role;
 import az.testup.exception.UnauthorizedException;
 import az.testup.repository.UserRepository;
 import az.testup.service.AuditLogService;
@@ -41,6 +42,9 @@ public class SubmissionController {
             @Valid @RequestBody StartSubmissionRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
         User student = getCurrentUserOrNull(userDetails);
+        if (student != null && student.getRole() == Role.TEACHER) {
+            throw new UnauthorizedException("Müəllimlər imtahan işləyə bilməz");
+        }
         return ResponseEntity.ok(submissionService.startSubmission(shareLink, request, student));
     }
 
