@@ -4,6 +4,7 @@ import az.testup.entity.UserSubscription;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -37,4 +38,16 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
     @Modifying
     @Query("UPDATE UserSubscription us SET us.isActive = false WHERE us.user.id = :userId AND us.isActive = true")
     int deactivateAllForUser(Long userId);
+
+    @Query("SELECT COUNT(us) FROM UserSubscription us WHERE us.isActive = true AND us.endDate BETWEEN :from AND :to")
+    long countActiveExpiringBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    @Query("SELECT us FROM UserSubscription us WHERE us.isActive = true AND us.endDate BETWEEN :from AND :to ORDER BY us.endDate ASC")
+    List<UserSubscription> findExpiringBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    @Query("SELECT us.plan.name, COUNT(us) FROM UserSubscription us WHERE us.isActive = true AND us.endDate >= current_timestamp GROUP BY us.plan.name")
+    List<Object[]> countActiveByPlan();
+
+    @Query("SELECT COUNT(us) FROM UserSubscription us WHERE us.isActive = false AND us.endDate >= :since")
+    long countCancelledSince(@Param("since") LocalDateTime since);
 }

@@ -51,29 +51,79 @@ public class KapitalBankService {
         return headers;
     }
 
+    // Kapital Bank's HPP rejects descriptions containing non-Latin letters,
+    // em/en dashes, and other Unicode "smart" punctuation with the generic
+    // `ServiceError / ApeError` response — the only signal you get back is
+    // a 500 with that opaque payload. We transliterate Azerbaijani letters
+    // to ASCII, fold smart punctuation to plain ASCII equivalents, drop
+    // control chars, and clamp to 99 characters (the documented limit).
+    static String sanitizeDescription(String raw) {
+        if (raw == null || raw.isBlank()) return "Odenis";
+        String s = raw
+                .replace('Ə', 'E').replace('ə', 'e')
+                .replace('Ş', 'S').replace('ş', 's')
+                .replace('Ç', 'C').replace('ç', 'c')
+                .replace('Ğ', 'G').replace('ğ', 'g')
+                .replace('İ', 'I').replace('ı', 'i')
+                .replace('Ö', 'O').replace('ö', 'o')
+                .replace('Ü', 'U').replace('ü', 'u')
+                .replace('—', '-').replace('–', '-')
+                .replace('“', '"').replace('”', '"')
+                .replace('‘', '\'').replace('’', '\'')
+                .replace('…', '.');
+        // Strip any remaining non-ASCII or control character.
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= 0x20 && c < 0x7F) sb.append(c);
+            else sb.append(' ');
+        }
+        s = sb.toString().replaceAll("\\s+", " ").trim();
+        if (s.length() > 99) s = s.substring(0, 99).trim();
+        return s.isEmpty() ? "Odenis" : s;
+    }
+
     /**
      * Step 1: Create an order at Kapital Bank.
      * Returns orderId, order password, and the HPP redirect URL.
      */
     public CreateInvoiceResult createOrder(double amount, String description) {
+        String safeDescription = sanitizeDescription(description);
         Map<String, Object> orderBody = new HashMap<>();
         orderBody.put("typeRid", "Order_SMS");
-        orderBody.put("amount", String.format("%.2f", amount));
+        orderBody.put("amount", String.format(java.util.Locale.US, "%.2f", amount));
         orderBody.put("currency", "AZN");
         orderBody.put("language", "az");
-        orderBody.put("description", description);
-        orderBody.put("initiationEnvKind", "Browser");
+        orderBody.put("description", safeDescription);
+        // NOTE: do NOT include `initiationEnvKind` on the create-order call.
+        // It belongs to the `setSrcToken` flow (saved-card recurring) and
+        // adding it here makes the HPP reject the request with
+        // ServiceError/ApeError. The original PayriffService (e177a05) did
+        // not send this field; commit 227da51 introduced it by mistake and
+        // broke /order for everyone.
         orderBody.put("hppRedirectUrl", appBaseUrl + "/api/payment/callback");
 
         Map<String, Object> body = Map.of("order", orderBody);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, buildHeaders());
 
-        ResponseEntity<JsonNode> response = restTemplate.exchange(
-                baseUrl() + "/order",
-                HttpMethod.POST,
-                entity,
-                JsonNode.class
-        );
+        ResponseEntity<JsonNode> response;
+        try {
+            response = restTemplate.exchange(
+                    baseUrl() + "/order",
+                    HttpMethod.POST,
+                    entity,
+                    JsonNode.class
+            );
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            // Without this log the only signal of an ApeError is the raw
+            // 500 stack — the request body (description, amount, redirect
+            // URL) stays hidden, so you can't tell if it was sanitisation,
+            // a bad redirect, or genuine sandbox flakiness.
+            log.error("Kapital Bank /order failed: status={} body={} sentDescription={} sentAmount={}",
+                    e.getStatusCode(), e.getResponseBodyAsString(),
+                    safeDescription, orderBody.get("amount"));
+            throw new RuntimeException("Ödəniş provayderi xətası: " + e.getResponseBodyAsString(), e);
+        }
 
         JsonNode json = response.getBody();
         if (json == null || !json.has("order")) {

@@ -512,7 +512,7 @@ public class SubmissionService {
             templateSections = List.of();
         }
         if (templateSections != null && templateSections.size() >= 2) {
-            // Multi-section: weighted average of per-section formula percentages
+            // Multi-section: weighted average of per-section percentages
             double totalWeightedPercent = 0.0;
             int totalQCount = 0;
             for (TemplateSection section : templateSections) {
@@ -520,11 +520,7 @@ public class SubmissionService {
                         .filter(a -> a.getQuestion() != null
                                 && section.getSubjectName().equals(a.getQuestion().getSubjectGroup()))
                         .collect(Collectors.toList());
-                Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
-                Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
-                double rawScore = FormulaEvaluator.evaluate(section.getFormula(), actualVars);
-                double maxRaw = FormulaEvaluator.evaluate(section.getFormula(), maxVars);
-                double pct = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+                double pct = computeSectionPercent(section, sectionAnswers);
                 totalWeightedPercent += pct * section.getQuestionCount();
                 totalQCount += section.getQuestionCount();
             }
@@ -534,13 +530,7 @@ public class SubmissionService {
             try {
                 TemplateSection singleSection = submission.getExam().getTemplateSection();
                 if (singleSection != null) {
-                    String formula = singleSection.getFormula();
-                    int templateQuestionCount = singleSection.getQuestionCount();
-                    Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
-                    Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), templateQuestionCount);
-                    double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
-                    double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
-                    double percent = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+                    double percent = computeSectionPercent(singleSection, submission.getAnswers());
                     submission.setTemplateScorePercent(Math.round(percent * 100.0) / 100.0);
                 }
             } catch (Exception e) {
@@ -747,7 +737,7 @@ public class SubmissionService {
         boolean nowFullyGraded = gradedCount >= totalQuestions;
         submission.setIsFullyGraded(nowFullyGraded);
 
-        // Recalculate formula score for template exams
+        // Recalculate template percent
         List<TemplateSection> gradeSections = submission.getExam().getTemplateSections();
         if (gradeSections != null && gradeSections.size() >= 2) {
             double totalWeightedPercent = 0.0;
@@ -757,24 +747,14 @@ public class SubmissionService {
                         .filter(a -> a.getQuestion() != null
                                 && gradeSection.getSubjectName().equals(a.getQuestion().getSubjectGroup()))
                         .collect(Collectors.toList());
-                Map<String, Double> secActualVars = buildFormulaVariables(sectionAnswers, gradeSection.getQuestionCount());
-                Map<String, Double> secMaxVars = buildMaxFormulaVariables(sectionAnswers, gradeSection.getQuestionCount());
-                double secRaw = FormulaEvaluator.evaluate(gradeSection.getFormula(), secActualVars);
-                double secMaxRaw = FormulaEvaluator.evaluate(gradeSection.getFormula(), secMaxVars);
-                double pct = secMaxRaw > 0 ? Math.max(0.0, secRaw / secMaxRaw * 100.0) : 0.0;
+                double pct = computeSectionPercent(gradeSection, sectionAnswers);
                 totalWeightedPercent += pct * gradeSection.getQuestionCount();
                 totalQCount += gradeSection.getQuestionCount();
             }
             double overall = totalQCount > 0 ? totalWeightedPercent / totalQCount : 0.0;
             submission.setTemplateScorePercent(Math.round(overall * 100.0) / 100.0);
         } else if (submission.getExam().getTemplateSection() != null) {
-            String formula = submission.getExam().getTemplateSection().getFormula();
-            int templateQuestionCount = submission.getExam().getTemplateSection().getQuestionCount();
-            Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), templateQuestionCount);
-            Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), templateQuestionCount);
-            double formulaRawScore = FormulaEvaluator.evaluate(formula, actualVars);
-            double formulaMaxRaw = FormulaEvaluator.evaluate(formula, maxVars);
-            double percent = formulaMaxRaw > 0 ? Math.max(0.0, formulaRawScore / formulaMaxRaw * 100.0) : 0.0;
+            double percent = computeSectionPercent(submission.getExam().getTemplateSection(), submission.getAnswers());
             submission.setTemplateScorePercent(Math.round(percent * 100.0) / 100.0);
         }
 
@@ -858,6 +838,38 @@ public class SubmissionService {
                 .averageDurationMinutes(avgDurationMins)
                 .topStudents(topList)
                 .build();
+    }
+
+    /**
+     * Computes the percent score for one section. When the section uses
+     * custom per-question points (or has no formula), this returns
+     * earnedPoints / maxPoints. Otherwise the formula is evaluated. The
+     * custom-points branch avoids the trap where a teacher gives Q1=100pts
+     * and Q2=1pt but the formula treats each correct answer as a single
+     * unit ("a = 1").
+     */
+    private double computeSectionPercent(TemplateSection section, List<Answer> sectionAnswers) {
+        String formula = section.getFormula();
+        boolean useFormula = formula != null && !formula.isBlank() && !section.isAllowCustomPoints();
+        if (useFormula) {
+            Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
+            Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
+            double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
+            double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
+            return maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+        }
+        // `Answer` has no `isCorrect` flag — correctness is derived from
+        // `score`. Summing `score` directly also honours partial credit on
+        // OPEN_MANUAL questions, which a strict correct/wrong filter would
+        // round off.
+        double earned = sectionAnswers.stream()
+                .mapToDouble(a -> a.getScore() != null ? a.getScore() : 0.0)
+                .sum();
+        double max = sectionAnswers.stream()
+                .mapToDouble(a -> a.getQuestion() != null && a.getQuestion().getPoints() != null
+                        ? a.getQuestion().getPoints() : 0.0)
+                .sum();
+        return max > 0 ? Math.max(0.0, earned / max * 100.0) : 0.0;
     }
 
     /** Counts answer outcomes per question type for formula evaluation. */

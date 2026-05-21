@@ -32,7 +32,6 @@ public class DataSeeder implements CommandLineRunner {
     private final TemplateSectionRepository sectionRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
-    private final BannerRepository bannerRepository;
     private final TagRepository tagRepository;
     private final ExamRepository examRepository;
     private final PassageRepository passageRepository;
@@ -100,10 +99,9 @@ public class DataSeeder implements CommandLineRunner {
         migrateExamSubjectsToList();
         seedSubjectTopics();
         seedDimTemplate();
-        seedBanners();
         seedTags();
-        // seedOlimpiyadaTemplate();
-        // seedSampleOlimpiyadaExam();
+        seedOlimpiyadaTemplate();
+        seedSampleOlimpiyadaExam();
         seedSampleRiyaziyyatExam();
         seedSampleMultiSubjectExam();
         seedSampleIngilisDiliExam();
@@ -693,94 +691,6 @@ public class DataSeeder implements CommandLineRunner {
         addTypeCount(riyaziyyat, QuestionType.OPEN_MANUAL, 7, 2);
 
         log.info("DİM Buraxılış şablonu uğurla yaradıldı");
-    }
-
-    private void seedBanners() {
-        // ── Müəllim bannerləri ──
-        upsertBanner(
-            "AI ilə sual yaratma — 7 fərqli format",
-            "Mövzu və çətinlik dərəcəsini seçin, qalanını AI etsin. Riyazi simvollar dəstəyi ilə hər fənn üçün hazırdır.",
-            "/planlar", "Planları kəşf et",
-            BannerPosition.HERO, "from-indigo-600 to-purple-600", 0,
-            BannerAudience.TEACHER
-        );
-        upsertBanner(
-            "Sual bazası — bir dəfə yaz, hər dəfə istifadə et",
-            "Suallarınızı fənlər üzrə saxlayın, istənilən imtahana bir kliklə əlavə edin.",
-            "/planlar", "Planlara bax",
-            BannerPosition.INLINE, "from-emerald-500 to-teal-600", 0,
-            BannerAudience.TEACHER
-        );
-        upsertBanner(
-            "Avtomatik qiymətləndirmə və ətraflı statistika",
-            "Hər sual üzrə doğru, yanlış, boş cavab faizlərini qrafiklərlə izləyin. Bütün planlarda mövcuddur.",
-            "/planlar", "Planlara bax",
-            BannerPosition.BOTTOM, "from-orange-500 to-pink-500", 0,
-            BannerAudience.TEACHER
-        );
-
-        // ── Şagird bannerləri ──
-        upsertBanner(
-            "Nəticələrinizi izləyin, zəif tərəflərinizi tapın",
-            "Hər imtahandan sonra ətraflı analiz: doğru, yanlış, boş cavablar fənn üzrə göstərilir.",
-            "/imtahanlarim", "Nəticələrə bax",
-            BannerPosition.HERO, "from-blue-600 to-cyan-500", 0,
-            BannerAudience.STUDENT
-        );
-        upsertBanner(
-            "Yeni imtahanlar sizin üçün hazırdır",
-            "Müəllimləriniz tərəfindən hazırlanmış onlarca imtahana baxın və biliklərinizi yoxlayın.",
-            "/imtahanlar", "İmtahanlara bax",
-            BannerPosition.INLINE, "from-emerald-500 to-teal-600", 0,
-            BannerAudience.STUDENT
-        );
-
-        // ── Loginsiz ziyarətçi bannerləri ──
-        upsertBanner(
-            "Pulsuz başlayın — heç bir ödəniş məlumatı lazım deyil",
-            "30 saniyəyə qeydiyyatdan keçin, müəllim planını aktivləşdirin və ilk imtahanınızı yaradın.",
-            "/qeydiyyat", "İndi qeydiyyatdan keç",
-            BannerPosition.HERO, "from-indigo-600 to-purple-600", 0,
-            BannerAudience.GUEST
-        );
-        upsertBanner(
-            "Testup.az — müəllim və şagirdlər üçün ağıllı imtahan platforması",
-            "AI dəstəyi, avtomatik qiymətləndirmə, ətraflı statistika — hamısı bir yerdə.",
-            "/haqqimizda", "Ətraflı öyrən",
-            BannerPosition.BOTTOM, "from-gray-800 to-gray-900", 0,
-            BannerAudience.GUEST
-        );
-
-        log.info("Bannerlər yoxlanıldı/yeniləndi");
-    }
-
-    private void upsertBanner(String title, String subtitle, String linkUrl, String linkText,
-                               BannerPosition position, String bgGradient, int orderIndex,
-                               BannerAudience targetAudience) {
-        bannerRepository.findAll().stream()
-            .filter(b -> b.getPosition() == position
-                    && b.getOrderIndex() == orderIndex
-                    && b.getTargetAudience() == targetAudience)
-            .findFirst()
-            .ifPresentOrElse(existing -> {
-                existing.setTitle(title);
-                existing.setSubtitle(subtitle);
-                existing.setLinkUrl(linkUrl);
-                existing.setLinkText(linkText);
-                existing.setBgGradient(bgGradient);
-                existing.setActive(true);
-                bannerRepository.save(existing);
-            }, () -> bannerRepository.save(Banner.builder()
-                .title(title)
-                .subtitle(subtitle)
-                .linkUrl(linkUrl)
-                .linkText(linkText)
-                .isActive(true)
-                .position(position)
-                .bgGradient(bgGradient)
-                .orderIndex(orderIndex)
-                .targetAudience(targetAudience)
-                .build()));
     }
 
     @Transactional
