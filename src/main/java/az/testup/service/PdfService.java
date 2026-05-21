@@ -6,6 +6,7 @@ import az.testup.entity.Passage;
 import az.testup.entity.Question;
 import az.testup.enums.PassageType;
 import az.testup.enums.QuestionType;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lowagie.text.*;
 import com.lowagie.text.Font;
 import com.lowagie.text.Image;
@@ -35,8 +36,52 @@ import java.util.List;
 @Slf4j
 public class PdfService {
 
-    // Match both $$...$$ (display) and $...$ (inline) — display first to avoid matching single $ in $$
-    private static final java.util.regex.Pattern LATEX_PATTERN = java.util.regex.Pattern.compile("\\$\\$([^$]+)\\$\\$|\\$([^\\n$]+?)\\$");
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /**
+     * Decode the JSON-array form of sampleAnswer into a human-readable comma
+     * list. Each element comes out of Jackson already JSON-unescaped, so
+     * literal backslash pairs (`\\int`) collapse to single `\int` and
+     * downstream LaTeX rendering can actually parse the formula.
+     */
+    private String decodeFillInAnswers(String json) {
+        try {
+            java.util.List<?> parsed = JSON.readValue(json, java.util.List.class);
+            StringBuilder sb = new StringBuilder();
+            for (Object item : parsed) {
+                if (item == null) continue;
+                String s = item.toString();
+                if (s.isEmpty()) continue;
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(s);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            // Malformed JSON — fall back to the naive strip so we don't blank
+            // out the answer cell entirely.
+            return json.replace("[", "").replace("]", "").replace("\"", "").replace(",", ", ");
+        }
+    }
+
+
+    // Three flavours of LaTeX, in priority order:
+    //   group 1 (…): math-node sentinel, injected by
+    //     preprocessMathNodes() so editor-stored <span data-latex="…">
+    //     blocks survive into addLineRichText with their LaTeX intact.
+    //   group 2 ($$…$$): display-style LaTeX from copy-paste / AI imports.
+    //   group 3 ($…$):  inline LaTeX from copy-paste / AI imports.
+    private static final java.util.regex.Pattern LATEX_PATTERN = java.util.regex.Pattern.compile(
+        "([^]+)|\\$\\$([^$]+)\\$\\$|\\$([^\\n$]+?)\\$"
+    );
+
+    // <span ... data-latex="…">…</span> — the editor's canonical math
+    // storage. data-latex holds the raw LaTeX (HTML-attribute encoded);
+    // the span body is KaTeX-rendered HTML we must throw away or it leaks
+    // into the PDF as garbage glyphs.
+    private static final java.util.regex.Pattern MATH_NODE_PATTERN = java.util.regex.Pattern.compile(
+        "<span[^>]*\\bdata-latex\\s*=\\s*\"([^\"]*)\"[^>]*>.*?</span>",
+        java.util.regex.Pattern.DOTALL | java.util.regex.Pattern.CASE_INSENSITIVE
+    );
 
     public byte[] generateExamPdf(Exam exam) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -115,38 +160,22 @@ public class PdfService {
         document.add(new Paragraph(" "));
 
         // Build the display-ordered list of items: standalone questions
-        // (q.getPassage() == null) interleaved with passages (each passage
-        // owns its own sub-list of questions). Sorting by orderIndex puts
-        // them in the order the teacher arranged in the editor. Passage
-        // text/audio is then rendered as a header above its questions —
-        // previously the loop only walked exam.getQuestions() and skipped
-        // passage content entirely, so passage-based questions appeared in
-        // the PDF without the prose they were meant to be answered against.
+        // (q.getPassage() == null) interleaved with ALL passages — TEXT and
+        // LISTENING alike — sorted purely by orderIndex. This matches the
+        // teacher's editor view 1:1; previously LISTENING passages were
+        // force-appended to the end which scrambled exams that intentionally
+        // mixed reading and listening tasks in a specific order.
         List<Question> allQuestions = exam.getQuestions();
         List<Question> standaloneQuestions = allQuestions.stream()
                 .filter(q -> q.getPassage() == null)
-                .sorted(Comparator.comparing(Question::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
         List<Passage> allPassages = exam.getPassages() == null
                 ? List.<Passage>of()
                 : exam.getPassages();
-        List<Passage> textPassages = allPassages.stream()
-                .filter(p -> p.getPassageType() == PassageType.TEXT)
-                .sorted(Comparator.comparing(Passage::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
-                .toList();
-        List<Passage> listeningPassages = allPassages.stream()
-                .filter(p -> p.getPassageType() == PassageType.LISTENING)
-                .sorted(Comparator.comparing(Passage::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
-                .toList();
 
-        // Keep standalone questions and TEXT passages interleaved by orderIndex
-        // (their natural flow), then append all LISTENING passages as a single
-        // block at the end. This prevents the reading and listening sections
-        // from being mixed in the PDF — students/teachers expect reading first,
-        // listening last.
         java.util.List<Object> ordered = new java.util.ArrayList<>();
         ordered.addAll(standaloneQuestions);
-        ordered.addAll(textPassages);
+        ordered.addAll(allPassages);
         ordered.sort((a, b) -> {
             int oa = (a instanceof Question) ? java.util.Objects.requireNonNullElse(((Question) a).getOrderIndex(), Integer.MAX_VALUE)
                                               : java.util.Objects.requireNonNullElse(((Passage) a).getOrderIndex(), Integer.MAX_VALUE);
@@ -154,30 +183,49 @@ public class PdfService {
                                               : java.util.Objects.requireNonNullElse(((Passage) b).getOrderIndex(), Integer.MAX_VALUE);
             return Integer.compare(oa, ob);
         });
-        ordered.addAll(listeningPassages);
 
-        // Final flat list of (Question, displayNumber) pairs in render order,
-        // produced by expanding each Passage into its child questions. The
-        // answer-key page later iterates this same flat list so numbering
-        // stays consistent.
+        // Build a flat render-script: passage entries (header to print) are
+        // followed by their child questions immediately. Previously this loop
+        // also called renderPassageHeader inline, which wrote the headers to
+        // the document EAGERLY — long before the per-question render loop ran.
+        // The effect: all passage headers piled up at the top of the PDF and
+        // every question (passage children + standalones) followed in a flat
+        // list, exactly the bug the user reported. We now record passages as
+        // tasks in renderItems and let the question loop print headers at the
+        // correct moment, right before each passage's first child.
+        java.util.List<Object> renderItems = new java.util.ArrayList<>();
         java.util.List<Question> renderOrder = new java.util.ArrayList<>();
         for (Object item : ordered) {
             if (item instanceof Passage p) {
-                renderPassageHeader(document, p, qFont, oFont, metaFont);
+                renderItems.add(p);
                 allQuestions.stream()
                         .filter(q -> q.getPassage() != null && q.getPassage().getId().equals(p.getId()))
                         .sorted(Comparator.comparing(Question::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
-                        .forEach(renderOrder::add);
+                        .forEach(child -> {
+                            renderItems.add(child);
+                            renderOrder.add(child);
+                        });
             } else if (item instanceof Question q) {
+                renderItems.add(q);
                 renderOrder.add(q);
             }
         }
 
-        // Use renderOrder as the iteration list for the rest of the method.
+        // renderOrder is the flat question list for the answer-key page (which
+        // needs continuous global numbering). renderItems below is what we
+        // iterate to print the question paper itself — passages and their
+        // child questions are interleaved so headers print immediately above
+        // their questions.
         List<Question> questions = renderOrder;
 
-        for (int i = 0; i < questions.size(); i++) {
-            Question q = questions.get(i);
+        int qNum = 0;
+        for (Object renderItem : renderItems) {
+            if (renderItem instanceof Passage pas) {
+                renderPassageHeader(document, pas, qFont, oFont, metaFont);
+                continue;
+            }
+            Question q = (Question) renderItem;
+            int i = qNum++;
 
             boolean contentBlank = isContentEffectivelyEmpty(q.getContent());
             boolean hasImage = q.getAttachedImage() != null && !q.getAttachedImage().trim().isEmpty();
@@ -258,70 +306,33 @@ public class PdfService {
                 field.setSpacingBefore(5f);
                 document.add(field);
             } else if (q.getQuestionType() == QuestionType.MATCHING) {
-                List<az.testup.entity.MatchingPair> pairs = q.getMatchingPairs();
-                
-                // Collect unique left items and right items
-                java.util.List<az.testup.entity.MatchingPair> leftItems = pairs.stream()
-                        .filter(p -> p.getLeftItem() != null || (p.getAttachedImageLeft() != null && !p.getAttachedImageLeft().isEmpty()))
-                        .toList();
-                java.util.List<az.testup.entity.MatchingPair> rightItems = pairs.stream()
-                        .filter(p -> p.getRightItem() != null || (p.getAttachedImageRight() != null && !p.getAttachedImageRight().isEmpty()))
-                        .toList();
-
-                Table matchingTable = new Table(2);
-                matchingTable.setBorder(Table.NO_BORDER);
-                matchingTable.setWidth(100);
-                matchingTable.setPadding(5);
-                
-                int maxRows = Math.max(leftItems.size(), rightItems.size());
-                for (int m = 0; m < maxRows; m++) {
-                    // Left Cell
-                    Cell leftCell = new Cell();
-                    leftCell.setBorder(Cell.NO_BORDER);
-                    if (m < leftItems.size()) {
-                        az.testup.entity.MatchingPair lp = leftItems.get(m);
-                        Paragraph p = new Paragraph();
-                        p.add(new Chunk((m + 1) + ". ", oFont));
-                        addRichText(p, lp.getLeftItem(), oFont);
-                        leftCell.add(p);
-                        if (lp.getAttachedImageLeft() != null && !lp.getAttachedImageLeft().isEmpty()) {
-                            addImageToCell(leftCell, lp.getAttachedImageLeft());
-                        }
-                    }
-                    matchingTable.addCell(leftCell);
-
-                    // Right Cell
-                    Cell rightCell = new Cell();
-                    rightCell.setBorder(Cell.NO_BORDER);
-                    if (m < rightItems.size()) {
-                        az.testup.entity.MatchingPair rp = rightItems.get(m);
-                        Paragraph p = new Paragraph();
-                        p.add(new Chunk((char)('A' + m) + ") ", oFont));
-                        addRichText(p, rp.getRightItem(), oFont);
-                        rightCell.add(p);
-                        if (rp.getAttachedImageRight() != null && !rp.getAttachedImageRight().isEmpty()) {
-                            addImageToCell(rightCell, rp.getAttachedImageRight());
-                        }
-                    }
-                    matchingTable.addCell(rightCell);
-                }
-                document.add(matchingTable);
+                renderMatchingQuestion(document, q, oFont);
             } else if (q.getQuestionType() == QuestionType.FILL_IN_THE_BLANK) {
-
-
-                // For fill-in-the-blank, we often show a list of choices
+                // Choices list (e.g. "Seçimlər: x, y, z") — render every option
+                // individually through addRichText so LaTeX ($x^2$) inside an
+                // option still renders as math, not as raw $ symbols.
                 List<Option> options = q.getOptions();
                 if (options != null && !options.isEmpty()) {
-                    Paragraph choiceHeader = new Paragraph("   Seçimlər: ", metaFont);
-                    StringBuilder sb = new StringBuilder();
+                    Paragraph choiceHeader = new Paragraph();
+                    choiceHeader.add(new Chunk("   Seçimlər: ", derivedFont(metaFont, true, false)));
+                    boolean first = true;
                     for (Option opt : options) {
-                        if (sb.length() > 0) sb.append(", ");
-                        sb.append(opt.getContent());
+                        String optContent = opt.getContent();
+                        if (optContent == null || isContentEffectivelyEmpty(optContent)) continue;
+                        if (!first) choiceHeader.add(new Chunk(", ", oFont));
+                        addRichText(choiceHeader, optContent, oFont);
+                        first = false;
                     }
-                    choiceHeader.add(new Chunk(sb.toString(), oFont));
                     choiceHeader.setSpacingBefore(5f);
                     document.add(choiceHeader);
                 }
+                // Always give the student a blank to write the answer on. The
+                // `___` placeholders inside the question content stay where the
+                // teacher put them (rendered as-is by addRichText above); this
+                // line below is the dedicated answer slot.
+                Paragraph field = new Paragraph("   Cavab: __________________________________________________", oFont);
+                field.setSpacingBefore(5f);
+                document.add(field);
             }
         }
 
@@ -379,11 +390,13 @@ public class PdfService {
                 ans = sb.toString();
             } else if (q.getQuestionType() == QuestionType.FILL_IN_THE_BLANK) {
                 ans = q.getCorrectAnswer() != null ? q.getCorrectAnswer() : q.getSampleAnswer();
+                // sampleAnswer is stored as a JSON array (e.g. ["x^2","$$\\int...$$"]).
+                // Old code stripped [ ] " with naive string replace, which left
+                // JSON-escaped \\ pairs intact — JLaTeXMath then failed to parse
+                // \\int and fell back to printing the whole $$..$$ block as raw
+                // text. Parse the JSON properly so backslashes collapse to one.
                 if (ans != null && ans.startsWith("[")) {
-                     // Try to format JSON array to simple comma separated string
-                     try {
-                         ans = ans.replace("[", "").replace("]", "").replace("\"", "").replace(",", ", ");
-                     } catch (Exception e) {}
+                    ans = decodeFillInAnswers(ans);
                 }
             } else if (isOpen) {
                 String raw = q.getCorrectAnswer() != null ? q.getCorrectAnswer() : q.getSampleAnswer();
@@ -424,11 +437,11 @@ public class PdfService {
             document.add(openHeader);
 
             for (int idx = 0; idx < openAnswers.size(); idx++) {
-                int qNum = openIndices.get(idx)[0];
+                int openQNum = openIndices.get(idx)[0];
                 String answer = openAnswers.get(idx);
 
                 Paragraph item = new Paragraph();
-                item.add(new Chunk(qNum + ". ", qFont));
+                item.add(new Chunk(openQNum + ". ", qFont));
                 addRichText(item, answer, oFont);
                 item.setSpacingAfter(8f);
                 document.add(item);
@@ -463,8 +476,27 @@ public class PdfService {
     private static final java.util.regex.Pattern HTML_TAG_PATTERN =
         java.util.regex.Pattern.compile("(?i)<(/?)\\s*(strong|b|em|i|u|s|strike|del|br)(?:\\s[^>]*)?>|<[^>]+>");
 
+    /**
+     * Replace each `<span data-latex="…">…</span>` block with a sentinel
+     * `<latex>` so the downstream renderer (addLineRichText)
+     * can spot it and emit a JLaTeXMath bitmap. The inner KaTeX-rendered
+     * HTML is discarded — keeping it would just paint mangled glyphs.
+     */
+    private String preprocessMathNodes(String html) {
+        if (html == null || html.indexOf("data-latex") < 0) return html;
+        java.util.regex.Matcher m = MATH_NODE_PATTERN.matcher(html);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String latex = decodeHtmlEntities(m.group(1) == null ? "" : m.group(1));
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement("" + latex + ""));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
     private void addRichText(Paragraph paragraph, String html, Font baseFont) {
         if (html == null) return;
+        html = preprocessMathNodes(html);
         java.util.regex.Matcher m = HTML_TAG_PATTERN.matcher(html);
         int bold = (baseFont.getStyle() & Font.BOLD) != 0 ? 1 : 0;
         int italic = (baseFont.getStyle() & Font.ITALIC) != 0 ? 1 : 0;
@@ -535,9 +567,19 @@ public class PdfService {
                 paragraph.add(styleChunk(new Chunk(plainText, font), font, bold, underline, strike));
             }
 
-            // Group 1: $$...$$ (display), Group 2: $...$ (inline)
-            String latex = matcher.group(1) != null ? matcher.group(1).trim() : (matcher.group(2) != null ? matcher.group(2).trim() : "");
-            boolean isDisplay = matcher.group(1) != null;
+            // Group 1: math-node sentinel (inline), Group 2: $$…$$ (display), Group 3: $…$ (inline)
+            String latex;
+            boolean isDisplay;
+            if (matcher.group(1) != null) {
+                latex = matcher.group(1).trim();
+                isDisplay = false;
+            } else if (matcher.group(2) != null) {
+                latex = matcher.group(2).trim();
+                isDisplay = true;
+            } else {
+                latex = matcher.group(3) != null ? matcher.group(3).trim() : "";
+                isDisplay = false;
+            }
 
             if (!latex.isEmpty()) {
                 try {
@@ -584,25 +626,89 @@ public class PdfService {
         }
     }
 
-    private void addImageToCell(Cell cell, String imageUrl) {
+    /**
+     * Render a MATCHING question as a two-column PdfPTable. The legacy
+     * com.lowagie.text.Table API was used previously but it doesn't lay out
+     * inline LaTeX-image chunks or fitted bitmaps correctly inside cells —
+     * left/right columns collided and $..$ formulas printed as raw $ signs.
+     * PdfPCell delegates layout to ColumnText so addRichText (which can emit
+     * inline image chunks for LaTeX) renders the same way it does in the
+     * body flow.
+     */
+    private void renderMatchingQuestion(Document document, Question q, Font oFont) {
+        List<az.testup.entity.MatchingPair> pairs = q.getMatchingPairs();
+        if (pairs == null || pairs.isEmpty()) return;
+
+        java.util.List<az.testup.entity.MatchingPair> leftItems = pairs.stream()
+                .filter(p -> (p.getLeftItem() != null && !p.getLeftItem().isBlank())
+                        || (p.getAttachedImageLeft() != null && !p.getAttachedImageLeft().isEmpty()))
+                .toList();
+        java.util.List<az.testup.entity.MatchingPair> rightItems = pairs.stream()
+                .filter(p -> (p.getRightItem() != null && !p.getRightItem().isBlank())
+                        || (p.getAttachedImageRight() != null && !p.getAttachedImageRight().isEmpty()))
+                .toList();
+
+        PdfPTable matchingTable = new PdfPTable(2);
         try {
-            Image img;
-            if (imageUrl.startsWith("data:image")) {
-                String base64Data = imageUrl.substring(imageUrl.indexOf(",") + 1);
-                byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64Data);
-                img = Image.getInstance(decodedBytes);
-            } else {
-                img = Image.getInstance(imageUrl);
-            }
-            img.scaleToFit(maxWidthForCell(), 150);
-            cell.add(img);
-        } catch (Exception e) {
-            log.warn("Could not add image to cell", e);
+            matchingTable.setWidthPercentage(95f);
+            matchingTable.setWidths(new float[]{1f, 1f});
+        } catch (Exception ignored) {}
+        matchingTable.setSpacingBefore(8f);
+        matchingTable.setSpacingAfter(8f);
+
+        Font labelFont = derivedFont(oFont, true, false);
+        int maxRows = Math.max(leftItems.size(), rightItems.size());
+        for (int m = 0; m < maxRows; m++) {
+            matchingTable.addCell(buildMatchingCell(
+                    m < leftItems.size() ? leftItems.get(m).getLeftItem() : null,
+                    m < leftItems.size() ? leftItems.get(m).getAttachedImageLeft() : null,
+                    (m + 1) + ". ", labelFont, oFont));
+            matchingTable.addCell(buildMatchingCell(
+                    m < rightItems.size() ? rightItems.get(m).getRightItem() : null,
+                    m < rightItems.size() ? rightItems.get(m).getAttachedImageRight() : null,
+                    ((char) ('A' + m)) + ") ", labelFont, oFont));
         }
+        document.add(matchingTable);
     }
 
-    private float maxWidthForCell() {
-        return (PageSize.A4.getWidth() - 100) / 2;
+    private PdfPCell buildMatchingCell(String content, String imageUrl, String label, Font labelFont, Font oFont) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPadding(6f);
+
+        Paragraph p = new Paragraph();
+        p.add(new Chunk(label, labelFont));
+        if (content != null && !isContentEffectivelyEmpty(content)) {
+            addRichText(p, content, oFont);
+        }
+        cell.addElement(p);
+
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            try {
+                Image img = loadImageForCell(imageUrl);
+                if (img != null) cell.addElement(img);
+            } catch (Exception e) {
+                log.warn("Could not embed matching pair image", e);
+            }
+        }
+        return cell;
+    }
+
+    /** Load + scale an image to fit a half-page-wide PdfPCell. */
+    private Image loadImageForCell(String imageUrl) throws Exception {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
+        Image img;
+        if (imageUrl.startsWith("data:image")) {
+            String base64Data = imageUrl.substring(imageUrl.indexOf(",") + 1);
+            img = Image.getInstance(java.util.Base64.getDecoder().decode(base64Data));
+        } else {
+            img = Image.getInstance(imageUrl);
+        }
+        float maxWidth = (PageSize.A4.getWidth() - 100) * 0.42f;
+        if (img.getPlainWidth() > maxWidth) {
+            img.scalePercent((maxWidth / img.getPlainWidth()) * 100f);
+        }
+        return img;
     }
 
     /**

@@ -2,12 +2,14 @@ server:
   port: 8082
 
 spring:
+  config:
+    import: "optional:dotenv:"
   application:
     name: testup-backend
   datasource:
-    url: ${DB_URL}
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/testup_db}
+    username: ${DB_USERNAME:testup_user}
+    password: ${DB_PASSWORD:Tp8xK2mQ5nL9wRv4}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -25,13 +27,13 @@ spring:
     out-of-order: true
   data:
     redis:
-      host: localhost
-      port: 6380
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
   mail:
-    host: smtp.gmail.com
-    port: 587
-    username: ${MAIL_USERNAME}
-    password: ${MAIL_PASSWORD}
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
@@ -40,21 +42,21 @@ spring:
             enable: true
 
 sendpulse:
-  client-id: ${SENDPULSE_CLIENT_ID}
-  client-secret: ${SENDPULSE_CLIENT_SECRET}
-  from-email: ${SENDPULSE_FROM_EMAIL}
+  client-id: ${SENDPULSE_CLIENT_ID:}
+  client-secret: ${SENDPULSE_CLIENT_SECRET:}
+  from-email: ${SENDPULSE_FROM_EMAIL:info@testup.az}
   from-name: testup.az
 
 jwt:
-  secret: ${JWT_SECRET}
-  access-token-expiration: 86400000
-  refresh-token-expiration: 2592000000
+  secret: ${JWT_SECRET:dGVzdHVwLWF6LXN1cGVyLXNlY3JldC1rZXktZm9yLWp3dC10b2tlbg==}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:86400000}
+  refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:2592000000}
 
 groq:
-  api-key: ${GROQ_API_KEY}
+  api-key: ${GROQ_API_KEY:}
 
 google:
-  client-id: ${GOOGLE_CLIENT_ID}
+  client-id: ${GOOGLE_CLIENT_ID:}
 
 kapitalbank:
   username: ${KAPITALBANK_USERNAME:}
@@ -62,4 +64,4 @@ kapitalbank:
   production: ${KAPITALBANK_PRODUCTION:false}
 
 app:
-  base-url: ${APP_BASE_URL:https://testup.az}
+  base-url: ${APP_BASE_URL:http://localhost:5173}
