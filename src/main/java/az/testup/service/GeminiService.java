@@ -258,10 +258,14 @@ public class GeminiService {
                     - Cümlədə MƏHZ BİR `___` (üç alt xətt) boşluq qoy.
                     - Boşluqdan kənarda sual aydın və tam başa düşülən olsun.
                     - `correctAnswer` yalnız boşluğa düşən söz/rəqəm/ifadə olmalıdır (tam cümlə yox).
-                    - Cavab QISA və birmənalı olsun (1-3 söz, və ya 1 ədəd).""";
+                    - Cavab QISA və birmənalı olsun (1-3 söz, və ya 1 ədəd).
+                    - `distractors`: DƏQİQ 3 yanlış variant ver — şagird üçün inandırıcı, lakin tam səhv olsun.
+                      • Hər biri düzgün cavabla EYNİ format, uzunluq və üslubda olmalı (kateqoriya, hal şəkilçisi, vahid eyni).
+                      • TƏLƏBƏNİN EDƏCƏYİ KONKRET SƏHVƏ uyğun olmalı (qarışdırılan anlayış, near-miss ədəd, vahid səhvi, oxşar səslənən söz).
+                      • Heç biri açıq absurd və ya düzgün cavabla eyni olmasın.""";
             exampleJson = isMath
-                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ tənliyində $x$ = ___\",\"correctAnswer\":\"$4$\"}]}"
-                : "{\"questions\":[{\"content\":\"Azərbaycanın paytaxtı ___ şəhəridir.\",\"correctAnswer\":\"Bakı\"}]}";
+                ? "{\"questions\":[{\"content\":\"$2x + 5 = 13$ tənliyində $x$ = ___\",\"correctAnswer\":\"$4$\",\"distractors\":[\"$8$\",\"$9$\",\"$3$\"]}]}"
+                : "{\"questions\":[{\"content\":\"Azərbaycanın paytaxtı ___ şəhəridir.\",\"correctAnswer\":\"Bakı\",\"distractors\":[\"Gəncə\",\"Şamaxı\",\"Naxçıvan\"]}]}";
         } else if (isOpen) {
             typeRules = """
                     SUAL TİPİ — AÇIQ SUAL (OPEN_AUTO):
@@ -317,7 +321,8 @@ public class GeminiService {
                 typeRules + "\n\n" +
                 "JSON SXEMİ:\n" +
                 "{ \"questions\": [ { \"content\": string" +
-                (isOpen ? ", \"correctAnswer\": string"
+                (isFill ? ", \"correctAnswer\": string, \"distractors\": [string, string, string]"
+                        : isOpen ? ", \"correctAnswer\": string"
                         : ", \"options\": [{ \"text\": string, \"isCorrect\": boolean }, … 4 ədəd]") +
                 " }, … " + req.getCount() + " ədəd ] }\n\n" +
                 "STRUKTUR NÜMUNƏSİ (məzmunu kopyalama, yalnız format):\n" +
@@ -470,6 +475,30 @@ public class GeminiService {
                 // correctAnswer (OPEN_AUTO / FILL_IN_THE_BLANK)
                 if (item.containsKey("correctAnswer")) {
                     q.setCorrectAnswer((String) item.get("correctAnswer"));
+                }
+
+                // FILL_IN_THE_BLANK distractors: stash them as isCorrect=false
+                // options so the frontend's chip pool gets both correct answer
+                // and plausible wrong choices in one list.
+                if ("FILL_IN_THE_BLANK".equals(qt) && item.containsKey("distractors")) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        List<Object> rawDistractors = (List<Object>) item.get("distractors");
+                        List<BankOptionRequest> distractorOpts = q.getOptions() != null
+                                ? new ArrayList<>(q.getOptions())
+                                : new ArrayList<>();
+                        for (Object d : rawDistractors) {
+                            if (d == null) continue;
+                            String text = String.valueOf(d).trim();
+                            if (text.isEmpty()) continue;
+                            if (!hasValidLatex(text)) continue;
+                            BankOptionRequest o = new BankOptionRequest();
+                            o.setContent(text);
+                            o.setIsCorrect(false);
+                            distractorOpts.add(o);
+                        }
+                        if (!distractorOpts.isEmpty()) q.setOptions(distractorOpts);
+                    } catch (Exception ignored) {}
                 }
 
                 // Strict guard for the open question families: the AI is

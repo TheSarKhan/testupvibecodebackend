@@ -127,17 +127,26 @@ public class PdfService {
                 .filter(q -> q.getPassage() == null)
                 .sorted(Comparator.comparing(Question::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
-        List<Passage> passagesByOrder = exam.getPassages() == null
+        List<Passage> allPassages = exam.getPassages() == null
                 ? List.<Passage>of()
-                : exam.getPassages().stream()
-                    .sorted(Comparator.comparing(Passage::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
-                    .toList();
+                : exam.getPassages();
+        List<Passage> textPassages = allPassages.stream()
+                .filter(p -> p.getPassageType() == PassageType.TEXT)
+                .sorted(Comparator.comparing(Passage::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        List<Passage> listeningPassages = allPassages.stream()
+                .filter(p -> p.getPassageType() == PassageType.LISTENING)
+                .sorted(Comparator.comparing(Passage::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
 
-        // Merge them, sorted by orderIndex. We tag each item with its order so
-        // the final sort is stable for items that share an index.
+        // Keep standalone questions and TEXT passages interleaved by orderIndex
+        // (their natural flow), then append all LISTENING passages as a single
+        // block at the end. This prevents the reading and listening sections
+        // from being mixed in the PDF — students/teachers expect reading first,
+        // listening last.
         java.util.List<Object> ordered = new java.util.ArrayList<>();
         ordered.addAll(standaloneQuestions);
-        ordered.addAll(passagesByOrder);
+        ordered.addAll(textPassages);
         ordered.sort((a, b) -> {
             int oa = (a instanceof Question) ? java.util.Objects.requireNonNullElse(((Question) a).getOrderIndex(), Integer.MAX_VALUE)
                                               : java.util.Objects.requireNonNullElse(((Passage) a).getOrderIndex(), Integer.MAX_VALUE);
@@ -145,6 +154,7 @@ public class PdfService {
                                               : java.util.Objects.requireNonNullElse(((Passage) b).getOrderIndex(), Integer.MAX_VALUE);
             return Integer.compare(oa, ob);
         });
+        ordered.addAll(listeningPassages);
 
         // Final flat list of (Question, displayNumber) pairs in render order,
         // produced by expanding each Passage into its child questions. The
