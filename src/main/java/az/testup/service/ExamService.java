@@ -39,6 +39,7 @@ public class ExamService {
     private final SubscriptionValidatorService subscriptionValidatorService;
     private final ExamCollaboratorRepository examCollaboratorRepository;
     private final SubmissionRepository submissionRepository;
+    private final QuestionRepository questionRepository;
     private final AuditLogService auditLogService;
     private final PaymentOrderRepository paymentOrderRepository;
     private final ExamAccessCodeRepository examAccessCodeRepository;
@@ -164,6 +165,69 @@ public class ExamService {
         return examRepository.findByTeacherAndCollaborativeParentIdIsNullAndDeletedFalse(teacher).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * List endpoint optimised for the Teacher "İmtahanlarım" page and the
+     * Profile teacher tab. Skips nested questions/options/matching pairs and
+     * batches all per-exam aggregate counts into 4 GROUP BY queries instead
+     * of ~3*N round trips. For a teacher with 30 exams of 20 questions this
+     * drops the call from ~1.4k DB queries to ~5.
+     */
+    @Transactional(readOnly = true)
+    public List<ExamSummaryResponse> getTeacherExamsSummary(User teacher) {
+        List<Exam> exams = examRepository.findByTeacherAndCollaborativeParentIdIsNullAndDeletedFalse(teacher);
+        if (exams.isEmpty()) return List.of();
+
+        List<Long> examIds = exams.stream().map(Exam::getId).collect(Collectors.toList());
+
+        Map<Long, Long> questionCounts = toCountMap(questionRepository.countByExamIdIn(examIds));
+        Map<Long, Long> pendingCounts = toCountMap(submissionRepository.countPendingGradingByExamIdIn(examIds));
+        Map<Long, Long> participantCounts = toCountMap(submissionRepository.countParticipantsByExamIdIn(examIds));
+
+        Map<Long, Double> avgRatings = new HashMap<>();
+        Map<Long, Long> ratingCounts = new HashMap<>();
+        for (Object[] row : submissionRepository.findRatingStatsByExamIdIn(examIds)) {
+            Long examId = (Long) row[0];
+            Double avg = row[1] != null ? ((Number) row[1]).doubleValue() : null;
+            Long cnt = row[2] != null ? ((Number) row[2]).longValue() : 0L;
+            if (avg != null) avgRatings.put(examId, avg);
+            ratingCounts.put(examId, cnt);
+        }
+
+        return exams.stream()
+                .map(exam -> ExamSummaryResponse.builder()
+                        .id(exam.getId())
+                        .title(exam.getTitle())
+                        .subjects(exam.getSubjects())
+                        .visibility(exam.getVisibility())
+                        .examType(exam.getExamType())
+                        .status(exam.getStatus())
+                        .shareLink(exam.getShareLink())
+                        .durationMinutes(exam.getDurationMinutes())
+                        .teacherId(exam.getTeacher().getId())
+                        .price(exam.getPrice())
+                        .sitePublished(exam.isSitePublished())
+                        .tags(exam.getTags())
+                        .createdAt(exam.getCreatedAt())
+                        .updatedAt(exam.getUpdatedAt())
+                        .isCollaborative(exam.isCollaborative())
+                        .collaborativeParentId(exam.getCollaborativeParentId())
+                        .questionCount(questionCounts.getOrDefault(exam.getId(), 0L).intValue())
+                        .participantCount(participantCounts.getOrDefault(exam.getId(), 0L))
+                        .pendingManualCount(pendingCounts.getOrDefault(exam.getId(), 0L))
+                        .averageRating(avgRatings.get(exam.getId()))
+                        .ratingCount(ratingCounts.getOrDefault(exam.getId(), 0L))
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    private static Map<Long, Long> toCountMap(List<Object[]> rows) {
+        Map<Long, Long> map = new HashMap<>(rows.size());
+        for (Object[] row : rows) {
+            map.put((Long) row[0], ((Number) row[1]).longValue());
+        }
+        return map;
     }
 
     /**

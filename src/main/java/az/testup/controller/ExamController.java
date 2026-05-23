@@ -2,6 +2,7 @@ package az.testup.controller;
 
 import az.testup.dto.request.ExamRequest;
 import az.testup.dto.response.ExamResponse;
+import az.testup.dto.response.ExamSummaryResponse;
 import az.testup.entity.Exam;
 import az.testup.entity.PaymentOrder;
 import az.testup.entity.User;
@@ -46,10 +47,16 @@ public class ExamController {
         return ResponseEntity.ok(examService.createExam(request, teacher));
     }
 
+    /**
+     * Teacher list endpoint — returns a slim summary (no nested
+     * questions/options/matching pairs) so the "İmtahanlarım" page loads in a
+     * handful of queries instead of N×M. The full {@link ExamResponse} is
+     * still served by {@code GET /exams/{id}/details}.
+     */
     @GetMapping
-    public ResponseEntity<List<ExamResponse>> getMyExams(@AuthenticationPrincipal UserDetails userDetails) {
+    public ResponseEntity<List<ExamSummaryResponse>> getMyExams(@AuthenticationPrincipal UserDetails userDetails) {
         User teacher = getCurrentUser(userDetails);
-        return ResponseEntity.ok(examService.getTeacherExams(teacher));
+        return ResponseEntity.ok(examService.getTeacherExamsSummary(teacher));
     }
 
     @GetMapping("/public")

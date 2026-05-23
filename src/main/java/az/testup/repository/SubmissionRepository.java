@@ -37,4 +37,24 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
 
     @Query("SELECT COUNT(s) FROM Submission s WHERE s.exam.id = :examId AND s.rating IS NOT NULL")
     long countRatingsByExamId(@Param("examId") Long examId);
+
+    // ── Batched aggregates for list endpoints (avoid N+1) ───────────────────
+    // Each method returns [examId, value] rows so the caller can build a
+    // Map<Long, Long/Double> instead of issuing one query per exam.
+
+    @Query("SELECT s.exam.id, COUNT(s) FROM Submission s " +
+           "WHERE s.exam.id IN :examIds AND s.submittedAt IS NOT NULL AND s.isFullyGraded = false " +
+           "AND (s.hiddenFromTeacher IS NULL OR s.hiddenFromTeacher = false) " +
+           "GROUP BY s.exam.id")
+    List<Object[]> countPendingGradingByExamIdIn(@Param("examIds") List<Long> examIds);
+
+    @Query("SELECT s.exam.id, COUNT(s) FROM Submission s " +
+           "WHERE s.exam.id IN :examIds AND s.submittedAt IS NOT NULL " +
+           "GROUP BY s.exam.id")
+    List<Object[]> countParticipantsByExamIdIn(@Param("examIds") List<Long> examIds);
+
+    @Query("SELECT s.exam.id, AVG(s.rating), COUNT(s.rating) FROM Submission s " +
+           "WHERE s.exam.id IN :examIds AND s.rating IS NOT NULL " +
+           "GROUP BY s.exam.id")
+    List<Object[]> findRatingStatsByExamIdIn(@Param("examIds") List<Long> examIds);
 }
