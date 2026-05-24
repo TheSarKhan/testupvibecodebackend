@@ -43,7 +43,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<Map<String, Object>> handleUnauthorized(UnauthorizedException ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
+        // FORBIDDEN (403) — "authenticated but lacks permission". The
+        // previous UNAUTHORIZED (401) made the frontend axios interceptor
+        // run an unnecessary refresh-token cycle on every permission denial
+        // (the token was fine; the user just lacked rights), and the failed
+        // retry left the genuine error message hidden behind a refresh path.
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
     }
 
     // ──────────────────────────── Spring Security ──────────────────────────────

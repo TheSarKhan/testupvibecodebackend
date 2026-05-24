@@ -22,6 +22,12 @@ public class BankMatchingPair {
     @Column(columnDefinition = "TEXT")
     private String rightItem;
 
+    @Column(name = "attached_image_left", columnDefinition = "TEXT")
+    private String attachedImageLeft;
+
+    @Column(name = "attached_image_right", columnDefinition = "TEXT")
+    private String attachedImageRight;
+
     private Integer orderIndex;
 
     @ManyToOne(fetch = FetchType.LAZY)

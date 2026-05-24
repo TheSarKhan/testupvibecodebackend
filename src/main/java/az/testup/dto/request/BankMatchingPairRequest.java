@@ -7,5 +7,7 @@ public class BankMatchingPairRequest {
     private Long id;
     private String leftItem;
     private String rightItem;
+    private String attachedImageLeft;
+    private String attachedImageRight;
     private Integer orderIndex;
 }

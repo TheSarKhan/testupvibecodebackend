@@ -30,16 +30,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = extractToken(request);
 
         if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
-            var claims = jwtTokenProvider.parseClaims(token);
-            String email = claims.get("email", String.class);
+            // The token verified, but the user it references might no longer
+            // exist (admin deletion, account merge, email change). Without
+            // this guard, loadUserByUsername throws UsernameNotFoundException
+            // up through the filter and Spring renders a 500 — the user just
+            // sees "Server error" instead of being prompted to log in again.
+            // Catching here leaves the request unauthenticated so the regular
+            // 401/403 path takes over.
+            try {
+                var claims = jwtTokenProvider.parseClaims(token);
+                String email = claims.get("email", String.class);
+                if (email != null) {
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
-            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-            UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+            } catch (Exception ignored) {
+                // Leave SecurityContext empty — downstream endpoints will 401/403 the request.
+            }
         }
 
         filterChain.doFilter(request, response);

@@ -332,6 +332,8 @@ public class BankService {
             for (BankMatchingPair mp : src.getMatchingPairs()) {
                 copy.getMatchingPairs().add(BankMatchingPair.builder()
                         .leftItem(mp.getLeftItem()).rightItem(mp.getRightItem())
+                        .attachedImageLeft(mp.getAttachedImageLeft())
+                        .attachedImageRight(mp.getAttachedImageRight())
                         .orderIndex(mp.getOrderIndex()).question(copy).build());
             }
         }
@@ -450,6 +452,8 @@ public class BankService {
             q.getMatchingPairs().add(BankMatchingPair.builder()
                     .leftItem(mp.getLeftItem())
                     .rightItem(mp.getRightItem())
+                    .attachedImageLeft(mp.getAttachedImageLeft())
+                    .attachedImageRight(mp.getAttachedImageRight())
                     .orderIndex(mp.getOrderIndex())
                     .question(q)
                     .build());
@@ -503,7 +507,10 @@ public class BankService {
                 .map(o -> new BankOptionResponse(o.getId(), o.getContent(), o.getIsCorrect(), o.getOrderIndex(), o.getAttachedImage()))
                 .collect(Collectors.toList());
         List<BankMatchingPairResponse> pairs = q.getMatchingPairs().stream()
-                .map(mp -> new BankMatchingPairResponse(mp.getId(), mp.getLeftItem(), mp.getRightItem(), mp.getOrderIndex()))
+                .map(mp -> new BankMatchingPairResponse(
+                        mp.getId(), mp.getLeftItem(), mp.getRightItem(),
+                        mp.getAttachedImageLeft(), mp.getAttachedImageRight(),
+                        mp.getOrderIndex()))
                 .collect(Collectors.toList());
         return new BankQuestionResponse(
                 q.getId(), q.getSubject().getId(), q.getSubject().getName(),

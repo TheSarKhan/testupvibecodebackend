@@ -540,6 +540,22 @@ public class GeminiService {
         List<String> orderedTypes = new ArrayList<>(req.getTypeCounts().keySet());
         orderedTypes.sort(Comparator.comparingInt(this::typePriority));
 
+        // Normalise topic input: prefer the new multi-topic list, fall back to the
+        // legacy single string (parsed for comma-separated values too, so a client
+        // sending "Cəbr, Həndəsə" through the old field still gets multi-topic
+        // behaviour). Blank entries are dropped.
+        List<String> topics = new ArrayList<>();
+        if (req.getTopicNames() != null) {
+            for (String t : req.getTopicNames()) {
+                if (t != null && !t.trim().isEmpty()) topics.add(t.trim());
+            }
+        }
+        if (topics.isEmpty() && req.getTopicName() != null && !req.getTopicName().isBlank()) {
+            for (String t : req.getTopicName().split(",")) {
+                if (!t.trim().isEmpty()) topics.add(t.trim());
+            }
+        }
+
         List<String> usedHints = new ArrayList<>();
 
         for (String type : orderedTypes) {
@@ -550,7 +566,7 @@ public class GeminiService {
             qReq.setSubjectName(req.getSubjectName());
             // Append exam-level coherence hint so each batch knows it's part of a larger exam
             // and must avoid overlapping sub-topics with previously generated batches.
-            qReq.setTopicName(buildExamScopedTopic(req.getTopicName(), totalRequested, usedHints));
+            qReq.setTopicName(buildExamScopedTopic(topics, totalRequested, count, usedHints));
             qReq.setDifficulty(req.getDifficulty() != null ? req.getDifficulty() : "MEDIUM");
             qReq.setQuestionType(type);
             qReq.setCount(Math.min(count, 15));
@@ -585,11 +601,30 @@ public class GeminiService {
     /**
      * For multi-type exams, fold the exam-level scope and previously generated stem hints
      * into the per-batch topic so the model can avoid near-duplicate coverage across types.
+     *
+     * Multi-topic handling:
+     *   • 0 topics  → null (open-ended)
+     *   • 1 topic   → that topic, unchanged
+     *   • 2+ topics, batch=1 → instruct the model to either combine the topics
+     *                          in a single question OR pick one of them
+     *   • 2+ topics, batch>1 → instruct the model to distribute coverage across them
      */
-    private String buildExamScopedTopic(String baseTopic, int totalQuestions, List<String> previousHints) {
+    private String buildExamScopedTopic(List<String> topics, int totalQuestions, int batchCount, List<String> previousHints) {
         StringBuilder sb = new StringBuilder();
-        if (baseTopic != null && !baseTopic.isBlank()) {
-            sb.append(baseTopic.trim());
+        if (topics != null && !topics.isEmpty()) {
+            if (topics.size() == 1) {
+                sb.append(topics.get(0));
+            } else {
+                String joined = String.join(", ", topics);
+                if (batchCount <= 1) {
+                    sb.append("Mövzular: ").append(joined)
+                      .append(". Yalnız bir sual yaradılır — ya sayılan mövzuların hər birini bir suala birləşdir, ya da onların təsadüfi birini seç.");
+                } else {
+                    sb.append("Mövzular: ").append(joined)
+                      .append(". Bu batch-da ").append(batchCount)
+                      .append(" sual var — sualları mövzular arasında mümkün qədər bərabər paylaşdır; hər sual ən azı bir mövzunu əhatə etsin.");
+                }
+            }
         }
         if (totalQuestions > 1) {
             if (sb.length() > 0) sb.append(" — ");

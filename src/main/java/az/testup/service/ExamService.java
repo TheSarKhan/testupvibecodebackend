@@ -339,7 +339,9 @@ public class ExamService {
 
         boolean isAdmin = teacher.getRole() == az.testup.enums.Role.ADMIN;
         if (!isAdmin && !exam.getTeacher().getId().equals(teacher.getId())) {
-            throw new RuntimeException("Bu imtahana giriş icazəniz yoxdur");
+            // Was bare RuntimeException — 500 to the user. Use the typed
+            // exception so the frontend sees a 403 with the localized message.
+            throw new UnauthorizedException("Bu imtahana giriş icazəniz yoxdur");
         }
 
         return mapToResponse(exam);
@@ -353,7 +355,9 @@ public class ExamService {
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
         if (!exam.getTeacher().getId().equals(teacher.getId())) {
-            throw new RuntimeException("Bu imtahanı redaktə etmək icazəniz yoxdur");
+            // Use the typed exception so the frontend gets a clean 403 instead
+            // of the generic 500 the bare RuntimeException used to produce.
+            throw new UnauthorizedException("Bu imtahanı redaktə etmək icazəniz yoxdur");
         }
 
         // Collab drafts must respect template-section question count caps. Frontend hides
@@ -708,7 +712,9 @@ public class ExamService {
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
         if (!exam.getTeacher().getId().equals(teacher.getId())) {
-            throw new RuntimeException("Bu əməliyyat üçün icazəniz yoxdur");
+            // Typed exception → clean 403; the bare RuntimeException returned
+            // 500 and the user saw a generic "Server xətası" toast.
+            throw new UnauthorizedException("Bu əməliyyat üçün icazəniz yoxdur");
         }
 
         String code = CodeGenerator.generateAccessCode();
@@ -852,7 +858,10 @@ public class ExamService {
         }
 
         if (!isAdmin && !exam.getTeacher().getId().equals(teacher.getId())) {
-             throw new RuntimeException("Bu əməliyyat üçün icazəniz yoxdur");
+             // Was a bare RuntimeException — returned 500 Internal Server Error
+             // to the user. UnauthorizedException maps to a clean 403 with the
+             // shown message.
+             throw new UnauthorizedException("Bu əməliyyat üçün icazəniz yoxdur");
         }
 
         String examTitle = exam.getTitle();
