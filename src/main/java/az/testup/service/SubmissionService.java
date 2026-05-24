@@ -206,9 +206,13 @@ public class SubmissionService {
             throw new BadRequestException("İmtahan artıq bitib");
         }
 
-        Answer answer = submission.getAnswers().stream()
-                .filter(a -> a.getQuestion().getId().equals(request.getQuestionId()))
-                .findFirst()
+        // DB lookup beats the in-memory `submission.getAnswers()` walk: two
+        // concurrent save requests would each see an empty snapshot of the
+        // collection and both INSERT a fresh row. The unique constraint
+        // added in V23 still backstops this, but going through the
+        // repository first keeps the happy path conflict-free.
+        Answer answer = answerRepository
+                .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId())
                 .orElseGet(() -> {
                     Question question = questionRepository.findById(request.getQuestionId())
                             .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı"));
@@ -221,7 +225,18 @@ public class SubmissionService {
                 });
 
         updateAnswerData(answer, request);
-        answerRepository.save(answer); // Explicitly save the answer
+        try {
+            answerRepository.save(answer);
+        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
+            // Lost the race to the unique constraint — the other request
+            // already created the row. Re-fetch and update that one so the
+            // student's content still lands instead of bubbling a 500.
+            Answer winner = answerRepository
+                    .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId())
+                    .orElseThrow(() -> dup);
+            updateAnswerData(winner, request);
+            answerRepository.save(winner);
+        }
     }
 
     /** Grades all answers (creating blank entries for unanswered questions) and snapshots each question. */
@@ -1317,9 +1332,21 @@ public class SubmissionService {
 
         Exam exam = submission.getExam();
 
-        // Create a map of question ID to answer for quick lookup
+        // Create a map of question ID to answer for quick lookup.
+        // Duplicate Answer rows for the same question have been observed in
+        // production (race condition in save-answer creating a second row
+        // instead of updating). Keep the row with the higher id (latest
+        // insert) so the review reflects the student's most recent save
+        // instead of crashing the whole review endpoint.
         Map<Long, Answer> answerByQuestionId = submission.getAnswers().stream()
-                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                .collect(Collectors.toMap(
+                        a -> a.getQuestion().getId(),
+                        a -> a,
+                        (existing, replacement) ->
+                                (replacement.getId() != null && existing.getId() != null
+                                        && replacement.getId() > existing.getId())
+                                        ? replacement : existing
+                ));
 
         // Get all questions from exam (standalone + passage) and sort by orderIndex
         List<Question> allQuestions = exam.getQuestions().stream()
