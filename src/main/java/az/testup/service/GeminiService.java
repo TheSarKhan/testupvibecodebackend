@@ -132,6 +132,33 @@ public class GeminiService {
         return containsAny(name, LANGUAGE_SUBJECTS);
     }
 
+    // Foreign-language fənn → questions must be written IN THAT LANGUAGE,
+    // not Azerbaijani. Azərbaycan dili & Ədəbiyyat stay in Azerbaijani.
+    // The map's value is the language name we tell the AI to write in.
+    private static final java.util.Map<String, String> FOREIGN_LANGUAGE_SUBJECTS = java.util.Map.of(
+        "ingilis dili", "English",
+        "english",      "English",
+        "rus dili",     "Russian (русский язык)",
+        "русский",      "Russian (русский язык)",
+        "alman dili",   "German (Deutsch)",
+        "deutsch",      "German (Deutsch)",
+        "fransız dili", "French (français)",
+        "french",       "French (français)",
+        "türk dili",    "Turkish (Türkçe)",
+        "ərəb dili",    "Arabic (العربية)",
+        "ispan dili",   "Spanish (español)"
+    );
+
+    /** If the subject is a foreign language fənn, returns the language name to write the question in. */
+    private String foreignLanguageFor(String subjectName) {
+        if (subjectName == null) return null;
+        String lower = subjectName.toLowerCase();
+        for (var entry : FOREIGN_LANGUAGE_SUBJECTS.entrySet()) {
+            if (lower.contains(entry.getKey())) return entry.getValue();
+        }
+        return null;
+    }
+
     /** Returns a subject-specific style/terminology cue to inject into the prompt. */
     private String subjectStyleCue(String subjectName) {
         if (isMathSubject(subjectName)) {
@@ -310,12 +337,23 @@ public class GeminiService {
               "Eyni şablonun kiçik dəyişikliyi yox, HƏQİQİ MÜXTƏLİFLİK."
             : "";
 
+        // Foreign-language fənn (İngilis dili, Rus dili, ...) — the question stem,
+        // options and answer must be in THAT language so students see authentic
+        // material instead of an Azerbaijani translation. Azərbaycan dili /
+        // Ədəbiyyat / native subjects keep the default Azerbaijani.
+        String foreignLang = foreignLanguageFor(req.getSubjectName());
+        String langLine = foreignLang != null
+            ? "LANGUAGE / DİL: Write the ENTIRE question (stem, options, answer, distractors) in " + foreignLang + ". " +
+              "DO NOT translate into Azerbaijani — the student is being tested ON this language. " +
+              "Yalnız xahiş: bütün məzmun (sual mətni, variantlar, cavab, distraktorlar) " + foreignLang + " dilində olsun.\n"
+            : "DİL: Azərbaycan dili (təmiz, müasir orfoqrafiya).\n";
+
         return ("FƏNN: " + req.getSubjectName() + "\n" +
                 topicLine + "\n" +
                 "ÇƏTİNLİK SƏVİYYƏSİ: " + diffRubric + "\n" +
                 styleCue + "\n" +
                 (diversityRule.isEmpty() ? "" : diversityRule + "\n") +
-                "DİL: Azərbaycan dili (təmiz, müasir orfoqrafiya).\n" +
+                langLine +
                 "SUAL SAYI: DƏQİQ " + req.getCount() + " sual.\n" +
                 latexNote + "\n\n" +
                 typeRules + "\n\n" +

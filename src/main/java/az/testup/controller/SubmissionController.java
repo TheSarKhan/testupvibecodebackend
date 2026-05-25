@@ -146,6 +146,18 @@ public class SubmissionController {
         return ResponseEntity.ok(submissionService.getExamStatistics(examId, teacher));
     }
 
+    /**
+     * Public statistics endpoint — accessed via the exam's shareLink, NOT id.
+     * Anyone holding the link can see aggregate stats: total participants,
+     * average score, top students, etc. No auth, no per-student personal data
+     * beyond the leaderboard names the owner chose to make visible.
+     */
+    @GetMapping("/exam/share/{shareLink}/public-statistics")
+    public ResponseEntity<az.testup.dto.response.ExamStatisticsResponse> getPublicExamStatistics(
+            @PathVariable String shareLink) {
+        return ResponseEntity.ok(submissionService.getPublicExamStatistics(shareLink));
+    }
+
     private User getCurrentUserOrNull(UserDetails userDetails) {
         if (userDetails == null) return null;
         return userRepository.findByEmail(userDetails.getUsername()).orElse(null);

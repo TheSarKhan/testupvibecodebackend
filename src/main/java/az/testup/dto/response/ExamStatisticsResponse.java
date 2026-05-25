@@ -15,6 +15,9 @@ import java.util.List;
 public class ExamStatisticsResponse {
     private Long examId;
     private String examTitle;
+    // Exposed so the teacher dashboard can build a public Paylaş link
+    // (`/imtahanlar/paylas/<shareLink>/statistika`) without an extra fetch.
+    private String shareLink;
     private BigDecimal examPrice;
     private Integer totalParticipants;
     private Double averageScore;

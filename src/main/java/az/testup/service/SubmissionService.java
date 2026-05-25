@@ -791,11 +791,44 @@ public class SubmissionService {
         return mapToResponse(submission);
     }
 
+    /**
+     * Public-facing variant — looks the exam up by its shareLink (so anyone
+     * with the link can fetch the leaderboard) and strips fields a teacher
+     * wouldn't want broadcast: examPrice (commercial data) and examId
+     * (internal DB key). The aggregate stats + leaderboard names remain.
+     */
+    public ExamStatisticsResponse getPublicExamStatistics(String shareLink) {
+        Exam exam = examRepository.findByShareLinkAndDeletedFalse(shareLink)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        ExamStatisticsResponse full = computeExamStatistics(exam);
+        return ExamStatisticsResponse.builder()
+                .examId(null)            // hide internal DB id
+                .examTitle(full.getExamTitle())
+                .shareLink(full.getShareLink())
+                .examPrice(null)         // hide commercial info from public view
+                .totalParticipants(full.getTotalParticipants())
+                .averageScore(full.getAverageScore())
+                .maximumScore(full.getMaximumScore())
+                .averageRating(full.getAverageRating())
+                .averageDurationMinutes(full.getAverageDurationMinutes())
+                .topStudents(full.getTopStudents())
+                .build();
+    }
+
     public ExamStatisticsResponse getExamStatistics(Long examId, User teacher) {
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        return computeExamStatistics(exam);
+    }
 
-        List<Submission> submissions = submissionRepository.findByExamId(examId).stream()
+    /**
+     * Aggregate-stats computation shared by {@link #getExamStatistics} (teacher
+     * dashboard) and {@link #getPublicExamStatistics} (share-link view). The
+     * caller is responsible for redacting any fields the public consumer
+     * shouldn't see (examPrice, examId) before returning.
+     */
+    private ExamStatisticsResponse computeExamStatistics(Exam exam) {
+        List<Submission> submissions = submissionRepository.findByExamId(exam.getId()).stream()
                 .filter(sub -> !Boolean.TRUE.equals(sub.getHiddenFromTeacher()))
                 .collect(Collectors.toList());
 
@@ -845,6 +878,7 @@ public class SubmissionService {
         return ExamStatisticsResponse.builder()
                 .examId(exam.getId())
                 .examTitle(exam.getTitle())
+                .shareLink(exam.getShareLink())
                 .examPrice(exam.getPrice())
                 .totalParticipants(submissions.size())
                 .averageScore(avgScore)
