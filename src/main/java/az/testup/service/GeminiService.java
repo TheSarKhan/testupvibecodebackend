@@ -135,18 +135,19 @@ public class GeminiService {
     // Foreign-language fənn → questions must be written IN THAT LANGUAGE,
     // not Azerbaijani. Azərbaycan dili & Ədəbiyyat stay in Azerbaijani.
     // The map's value is the language name we tell the AI to write in.
-    private static final java.util.Map<String, String> FOREIGN_LANGUAGE_SUBJECTS = java.util.Map.of(
-        "ingilis dili", "English",
-        "english",      "English",
-        "rus dili",     "Russian (русский язык)",
-        "русский",      "Russian (русский язык)",
-        "alman dili",   "German (Deutsch)",
-        "deutsch",      "German (Deutsch)",
-        "fransız dili", "French (français)",
-        "french",       "French (français)",
-        "türk dili",    "Turkish (Türkçe)",
-        "ərəb dili",    "Arabic (العربية)",
-        "ispan dili",   "Spanish (español)"
+    // Uses Map.ofEntries because Map.of caps at 10 K/V pairs.
+    private static final java.util.Map<String, String> FOREIGN_LANGUAGE_SUBJECTS = java.util.Map.ofEntries(
+        java.util.Map.entry("ingilis dili", "English"),
+        java.util.Map.entry("english",      "English"),
+        java.util.Map.entry("rus dili",     "Russian (русский язык)"),
+        java.util.Map.entry("русский",      "Russian (русский язык)"),
+        java.util.Map.entry("alman dili",   "German (Deutsch)"),
+        java.util.Map.entry("deutsch",      "German (Deutsch)"),
+        java.util.Map.entry("fransız dili", "French (français)"),
+        java.util.Map.entry("french",       "French (français)"),
+        java.util.Map.entry("türk dili",    "Turkish (Türkçe)"),
+        java.util.Map.entry("ərəb dili",    "Arabic (العربية)"),
+        java.util.Map.entry("ispan dili",   "Spanish (español)")
     );
 
     /** If the subject is a foreign language fənn, returns the language name to write the question in. */
