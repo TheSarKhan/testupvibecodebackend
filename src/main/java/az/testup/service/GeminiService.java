@@ -24,17 +24,26 @@ import java.util.*;
 @RequiredArgsConstructor
 public class GeminiService {
 
-    @Value("${groq.api-key:}")
+    // Renamed from `groq.api-key` to `openai.api-key` so the env var
+    // matches the provider it's actually pointing at. Keep both readable
+    // by falling back to the old key when only the legacy var is set —
+    // avoids breaking deployments that still ship `GROQ_API_KEY`.
+    @Value("${openai.api-key:${groq.api-key:}}")
     private String apiKey;
 
-    private static final String GROQ_URL =
-        "https://api.groq.com/openai/v1/chat/completions";
+    private static final String OPENAI_URL =
+        "https://api.openai.com/v1/chat/completions";
+
+    // Pinned to the dated GPT-4o release that supports structured outputs
+    // (`response_format: json_schema`) — the unpinned `gpt-4o` alias can
+    // silently rotate to a checkpoint without this feature.
+    private static final String OPENAI_MODEL = "gpt-4o-2024-11-20";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<BankQuestionRequest> generateQuestions(GenerateQuestionsRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Groq API açarı konfiqurasiya edilməyib. application.yml-ə groq.api-key əlavə edin.");
+            throw new IllegalStateException("OpenAI API açarı konfiqurasiya edilməyib. .env-də OPENAI_API_KEY təyin edin.");
         }
 
         String prompt = buildPrompt(req);
@@ -223,34 +232,66 @@ public class GeminiService {
 
     private String buildSystemMessage() {
         return """
-               You are an EXPERT Azerbaijani K-12 / university-prep exam author with 15+ years of pedagogical experience. \
-               You produce questions that real teachers would assign — pedagogically sound, factually correct, age-appropriate, \
-               and designed to discriminate between students who understand the material and those who don't.
+               You are a SENIOR Azerbaijani K-12 / university-prep exam author and subject-matter expert with 20+ years of \
+               classroom experience designing high-stakes tests. You write questions that real teachers would use on a final exam: \
+               pedagogically sound, factually airtight, age-appropriate, and calibrated to discriminate between students who truly \
+               understand the material and those who only memorised the surface. Your reputation is built on ZERO factual errors.
 
-               OUTPUT CONTRACT — non-negotiable:
-               - Respond with ONE valid JSON object ONLY. No markdown fences, no prose, no explanations.
+               ── REASONING PROTOCOL (do this silently, do NOT output it) ──
+               Before emitting each question, walk through this checklist in your head:
+                 (a) Pick a sub-topic that hasn't been covered in this batch yet.
+                 (b) Decide the cognitive target (recall / apply / analyze / evaluate).
+                 (c) Draft the stem.
+                 (d) SOLVE the question yourself end-to-end. Write the answer in your head — DO NOT include the work in the output.
+                 (e) Stress-test the answer: is there any other interpretation? Is there a sneaky second-correct option? If yes, revise.
+                 (f) Engineer 3 distractors that each capture a SPECIFIC, COMMON student mistake (off-by-one, wrong sign, swapped \
+                     definitions, near-miss numeric, similar-sounding term). Discard any joke/absurd/filler distractor.
+                 (g) Re-read the stem aloud (mentally) — does it telegraph the answer through grammar, length, specificity? If yes, fix.
+                 (h) ONLY THEN emit the question as JSON. If at any step you weren't 100% sure of correctness, DISCARD and start over.
+
+               ── OUTPUT CONTRACT — non-negotiable ──
+               - Respond with ONE valid JSON object ONLY. No markdown fences, no prose, no preamble, no closing remarks.
                - Top-level key: "questions" → array.
-               - Every string must be valid JSON (escape quotes, newlines as \\n, backslashes doubled).
-               - Produce EXACTLY the requested number of questions — not fewer, not more.
+               - Produce EXACTLY the requested count — never fewer, never more, never "approximately".
+               - JSON STRING ESCAPING:
+                 • LaTeX commands use a backslash (\\frac, \\sqrt). Inside a JSON string this backslash MUST be doubled, \
+                   so the JSON source looks like "\\\\frac{1}{2}" (read literally: backslash, backslash, f, r, a, c, …). \
+                   A single backslash followed by f/b/v/n/t/r/0 is a CONTROL character in JSON — emit it and "\\frac" becomes \
+                   an invisible form-feed + "rac". Always double the backslash.
+                 • Newlines inside strings: use \\n (the two-character escape), never a literal line break.
+                 • Quotes inside strings: \\".
+                 • Do NOT use Unicode escapes (\\uXXXX) — write Azerbaijani characters directly (ə, ş, ç, ı, ö, ü, ğ).
 
-               QUALITY BAR — every question must satisfy ALL of these:
-               1. FACTUALLY CORRECT. If you are not 100% sure of the answer, do NOT include the question.
-               2. UNAMBIGUOUS. Exactly one interpretation; exactly one correct answer (or the requested number of correct answers for MULTI_SELECT).
-               3. NO GIVEAWAYS. The stem must not telegraph the answer. Avoid grammatical mismatches between stem and only-correct option.
-               4. PLAUSIBLE DISTRACTORS. Wrong options must reflect REAL student misconceptions — common errors, near-miss values, off-by-one mistakes, swapped terms. NEVER use joke options, obviously-wrong fillers, "Bütün yuxarıdakılar", "Heç biri", or repeats.
-               5. CALIBRATED LENGTH. Stem 1–3 sentences. Options short, parallel in length and structure.
-               6. DIVERSE BATCH. When multiple questions are requested, each must cover a DIFFERENT sub-topic, concept or cognitive level (recall → apply → analyze). Never produce near-duplicates.
-               7. CULTURALLY APPROPRIATE. Use Azerbaijani names, places, and curriculum context where relevant. Avoid Western-centric examples unless required by the topic.
+               ── QUALITY BAR — every question must satisfy ALL ──
+               1. FACTUALLY CORRECT. Zero tolerance for errors. If uncertain, drop the question and pick a different sub-topic.
+               2. UNAMBIGUOUS. Exactly one interpretation; exactly one correct answer (or the required count for MULTI_SELECT).
+               3. NO GIVEAWAYS. Stem grammar/length must not leak the answer. The correct option must not be the obviously-longest \
+                  or only-grammatically-fitting choice.
+               4. PLAUSIBLE DISTRACTORS. Wrong options must reflect REAL, documentable student misconceptions. Each one should make a \
+                  teacher think "yes, I've seen students pick that". Never use joke options, generic fillers, "Bütün yuxarıdakılar", \
+                  "Heç biri", or near-duplicates.
+               5. CALIBRATED LENGTH. Stem: 1–3 sentences. Options: short and PARALLEL — same grammatical structure, same approximate \
+                  length, same level of specificity.
+               6. DIVERSE BATCH. Across the batch, vary sub-topic, cognitive level, and surface form. No two questions should share \
+                  a template. No "what is X?" then "what is Y?" with same shape.
+               7. CULTURALLY GROUNDED. Use Azerbaijani names, places, and curriculum context where it fits naturally. Do not import \
+                  Western examples unless the topic demands it (e.g. world history).
+               8. CURRICULUM-ALIGNED. Stay within what an Azerbaijani teacher would actually teach at the stated level — no obscure \
+                  trivia, no graduate-level esoterica.
 
-               BANNED PATTERNS — DO NOT produce any of these:
-               - "Aşağıdakılardan hansı düzgündür?" with one obviously-true option and three absurd ones.
-               - Options containing "Yuxarıdakıların hamısı" / "Heç biri".
-               - Trick questions whose answer depends on word-play rather than subject knowledge.
-               - Questions whose correct answer is literally restated in the stem.
-               - Numerical answers like "3.71428..." for school-level math — pick clean numbers.
+               ── BANNED PATTERNS — automatic discard if present ──
+               - "Aşağıdakılardan hansı düzgündür?" with one obvious-true option and three absurd fillers.
+               - Options "Yuxarıdakıların hamısı", "Heç biri", "A və B", "B və C" etc.
+               - Trick questions resolved by word-play rather than subject knowledge.
+               - Stem that restates the correct answer verbatim.
+               - Ugly numbers in school math (3.71428…, 17/23) — pick clean values that fall out of the computation.
                - Stem in one language, options in another.
+               - Two questions in the same batch testing the same fact.
 
-               SELF-CHECK before emitting each question: solve it yourself, confirm the marked correct answer is correct, and confirm at least one distractor reflects a plausible misconception.""";
+               ── FINAL VERIFICATION (silent) ──
+               Re-scan the array you are about to emit. Count the questions — does it equal the requested number EXACTLY? Are all \
+               LaTeX backslashes doubled in the JSON source? Did every MCQ end up with exactly the required number of correct \
+               options? If anything is off, FIX IT before responding. The user will not see any of your reasoning — only the final JSON.""";
     }
 
     private String buildPrompt(GenerateQuestionsRequest req) {
@@ -268,14 +309,30 @@ public class GeminiService {
 
         String latexNote = isMath ? """
 
-                LaTeX QAYDALARI (KaTeX) — kəsin əməl et:
-                - HƏR riyazi ifadə MÜTLƏQ `$...$` daxilində olsun. Çılpaq LaTeX (`$` olmadan) QADAĞANDIR.
-                - Adi ədədlər və dəyişənlər də: `$x$`, `$5$`, `$-3$`, `$\\pi$`.
-                - Kəsr: `$\\frac{a}{b}$` (JSON-da `\\\\frac`); kök: `$\\sqrt{x}$`; dərəcə: `$x^{2}$`; alt indeks: `$x_{1}$`; vurma: `$\\cdot$`.
-                - JSON-da hər `\\` mütləq `\\\\` kimi qoşalansın.
-                - `\\begin{...}` işlədilərsə qarşılıqlı `\\end{...}` ilə bağlansın və hər ikisi $...$ içində olsun.
-                - Mətndəki ÖLÇÜ VAHİDLƏRİ də formula daxilinə alın: `$10\\text{ m/s}$`, `$25^{\\circ}\\text{C}$`.
-                - QAÇIN: matris, çoxsətirli inteqral, mürəkkəb diaqramlar (yoxlanmır, riskli). Sadə tənliklərlə işlə.""" : "";
+                ── LaTeX (KaTeX) QAYDALARI — ŞƏRTSİZ ──
+                EVERY math expression — including bare numbers, variables, symbols — MUST be wrapped in $...$.
+                JSON ESCAPING: a literal backslash in the rendered LaTeX command (\\frac, \\sqrt, \\pi, \\cdot, …)
+                MUST appear in the JSON string as a DOUBLE backslash. In this prompt I write the JSON forms.
+
+                FORMS (exactly as they must appear inside the JSON string value):
+                  • Kəsr:        "$\\\\frac{a}{b}$"
+                  • Kök:         "$\\\\sqrt{x}$"   (or "$\\\\sqrt[n]{x}$")
+                  • Dərəcə:      "$x^{2}$"
+                  • Alt indeks:  "$x_{1}$"
+                  • Vurma:       "$a \\\\cdot b$"
+                  • Yunan:       "$\\\\pi$", "$\\\\alpha$", "$\\\\theta$"
+                  • Sonsuzluq:   "$\\\\infty$"
+                  • Bərabər deyil:"$\\\\neq$"
+                  • Vahidlər:    "$10\\\\,\\\\text{m/s}$", "$25^{\\\\circ}\\\\text{C}$"
+                  • Funksiya:    "$f(x) = 2x^{2} - 3$"
+
+                SELF-CHECK before emitting any math:
+                  1. Every \\\\ in the source — count the backslashes. There must be TWO of them per LaTeX command.
+                  2. Every $ has a matching closing $ on the same line.
+                  3. Every \\\\begin{…} has a matching \\\\end{…}.
+                  4. No bare \\frac, \\sqrt etc. outside of $...$.
+
+                AVOID: matrices, multi-line integrals, complicated diagrams, \\begin{align} — keep math one-line, simple.""" : "";
 
         String typeRules;
         String exampleJson;
@@ -366,29 +423,41 @@ public class GeminiService {
                 " }, … " + req.getCount() + " ədəd ] }\n\n" +
                 "STRUKTUR NÜMUNƏSİ (məzmunu kopyalama, yalnız format):\n" +
                 exampleJson + "\n\n" +
-                "İndi yuxarıdakı QAYDALARA tam əməl edərək " + req.getCount() + " yüksək keyfiyyətli sual yarat. " +
-                "YALNIZ JSON cavab ver.");
+                "── FINAL TASK ──\n" +
+                "İndi yuxarıdakı bütün QAYDALARA tam əməl edərək " + req.getCount() +
+                " yüksək keyfiyyətli, müəllimin bu gün dərsdə işlədə biləcəyi səviyyədə sual yarat. " +
+                "Hər sualı emit etməzdən əvvəl SƏN SUALIN CAVABINI ÖZÜNDÜR YOXLAMA — düzgün cavabın həqiqətən düzgün, " +
+                "distraktorların həqiqətən səhv olmasına əmin ol. ƏMİN OLMADIĞIN heç bir sualı çıxarma. " +
+                "YALNIZ JSON cavab ver — şərh, başlıq, markdown YOX.");
     }
 
     // ── API call ──────────────────────────────────────────────────────────────
 
     /**
-     * Subject-aware temperature:
-     * - Math / science: lower temperature → more deterministic, fewer factual errors.
-     * - Humanities / language: higher temperature → richer variation.
+     * Subject-aware temperature, tuned for GPT-4o.
+     * - Math / science: very low → deterministic, fewer hallucinated numbers.
+     * - History: low → factual recall must stay accurate.
+     * - Language / humanities: moderate → richer phrasing without losing precision.
+     * GPT-4o is calibrated so 0.3–0.7 is the sweet spot; going above 0.8 noticeably
+     * degrades reasoning quality, even on creative tasks.
      */
     private double temperatureFor(GenerateQuestionsRequest req) {
-        if (isMathSubject(req.getSubjectName())) return 0.45;
-        if (isScienceSubject(req.getSubjectName())) return 0.55;
-        if (isHistorySubject(req.getSubjectName())) return 0.55;
-        if (isLanguageSubject(req.getSubjectName())) return 0.75;
-        return 0.65;
+        if (isMathSubject(req.getSubjectName())) return 0.30;
+        if (isScienceSubject(req.getSubjectName())) return 0.40;
+        if (isHistorySubject(req.getSubjectName())) return 0.40;
+        if (isLanguageSubject(req.getSubjectName())) return 0.60;
+        return 0.50;
     }
 
-    /** Stricter prompts produce longer JSON — scale token budget with batch size. */
+    /**
+     * Token budget. GPT-4o supports up to 16 384 output tokens; we cap below
+     * that to leave headroom for the JSON schema overhead. Math questions
+     * spend more tokens on LaTeX escaping so they get a larger per-question
+     * allowance.
+     */
     private int maxTokensFor(GenerateQuestionsRequest req) {
-        int perQuestion = isMathSubject(req.getSubjectName()) ? 450 : 350;
-        return Math.min(8192, 800 + perQuestion * Math.max(1, req.getCount()));
+        int perQuestion = isMathSubject(req.getSubjectName()) ? 600 : 450;
+        return Math.min(16000, 1200 + perQuestion * Math.max(1, req.getCount()));
     }
 
     private String callGroq(String prompt, GenerateQuestionsRequest req) {
@@ -397,33 +466,164 @@ public class GeminiService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(apiKey);
 
+        // Structured Outputs (`response_format: json_schema`) constrains the
+        // model to exactly one shape — wrong shape = automatic regenerate
+        // inside OpenAI before the response even reaches us. Eliminates the
+        // class of bugs where the model emits {"data": [...]} or wraps the
+        // array in prose. The schema is question-type-specific so the model
+        // can't put `options` on a FILL_IN_THE_BLANK or `distractors` on an MCQ.
+        String schema = buildJsonSchema(req);
+
         String body = """
             {
-              "model": "llama-3.3-70b-versatile",
+              "model": "%s",
               "messages": [
                 {"role": "system", "content": %s},
                 {"role": "user",   "content": %s}
               ],
               "temperature": %s,
-              "top_p": 0.9,
+              "top_p": %s,
               "max_tokens": %d,
-              "response_format": {"type": "json_object"}
+              "frequency_penalty": 0.2,
+              "presence_penalty": 0.1,
+              "response_format": %s
             }
             """.formatted(
+                OPENAI_MODEL,
                 toJsonString(buildSystemMessage()),
                 toJsonString(prompt),
                 String.format(java.util.Locale.ROOT, "%.2f", temperatureFor(req)),
-                maxTokensFor(req));
+                String.format(java.util.Locale.ROOT, "%.2f", topPFor(req)),
+                maxTokensFor(req),
+                schema);
 
         HttpEntity<String> entity = new HttpEntity<>(body, headers);
-        ResponseEntity<String> response = rest.postForEntity(GROQ_URL, entity, String.class);
+        ResponseEntity<String> response = rest.postForEntity(OPENAI_URL, entity, String.class);
 
         try {
             JsonNode root = objectMapper.readTree(response.getBody());
+            // OpenAI returns the model's refusal in `message.refusal` when
+            // safety filters trip. Surface that instead of silently returning
+            // empty content, which would otherwise look like a parse error.
+            JsonNode refusal = root.at("/choices/0/message/refusal");
+            if (refusal != null && !refusal.isMissingNode() && !refusal.isNull() && !refusal.asText().isBlank()) {
+                throw new RuntimeException("OpenAI sualı rədd etdi: " + refusal.asText());
+            }
             return root.at("/choices/0/message/content").asText();
+        } catch (RuntimeException re) {
+            throw re;
         } catch (Exception e) {
-            throw new RuntimeException("Groq cavabı parse edilə bilmədi: " + e.getMessage());
+            throw new RuntimeException("OpenAI cavabı parse edilə bilmədi: " + e.getMessage());
         }
+    }
+
+    /**
+     * Build a JSON Schema constraining the model's output to the exact shape
+     * required for the question type being requested. OpenAI's Structured
+     * Outputs feature uses this to guarantee the response matches.
+     *
+     * Strict mode requires every property to be in `required` and
+     * `additionalProperties: false` everywhere — so we generate one of three
+     * schemas (MCQ/MULTI_SELECT, FILL_IN_THE_BLANK, OPEN_AUTO) instead of one
+     * "union" schema with optional fields.
+     */
+    private String buildJsonSchema(GenerateQuestionsRequest req) {
+        String qType = req.getQuestionType();
+        boolean isFill = "FILL_IN_THE_BLANK".equals(qType);
+        boolean isOpen = "OPEN_AUTO".equals(qType) || isFill;
+
+        String questionItemSchema;
+        if (isFill) {
+            // Note: OpenAI's strict-mode schema doesn't support minItems/maxItems —
+            // count constraints live in the prompt text instead ("DƏQİQ 3 yanlış variant").
+            questionItemSchema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "content":       { "type": "string", "description": "Question stem containing exactly one ___ (three underscores)." },
+                    "correctAnswer": { "type": "string", "description": "The correct word/number/phrase that fills the blank. 1–3 words or one number." },
+                    "distractors":   {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Exactly 3 plausible-but-wrong answers, each matching the format/length of the correct answer."
+                    }
+                  },
+                  "required": ["content", "correctAnswer", "distractors"],
+                  "additionalProperties": false
+                }
+                """;
+        } else if (isOpen) {
+            questionItemSchema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "content":       { "type": "string", "description": "Question stem. Tələbə qısa cavab yazır." },
+                    "correctAnswer": { "type": "string", "description": "The canonical correct answer — one word, one number, or one short phrase." }
+                  },
+                  "required": ["content", "correctAnswer"],
+                  "additionalProperties": false
+                }
+                """;
+        } else {
+            // MCQ and MULTI_SELECT share the same shape; the SYSTEM prompt
+            // and user prompt tell the model how many `isCorrect=true` options
+            // to produce (1 for MCQ, 2 for MULTI_SELECT).
+            questionItemSchema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "content": { "type": "string", "description": "Question stem." },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "text":      { "type": "string" },
+                          "isCorrect": { "type": "boolean" }
+                        },
+                        "required": ["text", "isCorrect"],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": ["content", "options"],
+                  "additionalProperties": false
+                }
+                """;
+        }
+
+        // Wrap the per-question schema in { questions: [...] }. The exact array
+        // size constraint cannot live in the strict schema (OpenAI doesn't
+        // support minItems/maxItems there) — the prompt text and the in-Java
+        // truncation in `generateQuestions` enforce it.
+        return ("""
+            {
+              "type": "json_schema",
+              "json_schema": {
+                "name": "exam_questions",
+                "strict": true,
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "questions": {
+                      "type": "array",
+                      "items": %s
+                    }
+                  },
+                  "required": ["questions"],
+                  "additionalProperties": false
+                }
+              }
+            }
+            """).formatted(questionItemSchema.trim());
+    }
+
+    /** Top-p tuned per subject family. Math/science needs low diversity, language/humanities benefits from breadth. */
+    private double topPFor(GenerateQuestionsRequest req) {
+        if (isMathSubject(req.getSubjectName())) return 0.85;
+        if (isScienceSubject(req.getSubjectName())) return 0.88;
+        if (isHistorySubject(req.getSubjectName())) return 0.88;
+        return 0.92;
     }
 
     private String toJsonString(String text) {
@@ -435,6 +635,24 @@ public class GeminiService {
     }
 
     // ── Response parser ───────────────────────────────────────────────────────
+
+    // The AI emits LaTeX commands like `\frac{1}{2}` inside JSON string values
+    // with a single backslash (technically invalid JSON). Jackson interprets
+    // those backslash-letter pairs as the C-style control character: `\f` →
+    // form feed (U+000C), `\b` → backspace, `\v` → vertical tab, `\0` → null.
+    // That leaves "rac{1}{2}" with an invisible control char prefix in the
+    // string we save — both the validator ("Düstur xətalı" badge) and KaTeX
+    // can't recover, so the teacher sees `rac14` instead of a rendered ½.
+    // We restore the two-character `\X` form so the saved content has real
+    // LaTeX commands the frontend can render directly.
+    private static String restoreLatexControlChars(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return s
+            .replace("\f", "\\f")        // form feed → \f (\frac, \forall, …)
+            .replace("", "\\v")    // vertical tab → \v (\vec, \varphi, …)
+            .replace("\b", "\\b")        // backspace → \b (\beta, \binom, …)
+            .replace("\0", "\\0");       // null → \0 (rare, but cheap to handle)
+    }
 
     private List<BankQuestionRequest> parseResponse(String raw, GenerateQuestionsRequest req) {
         String cleaned = raw.trim();
@@ -479,7 +697,7 @@ public class GeminiService {
             for (Map<String, Object> item : items) {
                 BankQuestionRequest q = new BankQuestionRequest();
                 q.setSubjectId(req.getSubjectId());
-                q.setContent((String) item.get("content"));
+                q.setContent(restoreLatexControlChars((String) item.get("content")));
                 q.setPoints(1.0);
                 q.setOrderIndex(result.size());
                 q.setTopic(req.getTopicName());
@@ -498,7 +716,7 @@ public class GeminiService {
                     List<BankOptionRequest> optList = new ArrayList<>();
                     for (Map<String, Object> opt : opts) {
                         BankOptionRequest o = new BankOptionRequest();
-                        o.setContent((String) opt.get("text"));
+                        o.setContent(restoreLatexControlChars((String) opt.get("text")));
                         Object ic = opt.get("isCorrect");
                         o.setIsCorrect(ic instanceof Boolean b ? b : Boolean.parseBoolean(String.valueOf(ic)));
                         optList.add(o);
@@ -513,7 +731,7 @@ public class GeminiService {
 
                 // correctAnswer (OPEN_AUTO / FILL_IN_THE_BLANK)
                 if (item.containsKey("correctAnswer")) {
-                    q.setCorrectAnswer((String) item.get("correctAnswer"));
+                    q.setCorrectAnswer(restoreLatexControlChars((String) item.get("correctAnswer")));
                 }
 
                 // FILL_IN_THE_BLANK distractors: stash them as isCorrect=false
@@ -528,7 +746,7 @@ public class GeminiService {
                                 : new ArrayList<>();
                         for (Object d : rawDistractors) {
                             if (d == null) continue;
-                            String text = String.valueOf(d).trim();
+                            String text = restoreLatexControlChars(String.valueOf(d).trim());
                             if (text.isEmpty()) continue;
                             if (!hasValidLatex(text)) continue;
                             BankOptionRequest o = new BankOptionRequest();
@@ -567,7 +785,7 @@ public class GeminiService {
 
     public List<BankQuestionRequest> generateExam(GenerateExamRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Groq API açarı konfiqurasiya edilməyib.");
+            throw new IllegalStateException("OpenAI API açarı konfiqurasiya edilməyib.");
         }
         List<BankQuestionRequest> all = new ArrayList<>();
         if (req.getTypeCounts() == null || req.getTypeCounts().isEmpty()) return all;
