@@ -215,16 +215,35 @@ public class GeminiService {
                 : "ASAN: Yaddaşa əsaslanan, dərslikdə birbaşa keçən fakt və ya tərif. " +
                   "Bir cümləyə sığan birmənalı cavab.";
             case "HARD" -> isMath
-                ? "ÇƏTİN: 3+ addımlı, bir neçə anlayışın birləşdirilməsini tələb edən. " +
-                  "Sözlü məsələ və ya qarışıq tənlik. Olimpiada/buraxılış imtahanı səviyyəsi, " +
-                  "amma TƏHRİF EDİLMİŞ deyil — həll yolu məntiqi olmalıdır."
-                : "ÇƏTİN: Analiz, tətbiq və sintez tələb edən. Sadəcə yaddaş kifayət etmir — " +
-                  "anlayışları yeni kontekstdə birləşdirmək, fərqləndirmək və ya nəticə çıxarmaq lazımdır.";
+                ? "ÇƏTİN — OLİMPİADA / ABİTURİYENT QRUP 1-2 SƏVİYYƏSİ. Bu, dərslik nümunəsi DEYİL. " +
+                  "MƏCBURİ tələblər: " +
+                  "(1) HƏLL ƏN AZI 4-6 MƏNTİQİ ADDIMDAN ibarət olmalı — bir formul tətbiqi ilə bitənlər avtomatik atılır. " +
+                  "(2) ƏN AZI 2-3 fərqli anlayışın birləşdirilməsi tələb olunsun (məs: triqonometriya + həndəsə, " +
+                  "törəmə + ekstremum + tətbiq, ehtimal + kombinatorika). " +
+                  "(3) Sual TƏLƏ ehtiva etsin — sahə şərti, parametr, xüsusi hal, yaxud zahirən aydın görünən " +
+                  "səhv yolu olsun. Şagird ilk baxışda \"bilirəm\" deməli, sonra dərinə girəndə əlavə şərt aşkar etməli. " +
+                  "(4) Cavab dəyəri qeyri-trivial olsun (sadə tam ədəd 1,2,3... və ya 0 — şübhəli), amma " +
+                  "yenə də TƏMİZ qalsın (irrasional, sadə kəsr, $\\pi$-li ifadə qəbul olunur — ondalıq 71.4256 YOX). " +
+                  "(5) Distraktorlar şagirdin TİPİK SƏHV YOLUNDAN gələn dəqiq nəticələr olsun — " +
+                  "məs: işarəni unutmaq, sahə şərtini görməmək, qatlama səhvi etmək — hər biri real, izlənilə bilən səhv. " +
+                  "QADAĞAN: \"$2x+5=13$\" tipli xətti tənliklər, birbaşa düstur tətbiqi, \"hesabla\" sualları."
+                : "ÇƏTİN — ANALİTİK / TƏHLİL SƏVİYYƏSİ. Bu, \"kim/nə/harada\" yox, \"niyə/necə/hansı şərtlərdə\" sualıdır. " +
+                  "MƏCBURİ tələblər: " +
+                  "(1) Yaddaş TƏK BAŞINA kifayət etməsin — şagird anlayışı yeni kontekstdə tətbiq etməli, " +
+                  "müqayisə etməli, və ya səbəb-nəticə zəncirini izləməli. " +
+                  "(2) Sual ən azı 2 anlayış / dövr / fakt arasında ƏLAQƏ qursun (məs: hadisənin səbəbi + nəticəsi, " +
+                  "iki cərəyanın fərqi, mətn parçasından məna çıxarma). " +
+                  "(3) Distraktorlar səthi oxuyan şagirdin seçəcəyi inandırıcı yanlışlar olsun — " +
+                  "qismən doğru, lakin tam yox; oxşar, lakin fərqli dövr/anlayış; ümumi qəbul olunan " +
+                  "yanlış təsəvvür. " +
+                  "(4) Stem-də açıq cavab IŞARƏSİ olmasın — bütün açar sözlər neytral olsun. " +
+                  "QADAĞAN: \"X hansı ildə baş verdi?\", \"Y kim yazıb?\" kimi birbaşa xatırlama sualları.";
             default -> isMath
-                ? "ORTA: 2 addımlı tipik dərslik məsələsi. Standart tənlik və ya konsept tətbiqi. " +
-                  "Orta tələbə 1-2 dəqiqədə həll edə bilər."
+                ? "ORTA: 2-3 addımlı dərslik məsələsi — standart tənliyin/konseptin TƏTBİQİ. " +
+                  "Düstur xatırlama tək başına yetməsin; şagird hansı düsturun lazım olduğunu QƏRARA almalıdır. " +
+                  "Orta tələbə 2-3 dəqiqədə həll edə bilər."
                 : "ORTA: Sadəcə yaddaş deyil, anlayışı tələb edən. " +
-                  "Müqayisə, səbəb-nəticə və ya tətbiq sualı.";
+                  "Müqayisə, səbəb-nəticə və ya tətbiq sualı — fakt + onun mənası birlikdə.";
         };
     }
 
@@ -306,6 +325,51 @@ public class GeminiService {
 
         String diffRubric = difficultyRubric(req.getDifficulty(), isMath);
         String styleCue   = subjectStyleCue(req.getSubjectName());
+        boolean isHard    = "HARD".equals(req.getDifficulty());
+
+        // HARD mode is the one teachers complain about most — the model regresses
+        // to "medium dressed as hard". This gate forces an explicit self-check
+        // BEFORE the question is emitted: count the steps, name the trap, justify
+        // why a top student would still need to think. Without this, GPT-4o tends
+        // to produce textbook-grade problems even when asked for olympiad-grade.
+        String hardChallengeGate = isHard ? (isMath ? """
+
+                ── HARD MODE — ÇƏTİNLİK QAPISI (məcburi self-check) ──
+                Hər sualı emit etməzdən əvvəl mətndə YOX, ağlında bu yoxlamadan keç:
+                  [1] ADDIM SAYI: Tam həll neçə məntiqi addım tələb edir? Cavab 4-dən az olarsa — DİSKARD, yenidən qur.
+                  [2] KONSEPT SAYI: Hansı 2-3 fərqli anlayış birləşdirilir? Adlarını sadala. Sadəcə 1 anlayış olarsa — DİSKARD.
+                  [3] TƏLƏ: Bu sualda hansı incəlik / xüsusi hal / sahə şərti var ki, şagird görməsə səhv etsin?
+                      Tələ yoxdursa — DİSKARD.
+                  [4] BLOOM SƏVİYYƏSİ: Sual yalnız \"hesabla\" deyirsə (apply) — bu kifayət deyil.
+                      \"Analiz et / sintez et / qiymətləndir\" tələb olunsun.
+                  [5] OLİMPİADA FİLTRİ: Yaxşı 11-ci sinif şagirdi bu sualı 3 dəqiqədən az vaxtda həll edə bilərsə —
+                      çox asandır, DİSKARD. Lakin 15 dəqiqədən çox tələb edirsə — imtahan üçün çox uzundur, sadələşdir.
+                  [6] DİSTRAKTOR DƏRİNLİYİ: Hər səhv variant şagirdin EDƏCƏYİ KONKRET SƏHVİN nəticəsi olmalı —
+                      \"sahəni unutdu\", \"işarəni dəyişmədi\", \"qatlanma əmsalını səhv saldı\" kimi. Random ədədlər YOX.
+
+                NÜMUNƏ MƏNTİQİ (kopyalama, yalnız səviyyə referansı):
+                  • Pis HARD: \"$3x - 7 = 8$ həll et\" (1 addım, tələ yox — bu EASY-dir).
+                  • Yaxşı HARD: \"$f(x) = \\\\frac{x^2 - 4}{x - 2}$ funksiyası $x = 2$ nöqtəsində kəsilməzdirmi?
+                    Əgər deyilsə, onu kəsilməz etmək üçün $f(2)$ qiyməti necə təyin olunmalıdır?\"
+                    (təyin oblastı + limit + kəsilməzlik şərti — 3 konsept, tələ: birbaşa qoymaq olmaz)."""
+                : """
+
+                ── HARD MODE — ÇƏTİNLİK QAPISI (məcburi self-check) ──
+                Hər sualı emit etməzdən əvvəl mətndə YOX, ağlında bu yoxlamadan keç:
+                  [1] BLOOM SƏVİYYƏSİ: Sual sadəcə \"X nədir / kim / nə vaxt\" deyirsə — DİSKARD.
+                      \"Niyə\", \"hansı şərtlərdə\", \"hansı nəticəyə gətirir\", \"X və Y-nin fərqi\" formasında olsun.
+                  [2] ƏLAQƏ: Sual ən azı 2 fakt / anlayış / dövr / personaj arasında əlaqə qurursa? Yoxsa — DİSKARD.
+                  [3] SƏTHİ OXUYAN ŞAGİRD: Mövzunu səthi öyrənmiş şagird bu sualı sadəcə açar sözə baxıb həll edə bilərmi?
+                      Cavab \"hə\" olarsa — DİSKARD, stem-i daha incə qur.
+                  [4] DİSTRAKTOR KEYFİYYƏTİ: Hər səhv variant ya qismən doğru, ya oxşar dövr/anlayış,
+                      ya da ümumi yanlış təsəvvürü əks etdirsin. Random fakt YOX.
+                  [5] STEM NEYTRALLIĞI: Stem-də cavabı işarələyən söz/ifadə var? Çıxar.
+
+                NÜMUNƏ MƏNTİQİ (kopyalama, yalnız səviyyə referansı):
+                  • Pis HARD: \"Azərbaycan müstəqilliyini hansı ildə bərpa etdi?\" (yaddaş, 1 addım — EASY-dir).
+                  • Yaxşı HARD: \"1991-ci ildə Azərbaycanın müstəqillik elan etməsi və 1918-ci il Cümhuriyyətinin
+                    yaradılması arasındakı əsas struktur fərq aşağıdakılardan hansıdır?\"
+                    (müqayisə, iki dövr, struktur təhlili — yaddaş yetmir).""") : "";
 
         String latexNote = isMath ? """
 
@@ -413,7 +477,8 @@ public class GeminiService {
                 (diversityRule.isEmpty() ? "" : diversityRule + "\n") +
                 langLine +
                 "SUAL SAYI: DƏQİQ " + req.getCount() + " sual.\n" +
-                latexNote + "\n\n" +
+                latexNote +
+                hardChallengeGate + "\n\n" +
                 typeRules + "\n\n" +
                 "JSON SXEMİ:\n" +
                 "{ \"questions\": [ { \"content\": string" +
@@ -442,11 +507,16 @@ public class GeminiService {
      * degrades reasoning quality, even on creative tasks.
      */
     private double temperatureFor(GenerateQuestionsRequest req) {
-        if (isMathSubject(req.getSubjectName())) return 0.30;
-        if (isScienceSubject(req.getSubjectName())) return 0.40;
-        if (isHistorySubject(req.getSubjectName())) return 0.40;
-        if (isLanguageSubject(req.getSubjectName())) return 0.60;
-        return 0.50;
+        // HARD mode needs more creative problem construction — at the base
+        // temperatures the model defaults to textbook templates. We nudge up
+        // ~0.15 for hard questions, but cap math at 0.45 so reasoning stays
+        // reliable (numbers, signs, units don't drift).
+        boolean isHard = "HARD".equals(req.getDifficulty());
+        if (isMathSubject(req.getSubjectName()))    return isHard ? 0.45 : 0.30;
+        if (isScienceSubject(req.getSubjectName())) return isHard ? 0.55 : 0.40;
+        if (isHistorySubject(req.getSubjectName())) return isHard ? 0.55 : 0.40;
+        if (isLanguageSubject(req.getSubjectName())) return isHard ? 0.70 : 0.60;
+        return isHard ? 0.65 : 0.50;
     }
 
     /**
