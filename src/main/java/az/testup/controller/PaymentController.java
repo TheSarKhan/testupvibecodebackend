@@ -237,7 +237,14 @@ public class PaymentController {
             return ResponseEntity.status(401).body(Map.of("message", "Giriş tələb olunur"));
         }
 
-        String orderId = body.get("orderId").toString();
+        // The frontend occasionally retries /verify after the popup closes
+        // without rebuilding the payload, leaving `orderId` absent. Surface
+        // that as a 400 instead of letting it NPE into a generic 500.
+        Object rawOrderId = body == null ? null : body.get("orderId");
+        if (rawOrderId == null || rawOrderId.toString().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "orderId tələb olunur"));
+        }
+        String orderId = rawOrderId.toString();
 
         PaymentOrder order = paymentOrderRepository.findByOrderId(orderId).orElse(null);
         if (order == null) {
@@ -251,26 +258,44 @@ public class PaymentController {
             return ResponseEntity.status(403).body(Map.of("message", "Bu əməliyyat üçün icazəniz yoxdur"));
         }
 
-        // Already fully processed — return early without hitting Kapital Bank API
+        // Fast paths for terminal states — don't burn a KB API call.
         if ("PAID".equals(order.getStatus())) {
             if (order.getExam() != null) {
                 return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true, "examShareLink", order.getExam().getShareLink()));
             }
             return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true));
         }
-
-        // Atomically claim the order for processing (PENDING → PROCESSING).
-        int claimed = paymentOrderRepository.claimForProcessing(orderId);
-        if (claimed == 0) {
-            // Either already PROCESSING (concurrent request) or FAILED
-            return ResponseEntity.ok(Map.of("status", order.getStatus()));
+        if ("FAILED".equals(order.getStatus())) {
+            return ResponseEntity.ok(Map.of("status", "FAILED"));
         }
 
+        // PENDING or PROCESSING: ALWAYS ask Kapital Bank for the truth.
+        //
+        // Previously we tried to claim PENDING → PROCESSING and returned the
+        // local status when the claim failed (already PROCESSING). That broke
+        // the common case where the user pays in the KB tab, the browser
+        // redirect callback transitions the order to PROCESSING, and then a
+        // hiccup (network, transaction rollback, KB getOrderStatus timeout
+        // mid-flight) leaves it stuck in PROCESSING forever. The frontend
+        // polls /verify, sees PROCESSING again and again until MAX_WAIT
+        // expires, and the user gives up.
+        //
+        // Now we always re-query KB and use markAsPaid as the activation
+        // race guard, so verify can recover from a stuck PROCESSING by
+        // itself.
         String paymentStatus = kapitalBankService.getOrderStatus(orderId);
         boolean isPaid = isPaidStatus(paymentStatus);
 
         if (isPaid) {
-            activateOrder(order, orderId, user);
+            int marked = paymentOrderRepository.markAsPaid(orderId);
+            // Only run activation if THIS request flipped the status.
+            // Reload the order to pick up the fresh PAID row before the
+            // exam-share-link branch fires (the in-memory `order` still
+            // has whatever status JPA loaded at the start).
+            order = paymentOrderRepository.findByOrderId(orderId).orElse(order);
+            if (marked == 1) {
+                activateOrder(order, orderId, user);
+            }
             if (order.getExam() != null) {
                 return ResponseEntity.ok(Map.of("status", "PAID", "examShareLink", order.getExam().getShareLink()));
             }
@@ -279,11 +304,17 @@ public class PaymentController {
 
         if (isFailedStatus(paymentStatus)) {
             order.setStatus("FAILED");
-        } else {
-            order.setStatus("PENDING");
+            paymentOrderRepository.save(order);
+            return ResponseEntity.ok(Map.of("status", "FAILED"));
         }
-        paymentOrderRepository.save(order);
 
+        // Still in-flight at KB. Keep the order in PENDING so the next /verify
+        // call won't get gated by a stale PROCESSING marker. The frontend
+        // polling loop will keep asking until KB resolves.
+        if (!"PENDING".equals(order.getStatus())) {
+            order.setStatus("PENDING");
+            paymentOrderRepository.save(order);
+        }
         return ResponseEntity.ok(Map.of("status", paymentStatus));
     }
 
@@ -353,7 +384,15 @@ public class PaymentController {
 
             if (isPaid) {
                 log.info("KB callback: payment confirmed, activating order={}", orderId);
-                activateOrder(order, orderId, null);
+                // Guard against double activation if /verify already won the
+                // race while the KB retry loop was in flight.
+                int marked = paymentOrderRepository.markAsPaid(orderId);
+                order = paymentOrderRepository.findByOrderId(orderId).orElse(order);
+                if (marked == 1) {
+                    activateOrder(order, orderId, null);
+                } else {
+                    log.info("KB callback: order={} already activated by another path", orderId);
+                }
                 String successUrl = order.getExam() != null
                         ? appBaseUrl + "/odenis/ugurlu?shareLink=" + order.getExam().getShareLink()
                         : appBaseUrl + "/odenis/ugurlu";

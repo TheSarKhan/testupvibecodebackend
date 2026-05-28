@@ -23,6 +23,16 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long
     int claimForProcessing(@Param("orderId") String orderId);
 
     /**
+     * Atomically marks an order PAID, but only if it isn't already PAID.
+     * Returns 1 if THIS call won the race (caller must run activation logic),
+     * 0 if a concurrent request already activated. Lets verify-and-callback
+     * race safely from either side without double-charging subscriptions.
+     */
+    @Modifying
+    @Query("UPDATE PaymentOrder o SET o.status = 'PAID' WHERE o.orderId = :orderId AND o.status <> 'PAID'")
+    int markAsPaid(@Param("orderId") String orderId);
+
+    /**
      * Finds orders stuck in PENDING or PROCESSING for longer than the cutoff,
      * so the scheduler can recover abandoned payments.
      */

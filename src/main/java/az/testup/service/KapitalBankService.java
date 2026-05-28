@@ -20,14 +20,12 @@ public class KapitalBankService {
 
     private static final Logger log = LoggerFactory.getLogger(KapitalBankService.class);
 
-    @Value("${kapitalbank.username}")
-    private String kbUsername;
-
-    @Value("${kapitalbank.password}")
-    private String kbPassword;
-
-    @Value("${kapitalbank.production:false}")
-    private boolean production;
+    // TEMP HARDCODE — Almanya production sunucusunda .env yüklemesi şüpheli,
+    // KB ApeError'unu izole etmek için değerleri doğrudan koda gömüyoruz.
+    // Sorun çözüldükten sonra @Value tabanlı eski hâline döndür.
+    private String kbUsername = "TerminalSys/kapital";
+    private String kbPassword = "kapital123";
+    private boolean production = false;
 
     @Value("${app.base-url}")
     private String appBaseUrl;
