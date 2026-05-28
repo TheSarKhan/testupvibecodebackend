@@ -63,17 +63,21 @@ public class AuthService {
 
         user = userRepository.save(user);
 
-        // Auto-assign 3-month Basic plan for new teachers
+        // Auto-assign 2-month Standart plan for new teachers. The plan name in
+        // production has been renamed from "Basic" to "Standart" — try the
+        // current name first and fall back to the legacy one so this still
+        // works on databases that haven't been re-seeded yet.
         boolean giftPlanAssigned = false;
         if (role == Role.TEACHER) {
-            Optional<SubscriptionPlan> basicPlan = subscriptionPlanRepository.findByName("Basic");
-            if (basicPlan.isPresent()) {
+            Optional<SubscriptionPlan> giftPlan = subscriptionPlanRepository.findByName("Standart")
+                    .or(() -> subscriptionPlanRepository.findByName("Basic"));
+            if (giftPlan.isPresent()) {
                 LocalDateTime now = LocalDateTime.now();
                 UserSubscription gift = UserSubscription.builder()
                         .user(user)
-                        .plan(basicPlan.get())
+                        .plan(giftPlan.get())
                         .startDate(now)
-                        .endDate(now.plusMonths(3))
+                        .endDate(now.plusMonths(2))
                         .isActive(true)
                         .paymentProvider("GIFT")
                         // transaction_id has a unique constraint — postfix with user id so
@@ -83,8 +87,8 @@ public class AuthService {
                 userSubscriptionRepository.save(gift);
                 giftPlanAssigned = true;
                 auditLogService.log(AuditAction.SUBSCRIPTION_GIFTED, user.getEmail(), user.getFullName(),
-                        "SUBSCRIPTION", basicPlan.get().getName(),
-                        "Yeni müəllim qeydiyyatı — 3 aylıq pulsuz Basic plan");
+                        "SUBSCRIPTION", giftPlan.get().getName(),
+                        "Yeni müəllim qeydiyyatı — 2 aylıq pulsuz " + giftPlan.get().getName() + " plan");
             }
         }
 

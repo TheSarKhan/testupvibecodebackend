@@ -180,14 +180,17 @@ public class GoogleAuthService {
 
         boolean giftPlanAssigned = false;
         if (userRole == Role.TEACHER) {
-            Optional<SubscriptionPlan> basicPlan = subscriptionPlanRepository.findByName("Basic");
-            if (basicPlan.isPresent()) {
+            // Match AuthService.register — 2 months of Standart (falling back to
+            // the legacy Basic name) so Google OAuth signups get the same gift.
+            Optional<SubscriptionPlan> giftPlan = subscriptionPlanRepository.findByName("Standart")
+                    .or(() -> subscriptionPlanRepository.findByName("Basic"));
+            if (giftPlan.isPresent()) {
                 LocalDateTime now = LocalDateTime.now();
                 UserSubscription gift = UserSubscription.builder()
                         .user(user)
-                        .plan(basicPlan.get())
+                        .plan(giftPlan.get())
                         .startDate(now)
-                        .endDate(now.plusMonths(3))
+                        .endDate(now.plusMonths(2))
                         .isActive(true)
                         .paymentProvider("GIFT")
                         // transaction_id has a unique constraint — postfix with user id so
