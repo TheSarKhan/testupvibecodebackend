@@ -131,15 +131,22 @@ public class PaymentController {
                     && currentPlan.getId().equals(plan.getId());
             if (!isSamePlan
                     && current.getStartDate() != null
-                    && current.getEndDate() != null) {
+                    && current.getEndDate() != null
+                    // Credit only applies when the user has ACTUALLY paid cash
+                    // for the active subscription. Gift / welcome-bonus rows
+                    // (paymentProvider="GIFT") and internal credit-rollovers
+                    // ("CREDIT") store amountPaid=0, so without this guard a
+                    // brand-new teacher could register, claim the 60-day
+                    // Standart gift, switch to Pro, and walk away with ~20
+                    // free Pro days that nobody paid for. List-price fallback
+                    // removed for the same reason.
+                    && current.getAmountPaid() > 0) {
                 long totalSeconds = ChronoUnit.SECONDS.between(current.getStartDate(), current.getEndDate());
                 long remainingSeconds = ChronoUnit.SECONDS.between(now, current.getEndDate());
                 if (totalSeconds > 0 && remainingSeconds > 0) {
                     double totalDaysExact = totalSeconds / 86400.0;
                     double remainingDaysExact = remainingSeconds / 86400.0;
-                    double oldDailyRate = current.getAmountPaid() > 0
-                            ? current.getAmountPaid() / totalDaysExact
-                            : currentPlanPrice / 30.0;
+                    double oldDailyRate = current.getAmountPaid() / totalDaysExact;
                     creditAzn = oldDailyRate * remainingDaysExact;
                     // Cap credit at the listed value of the remaining time on the
                     // current plan — defends against over-credit if amountPaid was
