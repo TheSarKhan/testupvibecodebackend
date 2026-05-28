@@ -131,28 +131,30 @@ public class PaymentController {
                     && currentPlan.getId().equals(plan.getId());
             if (!isSamePlan
                     && current.getStartDate() != null
-                    && current.getEndDate() != null
-                    // Credit only applies when the user has ACTUALLY paid cash
-                    // for the active subscription. Gift / welcome-bonus rows
-                    // (paymentProvider="GIFT") and internal credit-rollovers
-                    // ("CREDIT") store amountPaid=0, so without this guard a
-                    // brand-new teacher could register, claim the 60-day
-                    // Standart gift, switch to Pro, and walk away with ~20
-                    // free Pro days that nobody paid for. List-price fallback
-                    // removed for the same reason.
-                    && current.getAmountPaid() > 0) {
+                    && current.getEndDate() != null) {
                 long totalSeconds = ChronoUnit.SECONDS.between(current.getStartDate(), current.getEndDate());
                 long remainingSeconds = ChronoUnit.SECONDS.between(now, current.getEndDate());
                 if (totalSeconds > 0 && remainingSeconds > 0) {
                     double totalDaysExact = totalSeconds / 86400.0;
                     double remainingDaysExact = remainingSeconds / 86400.0;
-                    double oldDailyRate = current.getAmountPaid() / totalDaysExact;
-                    creditAzn = oldDailyRate * remainingDaysExact;
-                    // Cap credit at the listed value of the remaining time on the
-                    // current plan — defends against over-credit if amountPaid was
-                    // inflated by previous credits (compounding).
                     double remainingListedValue = (currentPlanPrice / 30.0) * remainingDaysExact;
-                    if (creditAzn > remainingListedValue) {
+                    if (current.getAmountPaid() > 0) {
+                        double oldDailyRate = current.getAmountPaid() / totalDaysExact;
+                        creditAzn = oldDailyRate * remainingDaysExact;
+                        // Cap credit at the listed value of the remaining time on
+                        // the current plan — defends against over-credit if
+                        // amountPaid was inflated by previous credits.
+                        if (creditAzn > remainingListedValue) {
+                            creditAzn = remainingListedValue;
+                        }
+                    } else if (newPrice <= currentPlanPrice) {
+                        // Gift / admin-assigned plan being switched to an
+                        // equal-or-cheaper tier — apply list-price credit. The
+                        // historic guard (amountPaid > 0) exists to block a
+                        // gift→higher-tier rollover (e.g. 60-day Standart gift
+                        // becoming ~20 free Pro days). Downgrades and lateral
+                        // moves don't have that risk: the user is reducing the
+                        // tier they already hold, not extracting more value.
                         creditAzn = remainingListedValue;
                     }
                 }
