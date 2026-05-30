@@ -229,13 +229,19 @@ public class PdfService {
 
             boolean contentBlank = isContentEffectivelyEmpty(q.getContent());
             boolean hasImage = q.getAttachedImage() != null && !q.getAttachedImage().trim().isEmpty();
+            boolean hasOptionImage = q.getOptions() != null && q.getOptions().stream()
+                    .anyMatch(o -> o.getAttachedImage() != null && !o.getAttachedImage().trim().isEmpty());
+            // Only questions that carry an image need to be held together as a
+            // single block (so the picture never gets separated from its text
+            // across a page break). Text-only questions flow normally and pack
+            // densely — forcing THEM to keep together just pushed half-fitting
+            // questions to the next page and wasted whole pages of paper.
+            boolean keepTogether = hasImage || hasOptionImage;
 
             // Collect every element of this question — stem, image, options /
-            // answer area — and emit them as ONE keep-together block (see the
-            // qWrap table at the end of the loop). That way the question text,
-            // its image and its options never split across a page break: if
-            // they don't all fit in the remaining space, the whole question
-            // moves to the next page together.
+            // answer area. Image questions are emitted as one keep-together
+            // block (qWrap); text-only ones are streamed straight to the
+            // document so they fill the page.
             java.util.List<Element> qElements = new java.util.ArrayList<>();
 
             // Stem: number + question text (just the number for image-only
@@ -335,21 +341,36 @@ public class PdfService {
                 qElements.add(field);
             }
 
-            // Emit the whole question as ONE keep-together block: a single-cell
-            // table that iText moves to the next page as a unit when it doesn't
-            // fit, so the question text + image + options never get separated.
-            PdfPCell qCell = new PdfPCell();
-            qCell.setBorder(Rectangle.NO_BORDER);
-            qCell.setPadding(0f);
-            for (Element el : qElements) qCell.addElement(el);
+            if (keepTogether) {
+                // Image question → one keep-together block: a single-cell table
+                // that iText moves to the next page as a unit when it doesn't
+                // fit, so the text + image + options never get separated.
+                PdfPCell qCell = new PdfPCell();
+                qCell.setBorder(Rectangle.NO_BORDER);
+                qCell.setPadding(0f);
+                for (Element el : qElements) qCell.addElement(el);
 
-            PdfPTable qWrap = new PdfPTable(1);
-            qWrap.setWidthPercentage(100);
-            qWrap.setKeepTogether(true);
-            qWrap.setSpacingBefore(15f);
-            qWrap.setSpacingAfter(5f);
-            qWrap.addCell(qCell);
-            document.add(qWrap);
+                PdfPTable qWrap = new PdfPTable(1);
+                qWrap.setWidthPercentage(100);
+                qWrap.setKeepTogether(true);
+                qWrap.setSpacingBefore(15f);
+                qWrap.setSpacingAfter(5f);
+                qWrap.addCell(qCell);
+                document.add(qWrap);
+            } else {
+                // Text-only question → stream elements straight to the document
+                // so consecutive questions fill the page (no wasted whitespace).
+                // The stem may split across a page boundary, which is fine for
+                // plain text. Give the stem the inter-question top spacing.
+                boolean firstElement = true;
+                for (Element el : qElements) {
+                    if (firstElement && el instanceof Paragraph p) {
+                        p.setSpacingBefore(15f);
+                        firstElement = false;
+                    }
+                    document.add(el);
+                }
+            }
         }
 
         // --- Answer Key Page ---
