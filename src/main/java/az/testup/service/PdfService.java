@@ -293,12 +293,19 @@ public class PdfService {
                     }
                     qElements.add(optTable);
                 } else {
-                    // Text-only options laid out in TWO columns (A | B, C | D)
-                    // so each question takes roughly half the vertical space.
-                    PdfPTable optTable = new PdfPTable(2);
+                    // Text-only options: two columns (A | B, C | D) to save
+                    // vertical space, BUT fall back to one column when any
+                    // option is long — long text doesn't fit side-by-side and
+                    // would wrap into a cramped, hard-to-read block.
+                    int longestOption = options.stream()
+                            .map(o -> plainTextLength(o.getContent()))
+                            .max(Integer::compareTo).orElse(0);
+                    int columns = longestOption > OPTION_TWO_COL_MAX_CHARS ? 1 : 2;
+
+                    PdfPTable optTable = new PdfPTable(columns);
                     try {
                         optTable.setWidthPercentage(100f);
-                        optTable.setWidths(new float[]{1f, 1f});
+                        if (columns == 2) optTable.setWidths(new float[]{1f, 1f});
                     } catch (Exception ignored) {}
                     optTable.setSpacingBefore(2f);
                     optTable.setSpacingAfter(2f);
@@ -309,7 +316,7 @@ public class PdfService {
                     }
                     // Pad the last row so an odd option count still forms a
                     // complete 2-column row.
-                    if (options.size() % 2 == 1) {
+                    if (columns == 2 && options.size() % 2 == 1) {
                         PdfPCell filler = new PdfPCell();
                         filler.setBorder(Rectangle.NO_BORDER);
                         optTable.addCell(filler);
@@ -953,12 +960,22 @@ public class PdfService {
     /** True when the question/option content is effectively empty after stripping HTML and whitespace. */
     private boolean isContentEffectivelyEmpty(String html) {
         if (html == null) return true;
-        String stripped = html
-            .replaceAll("(?i)<br\\s*/?>", "")
+        return plainTextLength(html) == 0;
+    }
+
+    // Above this plain-text length, MCQ options are rendered one-per-row instead
+    // of two-per-row: long options don't fit comfortably side by side.
+    private static final int OPTION_TWO_COL_MAX_CHARS = 35;
+
+    /** Plain-text length of HTML content after stripping tags/entities and trimming. */
+    private int plainTextLength(String html) {
+        if (html == null) return 0;
+        return html
+            .replaceAll("(?i)<br\\s*/?>", " ")
             .replaceAll("<[^>]+>", "")
             .replace("&nbsp;", " ")
-            .trim();
-        return stripped.isEmpty();
+            .trim()
+            .length();
     }
 }
 
