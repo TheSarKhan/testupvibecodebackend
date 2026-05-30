@@ -265,6 +265,42 @@ public class PdfService {
                     log.warn("Could not embed image for image-only question", e);
                 }
                 document.add(tightBlock);
+            } else if (hasImage) {
+                // Question text + image kept together: a large picture is never
+                // orphaned from its question across a page break. If the block
+                // doesn't fit in the remaining space it moves to the next page
+                // as a whole, instead of leaving the text/first options on one
+                // page and the image on the next (the reported bug).
+                PdfPTable block = new PdfPTable(1);
+                block.setWidthPercentage(100);
+                block.setSpacingBefore(15f);
+                block.setSpacingAfter(5f);
+                block.setKeepTogether(true);
+
+                Paragraph qPara = new Paragraph();
+                qPara.add(new Chunk((i + 1) + ". ", qFont));
+                addRichText(qPara, q.getContent(), qFont);
+                PdfPCell textCell = new PdfPCell();
+                textCell.setBorder(Rectangle.NO_BORDER);
+                textCell.setPadding(0f);
+                textCell.addElement(qPara);
+                block.addCell(textCell);
+
+                try {
+                    Image img = loadAndScaleImage(q.getAttachedImage());
+                    if (img != null) {
+                        PdfPCell imgCell = new PdfPCell();
+                        imgCell.setBorder(Rectangle.NO_BORDER);
+                        imgCell.setPaddingTop(4f);
+                        imgCell.setPaddingBottom(0f);
+                        imgCell.setPaddingLeft(0f);
+                        imgCell.addElement(img);
+                        block.addCell(imgCell);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not embed question image", e);
+                }
+                document.add(block);
             } else {
                 Paragraph qPara = new Paragraph();
                 qPara.add(new Chunk((i + 1) + ". ", qFont));
@@ -272,10 +308,6 @@ public class PdfService {
                 qPara.setSpacingBefore(15f);
                 qPara.setSpacingAfter(5f);
                 document.add(qPara);
-
-                if (hasImage) {
-                    addImageToDocument(document, q.getAttachedImage(), false);
-                }
             }
 
             // Question Type Specifics
@@ -297,6 +329,12 @@ public class PdfService {
                     try { optTable.setWidthPercentage(100f); } catch (Exception ignored) {}
                     optTable.setSpacingBefore(2f);
                     optTable.setSpacingAfter(2f);
+                    // Don't split an option's cell across pages: when a variant's
+                    // text + image doesn't fit in the remaining space, move the
+                    // whole variant to the next page instead of leaving the text
+                    // on one page and the picture on the next (the reported bug).
+                    optTable.setSplitLate(true);
+                    optTable.setSplitRows(false);
                     char optionChar = 'A';
                     for (Option opt : options) {
                         optTable.addCell(buildOptionCell(optionChar, opt.getContent(), opt.getAttachedImage(), oLabelFont, oFont));
@@ -742,6 +780,22 @@ public class PdfService {
         return cell;
     }
 
+    // Standard cap for any embedded image. Large uploads previously kept their
+    // near-full-page width (only width was bounded, height never was), so a
+    // tall picture dominated the page and spilled across page breaks. Bound
+    // BOTH dimensions to a sensible box so images stay readable but compact.
+    private static final float IMG_MAX_WIDTH = 300f;   // pt (~10.6 cm)
+    private static final float IMG_MAX_HEIGHT = 300f;  // pt (~10.6 cm)
+
+    /** Scale an image down (never up) to fit within maxWidth × maxHeight, keeping aspect ratio. */
+    private void scaleToBox(Image img, float maxWidth, float maxHeight) {
+        float w = img.getPlainWidth();
+        float h = img.getPlainHeight();
+        if (w <= 0 || h <= 0) return;
+        float scale = Math.min(maxWidth / w, maxHeight / h);
+        if (scale < 1f) img.scalePercent(scale * 100f);
+    }
+
     /** Load (base64 data-URL or remote URL) + scale an image to fit maxWidth. */
     private Image loadImage(String imageUrl, float maxWidth) throws Exception {
         if (imageUrl == null || imageUrl.isBlank()) return null;
@@ -752,9 +806,8 @@ public class PdfService {
         } else {
             img = Image.getInstance(imageUrl);
         }
-        if (img.getPlainWidth() > maxWidth) {
-            img.scalePercent((maxWidth / img.getPlainWidth()) * 100f);
-        }
+        // Bound to the standard box (respecting any tighter caller width).
+        scaleToBox(img, Math.min(maxWidth, IMG_MAX_WIDTH), IMG_MAX_HEIGHT);
         return img;
     }
 
@@ -769,9 +822,7 @@ public class PdfService {
             img = Image.getInstance(imageUrl);
         }
         float maxWidth = (PageSize.A4.getWidth() - 100) * 0.42f;
-        if (img.getPlainWidth() > maxWidth) {
-            img.scalePercent((maxWidth / img.getPlainWidth()) * 100f);
-        }
+        scaleToBox(img, maxWidth, IMG_MAX_HEIGHT);
         return img;
     }
 
@@ -848,11 +899,7 @@ public class PdfService {
         } else {
             img = Image.getInstance(imageUrl);
         }
-        float maxWidth = PageSize.A4.getWidth() - 100;
-        if (img.getPlainWidth() > maxWidth) {
-            float percentage = (maxWidth / img.getPlainWidth()) * 100;
-            img.scalePercent(percentage);
-        }
+        scaleToBox(img, IMG_MAX_WIDTH, IMG_MAX_HEIGHT);
         return img;
     }
 
@@ -872,12 +919,9 @@ public class PdfService {
                 img = Image.getInstance(imageUrl);
             }
 
-            // Scaled image to fit the page width
-            float maxWidth = PageSize.A4.getWidth() - 100; // margin
-            if (img.getPlainWidth() > maxWidth) {
-                float percentage = (maxWidth / img.getPlainWidth()) * 100;
-                img.scalePercent(percentage);
-            }
+            // Bound to the standard box so large uploads don't dominate the
+            // page or get orphaned across a page break.
+            scaleToBox(img, IMG_MAX_WIDTH, IMG_MAX_HEIGHT);
             // For image-only questions the label paragraph above already
             // collapses to a single line — start the image flush against it
             // (zero spacingBefore) so the number sits right on top of the
