@@ -131,16 +131,17 @@ public class PdfService {
             }
 
 
-            titleFont = new Font(bf, 20, Font.BOLD);
-            metaFont = new Font(bf, 10, Font.ITALIC);
-            qFont = new Font(bf, 12, Font.BOLD);
-            oFont = new Font(bf, 11, Font.NORMAL);
+            // Slightly compact fonts (q 12→11, o 11→10) so more fits per page.
+            titleFont = new Font(bf, 18, Font.BOLD);
+            metaFont = new Font(bf, 9, Font.ITALIC);
+            qFont = new Font(bf, 11, Font.BOLD);
+            oFont = new Font(bf, 10, Font.NORMAL);
         } catch (Exception e) {
             log.warn("Could not load any Unicode font, falling back to Helvetica.", e);
-            titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20);
-            metaFont = FontFactory.getFont(FontFactory.HELVETICA, 10, Font.ITALIC);
-            qFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12);
-            oFont = FontFactory.getFont(FontFactory.HELVETICA, 11);
+            titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18);
+            metaFont = FontFactory.getFont(FontFactory.HELVETICA, 9, Font.ITALIC);
+            qFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11);
+            oFont = FontFactory.getFont(FontFactory.HELVETICA, 10);
         }
 
         // Title
@@ -292,19 +293,28 @@ public class PdfService {
                     }
                     qElements.add(optTable);
                 } else {
+                    // Text-only options laid out in TWO columns (A | B, C | D)
+                    // so each question takes roughly half the vertical space.
+                    PdfPTable optTable = new PdfPTable(2);
+                    try {
+                        optTable.setWidthPercentage(100f);
+                        optTable.setWidths(new float[]{1f, 1f});
+                    } catch (Exception ignored) {}
+                    optTable.setSpacingBefore(2f);
+                    optTable.setSpacingAfter(2f);
                     char optionChar = 'A';
                     for (Option opt : options) {
-                        Paragraph oPara = new Paragraph();
-                        oPara.add(new Chunk("   " + optionChar + ") ", oLabelFont));
-                        String optContent = opt.getContent();
-                        if (optContent == null || optContent.isBlank() || optContent.replaceAll("<[^>]+>", "").isBlank()) {
-                            optContent = optionChar + " variantı";
-                        }
-                        addRichText(oPara, optContent, oFont);
-                        oPara.setSpacingAfter(2f);
-                        qElements.add(oPara);
+                        optTable.addCell(buildTextOptionCell(optionChar, opt.getContent(), oLabelFont, oFont));
                         optionChar++;
                     }
+                    // Pad the last row so an odd option count still forms a
+                    // complete 2-column row.
+                    if (options.size() % 2 == 1) {
+                        PdfPCell filler = new PdfPCell();
+                        filler.setBorder(Rectangle.NO_BORDER);
+                        optTable.addCell(filler);
+                    }
+                    qElements.add(optTable);
                 }
             } else if (q.getQuestionType() == QuestionType.OPEN_AUTO || q.getQuestionType() == QuestionType.OPEN_MANUAL) {
                 Paragraph field = new Paragraph("   Cavab: __________________________________________________", oFont);
@@ -353,8 +363,8 @@ public class PdfService {
                 PdfPTable qWrap = new PdfPTable(1);
                 qWrap.setWidthPercentage(100);
                 qWrap.setKeepTogether(true);
-                qWrap.setSpacingBefore(15f);
-                qWrap.setSpacingAfter(5f);
+                qWrap.setSpacingBefore(10f);
+                qWrap.setSpacingAfter(4f);
                 qWrap.addCell(qCell);
                 document.add(qWrap);
             } else {
@@ -365,7 +375,7 @@ public class PdfService {
                 boolean firstElement = true;
                 for (Element el : qElements) {
                     if (firstElement && el instanceof Paragraph p) {
-                        p.setSpacingBefore(15f);
+                        p.setSpacingBefore(10f);
                         firstElement = false;
                     }
                     document.add(el);
@@ -762,12 +772,36 @@ public class PdfService {
         return cell;
     }
 
+    /**
+     * Build a compact text-only MCQ option cell for the 2-column option layout
+     * (label + text, no image). Tight padding so two columns of options stay
+     * close together and save vertical space.
+     */
+    private PdfPCell buildTextOptionCell(char optionChar, String content, Font labelFont, Font oFont) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPaddingTop(1f);
+        cell.setPaddingBottom(1f);
+        cell.setPaddingLeft(0f);
+        cell.setPaddingRight(6f);
+
+        Paragraph p = new Paragraph();
+        p.add(new Chunk("   " + optionChar + ") ", labelFont));
+        String optContent = content;
+        if (optContent == null || optContent.isBlank() || optContent.replaceAll("<[^>]+>", "").isBlank()) {
+            optContent = optionChar + " variantı";
+        }
+        addRichText(p, optContent, oFont);
+        cell.addElement(p);
+        return cell;
+    }
+
     // Standard cap for any embedded image. Large uploads previously kept their
     // near-full-page width (only width was bounded, height never was), so a
     // tall picture dominated the page and spilled across page breaks. Bound
     // BOTH dimensions to a sensible box so images stay readable but compact.
-    private static final float IMG_MAX_WIDTH = 300f;   // pt (~10.6 cm)
-    private static final float IMG_MAX_HEIGHT = 300f;  // pt (~10.6 cm)
+    private static final float IMG_MAX_WIDTH = 240f;   // pt (~8.5 cm)
+    private static final float IMG_MAX_HEIGHT = 240f;  // pt (~8.5 cm)
 
     /** Scale an image down (never up) to fit within maxWidth × maxHeight, keeping aspect ratio. */
     private void scaleToBox(Image img, float maxWidth, float maxHeight) {
