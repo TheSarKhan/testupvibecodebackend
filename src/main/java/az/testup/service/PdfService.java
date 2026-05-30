@@ -230,84 +230,34 @@ public class PdfService {
             boolean contentBlank = isContentEffectivelyEmpty(q.getContent());
             boolean hasImage = q.getAttachedImage() != null && !q.getAttachedImage().trim().isEmpty();
 
-            // Image-only question: render the number and image inside a
-            // single-cell table with `setKeepTogether(true)`. This prevents
-            // iText from page-breaking after the "5." line and pushing the
-            // image to the next page (which produced a huge visual gap), and
-            // also keeps padding tight so the number sits flush above the
-            // image with no surrounding whitespace.
+            // Collect every element of this question — stem, image, options /
+            // answer area — and emit them as ONE keep-together block (see the
+            // qWrap table at the end of the loop). That way the question text,
+            // its image and its options never split across a page break: if
+            // they don't all fit in the remaining space, the whole question
+            // moves to the next page together.
+            java.util.List<Element> qElements = new java.util.ArrayList<>();
+
+            // Stem: number + question text (just the number for image-only
+            // questions, where the picture IS the question).
             if (contentBlank && hasImage) {
-                PdfPTable tightBlock = new PdfPTable(1);
-                tightBlock.setWidthPercentage(100);
-                tightBlock.setSpacingBefore(15f);
-                tightBlock.setSpacingAfter(5f);
-                tightBlock.setKeepTogether(true);
-
-                PdfPCell numberCell = new PdfPCell(new Phrase((i + 1) + ".", qFont));
-                numberCell.setBorder(Rectangle.NO_BORDER);
-                numberCell.setPaddingTop(0f);
-                numberCell.setPaddingBottom(0f);
-                numberCell.setPaddingLeft(0f);
-                tightBlock.addCell(numberCell);
-
-                try {
-                    Image inlineImg = loadAndScaleImage(q.getAttachedImage());
-                    if (inlineImg != null) {
-                        PdfPCell imgCell = new PdfPCell();
-                        imgCell.setBorder(Rectangle.NO_BORDER);
-                        imgCell.setPaddingTop(0f);
-                        imgCell.setPaddingBottom(0f);
-                        imgCell.setPaddingLeft(0f);
-                        imgCell.addElement(inlineImg);
-                        tightBlock.addCell(imgCell);
-                    }
-                } catch (Exception e) {
-                    log.warn("Could not embed image for image-only question", e);
-                }
-                document.add(tightBlock);
-            } else if (hasImage) {
-                // Question text + image kept together: a large picture is never
-                // orphaned from its question across a page break. If the block
-                // doesn't fit in the remaining space it moves to the next page
-                // as a whole, instead of leaving the text/first options on one
-                // page and the image on the next (the reported bug).
-                PdfPTable block = new PdfPTable(1);
-                block.setWidthPercentage(100);
-                block.setSpacingBefore(15f);
-                block.setSpacingAfter(5f);
-                block.setKeepTogether(true);
-
-                Paragraph qPara = new Paragraph();
-                qPara.add(new Chunk((i + 1) + ". ", qFont));
-                addRichText(qPara, q.getContent(), qFont);
-                PdfPCell textCell = new PdfPCell();
-                textCell.setBorder(Rectangle.NO_BORDER);
-                textCell.setPadding(0f);
-                textCell.addElement(qPara);
-                block.addCell(textCell);
-
-                try {
-                    Image img = loadAndScaleImage(q.getAttachedImage());
-                    if (img != null) {
-                        PdfPCell imgCell = new PdfPCell();
-                        imgCell.setBorder(Rectangle.NO_BORDER);
-                        imgCell.setPaddingTop(4f);
-                        imgCell.setPaddingBottom(0f);
-                        imgCell.setPaddingLeft(0f);
-                        imgCell.addElement(img);
-                        block.addCell(imgCell);
-                    }
-                } catch (Exception e) {
-                    log.warn("Could not embed question image", e);
-                }
-                document.add(block);
+                qElements.add(new Paragraph((i + 1) + ".", qFont));
             } else {
                 Paragraph qPara = new Paragraph();
                 qPara.add(new Chunk((i + 1) + ". ", qFont));
                 addRichText(qPara, q.getContent(), qFont);
-                qPara.setSpacingBefore(15f);
-                qPara.setSpacingAfter(5f);
-                document.add(qPara);
+                qPara.setSpacingAfter(hasImage ? 4f : 5f);
+                qElements.add(qPara);
+            }
+
+            // Optional question image (already bounded to the standard box).
+            if (hasImage) {
+                try {
+                    Image img = loadAndScaleImage(q.getAttachedImage());
+                    if (img != null) qElements.add(img);
+                } catch (Exception e) {
+                    log.warn("Could not embed question image", e);
+                }
             }
 
             // Question Type Specifics
@@ -329,18 +279,12 @@ public class PdfService {
                     try { optTable.setWidthPercentage(100f); } catch (Exception ignored) {}
                     optTable.setSpacingBefore(2f);
                     optTable.setSpacingAfter(2f);
-                    // Don't split an option's cell across pages: when a variant's
-                    // text + image doesn't fit in the remaining space, move the
-                    // whole variant to the next page instead of leaving the text
-                    // on one page and the picture on the next (the reported bug).
-                    optTable.setSplitLate(true);
-                    optTable.setSplitRows(false);
                     char optionChar = 'A';
                     for (Option opt : options) {
                         optTable.addCell(buildOptionCell(optionChar, opt.getContent(), opt.getAttachedImage(), oLabelFont, oFont));
                         optionChar++;
                     }
-                    document.add(optTable);
+                    qElements.add(optTable);
                 } else {
                     char optionChar = 'A';
                     for (Option opt : options) {
@@ -352,16 +296,17 @@ public class PdfService {
                         }
                         addRichText(oPara, optContent, oFont);
                         oPara.setSpacingAfter(2f);
-                        document.add(oPara);
+                        qElements.add(oPara);
                         optionChar++;
                     }
                 }
             } else if (q.getQuestionType() == QuestionType.OPEN_AUTO || q.getQuestionType() == QuestionType.OPEN_MANUAL) {
                 Paragraph field = new Paragraph("   Cavab: __________________________________________________", oFont);
                 field.setSpacingBefore(5f);
-                document.add(field);
+                qElements.add(field);
             } else if (q.getQuestionType() == QuestionType.MATCHING) {
-                renderMatchingQuestion(document, q, oFont);
+                PdfPTable matchingTable = buildMatchingTable(q, oFont);
+                if (matchingTable != null) qElements.add(matchingTable);
             } else if (q.getQuestionType() == QuestionType.FILL_IN_THE_BLANK) {
                 // Choices list (e.g. "Seçimlər: x, y, z") — render every option
                 // individually through addRichText so LaTeX ($x^2$) inside an
@@ -379,7 +324,7 @@ public class PdfService {
                         first = false;
                     }
                     choiceHeader.setSpacingBefore(5f);
-                    document.add(choiceHeader);
+                    qElements.add(choiceHeader);
                 }
                 // Always give the student a blank to write the answer on. The
                 // `___` placeholders inside the question content stay where the
@@ -387,8 +332,24 @@ public class PdfService {
                 // line below is the dedicated answer slot.
                 Paragraph field = new Paragraph("   Cavab: __________________________________________________", oFont);
                 field.setSpacingBefore(5f);
-                document.add(field);
+                qElements.add(field);
             }
+
+            // Emit the whole question as ONE keep-together block: a single-cell
+            // table that iText moves to the next page as a unit when it doesn't
+            // fit, so the question text + image + options never get separated.
+            PdfPCell qCell = new PdfPCell();
+            qCell.setBorder(Rectangle.NO_BORDER);
+            qCell.setPadding(0f);
+            for (Element el : qElements) qCell.addElement(el);
+
+            PdfPTable qWrap = new PdfPTable(1);
+            qWrap.setWidthPercentage(100);
+            qWrap.setKeepTogether(true);
+            qWrap.setSpacingBefore(15f);
+            qWrap.setSpacingAfter(5f);
+            qWrap.addCell(qCell);
+            document.add(qWrap);
         }
 
         // --- Answer Key Page ---
@@ -690,9 +651,9 @@ public class PdfService {
      * inline image chunks for LaTeX) renders the same way it does in the
      * body flow.
      */
-    private void renderMatchingQuestion(Document document, Question q, Font oFont) {
+    private PdfPTable buildMatchingTable(Question q, Font oFont) {
         List<az.testup.entity.MatchingPair> pairs = q.getMatchingPairs();
-        if (pairs == null || pairs.isEmpty()) return;
+        if (pairs == null || pairs.isEmpty()) return null;
 
         java.util.List<az.testup.entity.MatchingPair> leftItems = pairs.stream()
                 .filter(p -> (p.getLeftItem() != null && !p.getLeftItem().isBlank())
@@ -723,7 +684,7 @@ public class PdfService {
                     m < rightItems.size() ? rightItems.get(m).getAttachedImageRight() : null,
                     ((char) ('A' + m)) + ") ", labelFont, oFont));
         }
-        document.add(matchingTable);
+        return matchingTable;
     }
 
     private PdfPCell buildMatchingCell(String content, String imageUrl, String label, Font labelFont, Font oFont) {
