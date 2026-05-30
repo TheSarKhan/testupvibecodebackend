@@ -40,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -1238,17 +1239,27 @@ public class SubmissionService {
 
         Exam exam = submission.getExam();
 
-        // Group passage questions by passage id
+        // Ids of passages that actually belong to this exam. A question may
+        // reference a passage that is no longer in exam.getPassages() (orphaned
+        // passage link). Such questions were silently dropped from the session —
+        // 35 written but only 29 served (BUG-248) — because they grouped under a
+        // passage that is never rendered. Treat them as standalone so every
+        // question is shown and the served count matches the written count.
+        Set<Long> validPassageIds = exam.getPassages().stream()
+                .map(Passage::getId)
+                .collect(Collectors.toSet());
+
+        // Group passage questions by passage id (only for passages that exist)
         Map<Long, List<ClientQuestionResponse>> questionsByPassage = exam.getQuestions().stream()
-                .filter(q -> q.getPassage() != null)
+                .filter(q -> q.getPassage() != null && validPassageIds.contains(q.getPassage().getId()))
                 .collect(Collectors.groupingBy(
                         q -> q.getPassage().getId(),
                         Collectors.mapping(this::mapToClientQuestion, Collectors.toList())
                 ));
 
-        // Standalone questions (no passage)
+        // Standalone questions (no passage) plus orphaned passage questions
         List<ClientQuestionResponse> standaloneQuestions = exam.getQuestions().stream()
-                .filter(q -> q.getPassage() == null)
+                .filter(q -> q.getPassage() == null || !validPassageIds.contains(q.getPassage().getId()))
                 .map(this::mapToClientQuestion)
                 .collect(Collectors.toList());
 

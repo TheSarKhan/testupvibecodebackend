@@ -433,7 +433,7 @@ public class ExamService {
                             .filter(q -> q.getId().equals(qReq.getId()))
                             .findFirst().orElse(null);
                     if (existing != null) {
-                        updateQuestionFromRequest(existing, qReq);
+                        updateQuestionFromRequest(existing, qReq, null);
                     } else {
                         exam.getQuestions().add(mapToQuestion(qReq, exam, null));
                     }
@@ -543,7 +543,7 @@ public class ExamService {
                             .filter(q -> q.getId().equals(qReq.getId()))
                             .findFirst().orElse(null);
                     if (existing != null) {
-                        updateQuestionFromRequest(existing, qReq);
+                        updateQuestionFromRequest(existing, qReq, passage);
                     } else {
                         exam.getQuestions().add(mapToQuestion(qReq, exam, passage));
                     }
@@ -557,12 +557,18 @@ public class ExamService {
         }
     }
 
-    private void updateQuestionFromRequest(Question question, QuestionRequest req) {
+    private void updateQuestionFromRequest(Question question, QuestionRequest req, Passage passage) {
         // Phase 4: collaborative-draft questions that were APPROVED need to revert to
         // PENDING when their content changes so the admin re-reviews the new version.
         // Snapshot the question BEFORE mutating, then compare AFTER.
         boolean wasApproved = question.getReviewStatus() == QuestionReviewStatus.APPROVED;
         String oldFingerprint = wasApproved ? fingerprintQuestion(question) : null;
+
+        // Keep the passage link in sync with where the request placed this
+        // question. Without this, moving a question between standalone and a
+        // passage (or between passages) left a stale/orphaned passage_id, and
+        // the question silently vanished from the session view (BUG-248).
+        question.setPassage(passage);
 
         String content = req.getContent() != null ? req.getContent() : req.getText();
         question.setContent(content);
@@ -944,16 +950,26 @@ public class ExamService {
     }
 
     private ExamResponse mapToResponse(Exam exam) {
-        // Split questions into standalone vs. by-passage
+        // A question may point at a passage that is no longer in the exam's
+        // passages (orphaned link). Grouping only by existing passages would
+        // silently drop such questions from the editor/detail view, mirroring
+        // the session-view mismatch (BUG-248). Surface them as standalone so the
+        // displayed set always matches the real question count and the teacher
+        // can re-home or delete them.
+        Set<Long> validPassageIds = exam.getPassages().stream()
+                .map(az.testup.entity.Passage::getId)
+                .collect(Collectors.toSet());
+
+        // Split questions into standalone vs. by-passage (existing passages only)
         Map<Long, List<QuestionResponse>> byPassage = exam.getQuestions().stream()
-                .filter(q -> q.getPassage() != null)
+                .filter(q -> q.getPassage() != null && validPassageIds.contains(q.getPassage().getId()))
                 .collect(Collectors.groupingBy(
                         q -> q.getPassage().getId(),
                         Collectors.mapping(this::mapToQuestionResponse, Collectors.toList())
                 ));
 
         List<QuestionResponse> standaloneQuestions = exam.getQuestions().stream()
-                .filter(q -> q.getPassage() == null)
+                .filter(q -> q.getPassage() == null || !validPassageIds.contains(q.getPassage().getId()))
                 .map(this::mapToQuestionResponse)
                 .collect(Collectors.toList());
 
