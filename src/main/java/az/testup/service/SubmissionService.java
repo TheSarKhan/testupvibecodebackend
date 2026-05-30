@@ -28,7 +28,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -60,6 +64,13 @@ public class SubmissionService {
     private final AuditLogService auditLogService;
     private final ExamAccessCodeRepository examAccessCodeRepository;
     private final ExamCollaboratorRepository examCollaboratorRepository;
+
+    // Self-reference so saveAnswer can call insertNewAnswerInNewTx through the
+    // Spring proxy (REQUIRES_NEW only applies across a proxy boundary). @Lazy
+    // breaks the construction-time self-dependency cycle.
+    @Lazy
+    @Autowired
+    private SubmissionService self;
 
     /**
      * For a collaborative exam, returns the section teacher's subjects if {@code user} is a
@@ -210,27 +221,28 @@ public class SubmissionService {
         // DB lookup beats the in-memory `submission.getAnswers()` walk: two
         // concurrent save requests would each see an empty snapshot of the
         // collection and both INSERT a fresh row. The unique constraint
-        // added in V23 still backstops this, but going through the
-        // repository first keeps the happy path conflict-free.
-        Answer answer = answerRepository
-                .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId())
-                .orElseGet(() -> {
-                    Question question = questionRepository.findById(request.getQuestionId())
-                            .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı"));
-                    Answer newAns = Answer.builder()
-                            .submission(submission)
-                            .question(question)
-                            .build();
-                    submission.getAnswers().add(newAns);
-                    return newAns;
-                });
+        // added in V23 still backstops this.
+        Optional<Answer> existing = answerRepository
+                .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId());
 
-        updateAnswerData(answer, request);
-        try {
+        if (existing.isPresent()) {
+            Answer answer = existing.get();
+            updateAnswerData(answer, request);
             answerRepository.save(answer);
-        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
-            // Lost the race to the unique constraint — the other request
-            // already created the row. Re-fetch and update that one so the
+            return;
+        }
+
+        // No row yet — create it in an isolated (REQUIRES_NEW) transaction. If a
+        // concurrent request wins the race, the unique constraint trips there
+        // and only that inner transaction rolls back; this session stays clean.
+        // Previously the failing INSERT happened in THIS transaction, leaving a
+        // transient null-id Answer behind, and the recovery query's auto-flush
+        // blew up with "null id in Answer entry / don't flush after an
+        // exception" (Hibernate AssertionFailure) → 500.
+        try {
+            self.insertNewAnswerInNewTx(submission.getId(), request);
+        } catch (DataIntegrityViolationException dup) {
+            // Lost the race — the winning row now exists; update it so the
             // student's content still lands instead of bubbling a 500.
             Answer winner = answerRepository
                     .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId())
@@ -238,6 +250,28 @@ public class SubmissionService {
             updateAnswerData(winner, request);
             answerRepository.save(winner);
         }
+    }
+
+    /**
+     * Insert a brand-new Answer in its own transaction so a unique-constraint
+     * violation (concurrent save of the same question) rolls back only here and
+     * never poisons the caller's persistence context. saveAndFlush forces the
+     * constraint to be checked inside this transaction so the caller can catch
+     * the violation and recover. Must be invoked through the Spring proxy
+     * (see {@code self}) for REQUIRES_NEW to take effect.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void insertNewAnswerInNewTx(Long submissionId, AnswerRequest request) {
+        Submission submission = submissionRepository.findById(submissionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
+        Question question = questionRepository.findById(request.getQuestionId())
+                .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı"));
+        Answer answer = Answer.builder()
+                .submission(submission)
+                .question(question)
+                .build();
+        updateAnswerData(answer, request);
+        answerRepository.saveAndFlush(answer);
     }
 
     /** Grades all answers (creating blank entries for unanswered questions) and snapshots each question. */
