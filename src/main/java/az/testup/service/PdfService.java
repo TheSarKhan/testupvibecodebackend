@@ -293,20 +293,23 @@ public class PdfService {
                     }
                     qElements.add(optTable);
                 } else {
-                    // Text-only options: two columns (A | B, C | D) to save
-                    // vertical space, BUT fall back to one column when any
-                    // option is long — long text doesn't fit side-by-side and
-                    // would wrap into a cramped, hard-to-read block.
+                    // Text-only options: pack as many per row as fit. Very short
+                    // options (typical for maths: "5", "3.14") go FOUR across, so
+                    // a whole question's options take a single line; medium ones
+                    // go two across; long ones drop to one per row so they don't
+                    // wrap into a cramped block.
                     int longestOption = options.stream()
                             .map(o -> plainTextLength(o.getContent()))
                             .max(Integer::compareTo).orElse(0);
-                    int columns = longestOption > OPTION_TWO_COL_MAX_CHARS ? 1 : 2;
+                    int columns;
+                    if (longestOption <= OPTION_FOUR_COL_MAX_CHARS) columns = 4;
+                    else if (longestOption <= OPTION_TWO_COL_MAX_CHARS) columns = 2;
+                    else columns = 1;
+                    // Never more columns than options.
+                    columns = Math.min(columns, Math.max(1, options.size()));
 
                     PdfPTable optTable = new PdfPTable(columns);
-                    try {
-                        optTable.setWidthPercentage(100f);
-                        if (columns == 2) optTable.setWidths(new float[]{1f, 1f});
-                    } catch (Exception ignored) {}
+                    try { optTable.setWidthPercentage(100f); } catch (Exception ignored) {}
                     optTable.setSpacingBefore(2f);
                     optTable.setSpacingAfter(2f);
                     char optionChar = 'A';
@@ -314,12 +317,15 @@ public class PdfService {
                         optTable.addCell(buildTextOptionCell(optionChar, opt.getContent(), oLabelFont, oFont));
                         optionChar++;
                     }
-                    // Pad the last row so an odd option count still forms a
-                    // complete 2-column row.
-                    if (columns == 2 && options.size() % 2 == 1) {
-                        PdfPCell filler = new PdfPCell();
-                        filler.setBorder(Rectangle.NO_BORDER);
-                        optTable.addCell(filler);
+                    // Pad the final row with empty cells so an incomplete last
+                    // row still renders as a full grid row.
+                    int remainder = options.size() % columns;
+                    if (remainder != 0) {
+                        for (int f = 0; f < columns - remainder; f++) {
+                            PdfPCell filler = new PdfPCell();
+                            filler.setBorder(Rectangle.NO_BORDER);
+                            optTable.addCell(filler);
+                        }
                     }
                     qElements.add(optTable);
                 }
@@ -370,8 +376,8 @@ public class PdfService {
                 PdfPTable qWrap = new PdfPTable(1);
                 qWrap.setWidthPercentage(100);
                 qWrap.setKeepTogether(true);
-                qWrap.setSpacingBefore(10f);
-                qWrap.setSpacingAfter(4f);
+                qWrap.setSpacingBefore(8f);
+                qWrap.setSpacingAfter(3f);
                 qWrap.addCell(qCell);
                 document.add(qWrap);
             } else {
@@ -382,7 +388,7 @@ public class PdfService {
                 boolean firstElement = true;
                 for (Element el : qElements) {
                     if (firstElement && el instanceof Paragraph p) {
-                        p.setSpacingBefore(10f);
+                        p.setSpacingBefore(8f);
                         firstElement = false;
                     }
                     document.add(el);
@@ -963,8 +969,9 @@ public class PdfService {
         return plainTextLength(html) == 0;
     }
 
-    // Above this plain-text length, MCQ options are rendered one-per-row instead
-    // of two-per-row: long options don't fit comfortably side by side.
+    // Option packing thresholds (plain-text length of the longest option):
+    //   ≤ FOUR → 4 per row (tiny maths answers), ≤ TWO → 2 per row, else 1.
+    private static final int OPTION_FOUR_COL_MAX_CHARS = 14;
     private static final int OPTION_TWO_COL_MAX_CHARS = 35;
 
     /** Plain-text length of HTML content after stripping tags/entities and trimming. */
