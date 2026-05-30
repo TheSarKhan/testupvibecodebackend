@@ -261,9 +261,11 @@ public class PaymentController {
         }
 
         User user = userRepository.findByEmail(principal.getUsername())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UnauthorizedException("Hesab tapılmadı, yenidən daxil olun"));
 
-        if (!order.getUser().getId().equals(user.getId())) {
+        // order.getUser() can be null on legacy rows — guard before dereferencing
+        // so a missing buyer yields a clean 403, not a 500 NPE (#254).
+        if (order.getUser() == null || !order.getUser().getId().equals(user.getId())) {
             return ResponseEntity.status(403).body(Map.of("message", "Bu əməliyyat üçün icazəniz yoxdur"));
         }
 
@@ -428,17 +430,29 @@ public class PaymentController {
             @AuthenticationPrincipal UserDetails principal,
             @RequestBody Map<String, Object> body) {
 
+        // Mirror /initiate: wrap the whole flow so a missing field or a
+        // KapitalBank/DB hiccup surfaces as a clean 4xx with a real message
+        // instead of bubbling up as "Daxili server xətası" 500 (#254).
+        try {
         if (principal == null) {
             return ResponseEntity.status(401).body(Map.of("message", "Giriş tələb olunur"));
         }
 
-        String shareLink = body.get("shareLink").toString();
+        // The shareLink was read unguarded (body.get(...).toString()), so a
+        // request without it NPE'd into a 500. Validate it up front.
+        Object rawShareLink = body == null ? null : body.get("shareLink");
+        if (rawShareLink == null || rawShareLink.toString().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "İmtahan kodu tələb olunur"));
+        }
+        String shareLink = rawShareLink.toString();
 
         User user = userRepository.findByEmail(principal.getUsername())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UnauthorizedException("Hesab tapılmadı, yenidən daxil olun"));
 
+        // Soft-deleted / missing exam → clean 404 instead of a bare
+        // RuntimeException 500.
         Exam exam = examRepository.findByShareLinkAndDeletedFalse(shareLink)
-                .orElseThrow(() -> new RuntimeException("Exam not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı və ya artıq mövcud deyil"));
 
         if (exam.getPrice() == null || exam.getPrice().compareTo(java.math.BigDecimal.ZERO) <= 0) {
             return ResponseEntity.badRequest().body(Map.of("message", "Bu imtahan pulsuzdur"));
@@ -475,6 +489,14 @@ public class PaymentController {
                 "paymentUrl", result.paymentUrl(),
                 "amount", amount
         ));
+        } catch (BadRequestException | ResourceNotFoundException | UnauthorizedException e) {
+            throw e; // global handler → proper 4xx with the original message
+        } catch (Exception e) {
+            log.error("Exam payment initiate failed", e);
+            String msg = e.getMessage();
+            if (msg == null || msg.isBlank()) msg = "Ödəniş başladıla bilmədi, yenidən cəhd edin";
+            return ResponseEntity.badRequest().body(Map.of("message", msg));
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -500,10 +522,20 @@ public class PaymentController {
         order.setStatus("PAID");
         paymentOrderRepository.save(order);
 
-        User orderUser = order.getUser();
+        // Legacy/partial order rows can carry a null user; fall back to the
+        // authenticated user verifying the payment so activation never NPEs (#254).
+        User orderUser = order.getUser() != null ? order.getUser() : verifyingUser;
 
         if (order.getExam() != null) {
-            examService.purchaseExam(order.getExam().getShareLink(), orderUser);
+            String shareLink = order.getExam().getShareLink();
+            // Guard against a null buyer or an exam with no share link rather
+            // than letting purchaseExam dereference null and 500 the callback.
+            if (orderUser != null && shareLink != null && !shareLink.isBlank()) {
+                examService.purchaseExam(shareLink, orderUser);
+            } else {
+                log.warn("activateOrder: skipping exam grant for order {} (user={}, shareLink={})",
+                        orderId, orderUser != null ? orderUser.getId() : null, shareLink);
+            }
             return;
         }
 
