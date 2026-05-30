@@ -791,11 +791,11 @@ public class CollaborativeExamService {
                         : assignedSections;
                 int orderIdx = 0;
                 for (TemplateSection section : sections) {
-                    List<double[]> pointRanges = parsePointGroups(section.getPointGroups());
+                    List<double[]> pointRanges = az.testup.util.PointGroups.parse(section.getPointGroups());
                     int sectionIdx = 0;
                     for (var tc : section.getTypeCounts()) {
                         for (int i = 0; i < tc.getCount(); i++) {
-                            double pts = pointsForSectionPosition(pointRanges, sectionIdx + 1);
+                            double pts = az.testup.util.PointGroups.pointsFor(pointRanges, sectionIdx + 1);
                             Question q = Question.builder()
                                     .content("")
                                     .questionType(tc.getQuestionType())
@@ -1043,41 +1043,8 @@ public class CollaborativeExamService {
         );
     }
 
-    // ─── Template pointGroups helpers ────────────────────────────────────────
-
-    /**
-     * Parse a TemplateSection.pointGroups JSON of the form
-     * {@code [{"from":1,"to":15,"points":1.0},{"from":16,"to":20,"points":1.5}]}
-     * into an array of {@code [from, to, points]} ranges. Tolerates null/blank/malformed
-     * input — returns an empty list, callers fall back to 1.0.
-     */
-    private List<double[]> parsePointGroups(String json) {
-        List<double[]> out = new ArrayList<>();
-        if (json == null || json.isBlank()) return out;
-        try {
-            com.fasterxml.jackson.databind.ObjectMapper m = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode arr = m.readTree(json);
-            if (arr == null || !arr.isArray()) return out;
-            for (com.fasterxml.jackson.databind.JsonNode g : arr) {
-                if (g.has("from") && g.has("to") && g.has("points")) {
-                    out.add(new double[] {
-                            g.get("from").asDouble(),
-                            g.get("to").asDouble(),
-                            g.get("points").asDouble(1.0)
-                    });
-                }
-            }
-        } catch (Exception ignored) { /* malformed JSON → behave as if no groups defined */ }
-        return out;
-    }
-
-    /** 1-based question position within a section → its points (1.0 if no range matches). */
-    private double pointsForSectionPosition(List<double[]> ranges, int positionOneBased) {
-        for (double[] r : ranges) {
-            if (positionOneBased >= r[0] && positionOneBased <= r[1]) return r[2];
-        }
-        return 1.0;
-    }
+    // pointGroups parsing now lives in az.testup.util.PointGroups (shared with
+    // the standard template-to-exam flow in ExamService).
 
     // ─── Mappers ─────────────────────────────────────────────────────────────
 

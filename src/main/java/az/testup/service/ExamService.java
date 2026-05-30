@@ -152,6 +152,11 @@ public class ExamService {
 
         // Keep questions grouped by subject (new questions to a subject's tail).
         resortQuestionsBySubject(exam);
+        // Apply each template section's point groups to the question points so a
+        // template-derived exam shows the section's per-position values (e.g.
+        // Q11-20 = 1.5), not a flat 1 (#XXX). isCreate=true → set defaults for
+        // every section that defines ranges.
+        applyTemplatePointGroups(exam, true);
 
         Exam savedExam = examRepository.save(exam);
 
@@ -488,6 +493,10 @@ public class ExamService {
         // Regroup questions by subject so a newly added question lands at the
         // end of its own subject section, not the end of the whole exam (#253).
         resortQuestionsBySubject(exam);
+        // Re-apply point groups. isCreate=false → only ENFORCE for locked
+        // sections (allowCustomPoints=false); editable sections keep the
+        // teacher's per-question points (#XXX).
+        applyTemplatePointGroups(exam, false);
 
         Exam savedExam = examRepository.save(exam);
         auditLogService.log(AuditAction.EXAM_UPDATED, teacher.getEmail(), teacher.getFullName(), "EXAM", savedExam.getTitle(), "Status: " + savedExam.getStatus());
@@ -946,6 +955,58 @@ public class ExamService {
         for (int i = 0; i < qs.size(); i++) {
             Question q = qs.get(i);
             if (q.getOrderIndex() == null || q.getOrderIndex() != i) q.setOrderIndex(i);
+        }
+    }
+
+    /**
+     * Apply each linked template section's point groups to its questions'
+     * points, so a template-derived exam carries the section's per-position
+     * values (e.g. Q1-10 = 1, Q11-20 = 1.5) instead of a flat default (#XXX).
+     *
+     * Semantics:
+     *  • On create ({@code isCreate=true}) every section that defines ranges
+     *    seeds its questions' points.
+     *  • On update ({@code isCreate=false}) only LOCKED sections
+     *    (allowCustomPoints=false) are re-enforced; editable sections keep the
+     *    teacher's per-question points.
+     *
+     * Sections without point groups, and exams not linked to a template, are
+     * left untouched (no regression for plain exams).
+     */
+    private void applyTemplatePointGroups(Exam exam, boolean isCreate) {
+        List<TemplateSection> sections;
+        if (exam.getTemplateSections() != null && !exam.getTemplateSections().isEmpty()) {
+            sections = exam.getTemplateSections();
+        } else if (exam.getTemplateSection() != null) {
+            sections = List.of(exam.getTemplateSection());
+        } else {
+            return;
+        }
+
+        boolean multiSection = sections.size() > 1;
+        for (TemplateSection section : sections) {
+            List<double[]> ranges = az.testup.util.PointGroups.parse(section.getPointGroups());
+            if (ranges.isEmpty()) continue; // no ranges → leave points as-is
+            // Editable sections: only seed on create; on update respect the
+            // teacher's points so their custom values survive a save.
+            if (!isCreate && section.isAllowCustomPoints()) continue;
+
+            // The section's questions: matched by subjectGroup in a multi-section
+            // exam, or all questions when there's a single section. Ordered by
+            // orderIndex so the 1-based position lines up with the ranges.
+            List<Question> sectionQs = exam.getQuestions().stream()
+                    .filter(q -> !multiSection
+                            || (section.getSubjectName() != null
+                                && section.getSubjectName().equals(q.getSubjectGroup())))
+                    .sorted(java.util.Comparator.comparingInt(
+                            q -> q.getOrderIndex() != null ? q.getOrderIndex() : 0))
+                    .collect(Collectors.toList());
+
+            int position = 1;
+            for (Question q : sectionQs) {
+                q.setPoints(az.testup.util.PointGroups.pointsFor(ranges, position));
+                position++;
+            }
         }
     }
 
