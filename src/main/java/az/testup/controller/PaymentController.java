@@ -32,6 +32,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -188,6 +189,7 @@ public class PaymentController {
                     "Kredit ilə ödənişsiz keçid. Müddət: " + durationDays + " gün. Kredit: " + String.format("%.2f", creditAzn) + " AZN");
             return ResponseEntity.ok(Map.of(
                     "directActivated", true,
+                    "orderType", "SUBSCRIPTION",
                     "durationDays", durationDays,
                     "months", months
             ));
@@ -216,6 +218,7 @@ public class PaymentController {
 
         return ResponseEntity.ok(Map.of(
                 "orderId", result.orderId(),
+                "orderType", "SUBSCRIPTION",
                 "paymentUrl", result.paymentUrl(),
                 "amount", chargeAmount,
                 "durationDays", durationDays,
@@ -271,13 +274,12 @@ public class PaymentController {
 
         // Fast paths for terminal states — don't burn a KB API call.
         if ("PAID".equals(order.getStatus())) {
-            if (order.getExam() != null) {
-                return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true, "examShareLink", order.getExam().getShareLink()));
-            }
-            return ResponseEntity.ok(Map.of("status", "PAID", "alreadyProcessed", true));
+            Map<String, Object> r = verifyResponse(order, "PAID");
+            r.put("alreadyProcessed", true);
+            return ResponseEntity.ok(r);
         }
         if ("FAILED".equals(order.getStatus())) {
-            return ResponseEntity.ok(Map.of("status", "FAILED"));
+            return ResponseEntity.ok(verifyResponse(order, "FAILED"));
         }
 
         // PENDING or PROCESSING: ALWAYS ask Kapital Bank for the truth.
@@ -307,16 +309,17 @@ public class PaymentController {
             if (marked == 1) {
                 activateOrder(order, orderId, user);
             }
-            if (order.getExam() != null) {
-                return ResponseEntity.ok(Map.of("status", "PAID", "examShareLink", order.getExam().getShareLink()));
+            Map<String, Object> r = verifyResponse(order, "PAID");
+            if (order.getExam() == null) {
+                r.put("message", "Abunəlik aktivləşdirildi");
             }
-            return ResponseEntity.ok(Map.of("status", "PAID", "message", "Abunəlik aktivləşdirildi"));
+            return ResponseEntity.ok(r);
         }
 
         if (isFailedStatus(paymentStatus)) {
             order.setStatus("FAILED");
             paymentOrderRepository.save(order);
-            return ResponseEntity.ok(Map.of("status", "FAILED"));
+            return ResponseEntity.ok(verifyResponse(order, "FAILED"));
         }
 
         // Still in-flight at KB. Keep the order in PENDING so the next /verify
@@ -326,7 +329,28 @@ public class PaymentController {
             order.setStatus("PENDING");
             paymentOrderRepository.save(order);
         }
-        return ResponseEntity.ok(Map.of("status", paymentStatus));
+        return ResponseEntity.ok(verifyResponse(order, paymentStatus));
+    }
+
+    /**
+     * Build a /verify response that always carries the order type — and the
+     * exam info for exam orders — regardless of the bank status. Without this
+     * the client could only tell an exam purchase apart on a terminal PAID
+     * with examShareLink, so a slow/pending bank confirmation fell back to
+     * subscription-flavoured text on an exam purchase (#XXX).
+     */
+    private Map<String, Object> verifyResponse(PaymentOrder order, String status) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("status", status);
+        boolean isExam = order != null && order.getExam() != null;
+        m.put("orderType", isExam ? "EXAM" : "SUBSCRIPTION");
+        if (isExam) {
+            m.put("examShareLink", order.getExam().getShareLink());
+            if (order.getExam().getTitle() != null) {
+                m.put("examTitle", order.getExam().getTitle());
+            }
+        }
+        return m;
     }
 
     /**
@@ -486,6 +510,9 @@ public class PaymentController {
 
         return ResponseEntity.ok(Map.of(
                 "orderId", result.orderId(),
+                "orderType", "EXAM",
+                "examShareLink", exam.getShareLink(),
+                "examTitle", exam.getTitle() != null ? exam.getTitle() : "",
                 "paymentUrl", result.paymentUrl(),
                 "amount", amount
         ));
