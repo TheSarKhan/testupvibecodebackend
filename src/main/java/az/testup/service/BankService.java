@@ -435,11 +435,18 @@ public class BankService {
 
     private void applyOptions(BankQuestion q, List<BankOptionRequest> opts) {
         if (opts == null) return;
-        for (BankOptionRequest o : opts) {
+        for (int i = 0; i < opts.size(); i++) {
+            BankOptionRequest o = opts.get(i);
+            // Fall back to the list position when the caller leaves orderIndex
+            // null (AI generation, distractors, legacy clients). Persisting a
+            // null orderIndex made downstream sorting non-deterministic and
+            // scrambled options/answers in PDF export (BUG-05) and pinned every
+            // AI answer to the first slot (BUG-09).
+            Integer orderIndex = o.getOrderIndex() != null ? o.getOrderIndex() : i;
             q.getOptions().add(BankOption.builder()
                     .content(o.getContent() != null ? o.getContent() : "")
                     .isCorrect(o.getIsCorrect() != null ? o.getIsCorrect() : false)
-                    .orderIndex(o.getOrderIndex())
+                    .orderIndex(orderIndex)
                     .attachedImage(o.getAttachedImage())
                     .question(q)
                     .build());

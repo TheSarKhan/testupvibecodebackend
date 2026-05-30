@@ -791,6 +791,17 @@ public class GeminiService {
                         o.setIsCorrect(ic instanceof Boolean b ? b : Boolean.parseBoolean(String.valueOf(ic)));
                         optList.add(o);
                     }
+                    // The model almost always lists the correct option first, so
+                    // without shuffling every generated MCQ ends up with answer "A".
+                    // Shuffle server-side and assign a sequential orderIndex so the
+                    // correct answer is distributed across positions and the options
+                    // never persist with a null orderIndex (which broke PDF export —
+                    // see BUG-05). isCorrect travels with each option object, so the
+                    // shuffle never desynchronises the answer from its text.
+                    Collections.shuffle(optList);
+                    for (int oi = 0; oi < optList.size(); oi++) {
+                        optList.get(oi).setOrderIndex(oi);
+                    }
                     q.setOptions(optList);
                     // For MCQ build correctAnswer from first correct option
                     if (!"MULTI_SELECT".equals(qt)) {
