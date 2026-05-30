@@ -934,7 +934,12 @@ public class SubmissionService {
      */
     private double computeSectionPercent(TemplateSection section, List<Answer> sectionAnswers) {
         String formula = section.getFormula();
-        boolean useFormula = formula != null && !formula.isBlank() && !section.isAllowCustomPoints();
+        // A defined formula drives the score. (The multi-section review path,
+        // buildSubjectStats, already evaluates the formula unconditionally; this
+        // keeps single-section exams consistent with it so a template formula is
+        // honoured regardless of the allowCustomPoints flag.) Sections without a
+        // formula fall back to the points-based ratio below.
+        boolean useFormula = formula != null && !formula.isBlank();
         if (useFormula) {
             Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
             Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
@@ -954,6 +959,55 @@ public class SubmissionService {
                         ? a.getQuestion().getPoints() : 0.0)
                 .sum();
         return max > 0 ? Math.max(0.0, earned / max * 100.0) : 0.0;
+    }
+
+    /**
+     * For a SINGLE-section template exam whose section defines a scoring formula,
+     * returns the formula-derived {@code [score, maxScore]} in points so the
+     * result can show the formula bal (e.g. 13.75 / 22.5) instead of the raw
+     * correct-points sum (15). Returns null when there's no single linked
+     * section with a formula. Multi-section exams already get this via
+     * buildSubjectStats; this fills the single-section gap so both behave alike.
+     */
+    private double[] singleSectionFormulaTotal(Submission submission) {
+        Exam exam = submission.getExam();
+        TemplateSection section = null;
+        int sectionCount = -1;
+        try {
+            List<TemplateSection> sections = exam.getTemplateSections();
+            sectionCount = sections == null ? 0 : sections.size();
+            if (sections != null && sections.size() == 1) {
+                section = sections.get(0);
+            } else if (sections == null || sections.isEmpty()) {
+                section = exam.getTemplateSection();
+            }
+        } catch (Exception ignored) { /* lazy load issue → treat as no section */ }
+        if (section == null) {
+            log.info("[formula] exam={} no single templateSection link (templateSections size={}, templateSection={}) → using raw sum",
+                    exam.getId(), sectionCount, exam.getTemplateSection() != null);
+            return null;
+        }
+
+        String formula = section.getFormula();
+        if (formula == null || formula.isBlank()) {
+            log.info("[formula] exam={} section='{}' has no formula → using raw sum", exam.getId(), section.getSubjectName());
+            return null;
+        }
+
+        Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), section.getQuestionCount());
+        Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), section.getQuestionCount());
+        double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
+        double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
+        double percent = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
+
+        double maxScore = submission.getMaxScore() != null ? submission.getMaxScore() : 0.0;
+        double score = percent / 100.0 * maxScore;
+        log.info("[formula] exam={} section='{}' formula='{}' actual(a={},b={},s={},w={},n={}) raw={} maxRaw={} percent={} → {}/{} bal",
+                exam.getId(), section.getSubjectName(), formula,
+                actualVars.get("a"), actualVars.get("b"), actualVars.get("s"), actualVars.get("w"), actualVars.get("n"),
+                rawScore, maxRaw, Math.round(percent * 100.0) / 100.0,
+                Math.round(score * 100.0) / 100.0, maxScore);
+        return new double[] { Math.round(score * 100.0) / 100.0, maxScore };
     }
 
     /** Counts answer outcomes per question type for formula evaluation. */
@@ -1118,6 +1172,15 @@ public class SubmissionService {
                 stats.stream().filter(s -> s.getSectionScore() != null).mapToDouble(SubjectStatResponse::getSectionScore).sum());
             response.setTemplateTotalMaxScore(
                 stats.stream().filter(s -> s.getSectionMaxScore() != null).mapToDouble(SubjectStatResponse::getSectionMaxScore).sum());
+        } else {
+            // Single-section template exam with a formula: surface the
+            // formula-derived bal so the result shows e.g. 13.75 / 22.5, not the
+            // raw correct-points sum.
+            double[] sf = singleSectionFormulaTotal(submission);
+            if (sf != null) {
+                response.setTemplateTotalScore(sf[0]);
+                response.setTemplateTotalMaxScore(sf[1]);
+            }
         }
         return response;
     }
@@ -1510,6 +1573,10 @@ public class SubmissionService {
         if (reviewStats != null && reviewStats.stream().anyMatch(s -> s.getSectionMaxScore() != null)) {
             reviewTotalScore    = reviewStats.stream().filter(s -> s.getSectionScore()    != null).mapToDouble(SubjectStatResponse::getSectionScore).sum();
             reviewTotalMaxScore = reviewStats.stream().filter(s -> s.getSectionMaxScore() != null).mapToDouble(SubjectStatResponse::getSectionMaxScore).sum();
+        } else {
+            // Single-section template exam with a formula → formula-derived bal.
+            double[] sf = singleSectionFormulaTotal(submission);
+            if (sf != null) { reviewTotalScore = sf[0]; reviewTotalMaxScore = sf[1]; }
         }
 
         // Compute the per-viewer gradable-question set so the frontend can hide the
