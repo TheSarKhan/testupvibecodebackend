@@ -4,7 +4,7 @@ import az.testup.enums.NotificationType;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Entity
 @Table(name = "notifications")
@@ -41,11 +41,15 @@ public class Notification {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    // Stored as a UTC Instant (mirrors Submission/ExamAccessCode) so the field
+    // serialises as a zone-marked ISO string (…Z) and the frontend can parse it
+    // unambiguously. LocalDateTime.now() previously emitted naked Baku wall-clock
+    // timestamps, which the client mis-read as UTC and pinned to "İndicə".
     @Column(updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = Instant.now();
     }
 }

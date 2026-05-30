@@ -4,7 +4,7 @@ import az.testup.enums.QuestionType;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -70,11 +70,14 @@ public class BankQuestion {
     @Builder.Default
     private List<BankMatchingPair> matchingPairs = new ArrayList<>();
 
+    // UTC Instant so the timestamp serialises zone-marked (…Z) and the question
+    // bank's "last added" relative time is computed against a real instant
+    // instead of a naked server-local string (BUG-10).
     @Column(updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = Instant.now();
     }
 }

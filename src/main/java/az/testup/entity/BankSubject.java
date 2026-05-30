@@ -3,7 +3,7 @@ package az.testup.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Entity
 @Table(name = "bank_subjects")
@@ -30,11 +30,12 @@ public class BankSubject {
     @Builder.Default
     private Boolean isGlobal = false;
 
+    // UTC Instant — serialises zone-marked (…Z) for unambiguous client parsing.
     @Column(updatable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     @PrePersist
     protected void onCreate() {
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = Instant.now();
     }
 }

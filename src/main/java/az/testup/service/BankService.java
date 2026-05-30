@@ -22,7 +22,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -385,7 +385,7 @@ public class BankService {
         Set<String> tagSet = new HashSet<>();
         qs.forEach(b -> { if (b.getTags() != null) tagSet.addAll(b.getTags()); });
 
-        LocalDateTime lastAdded = qs.stream()
+        Instant lastAdded = qs.stream()
                 .map(BankQuestion::getCreatedAt)
                 .filter(t -> t != null)
                 .max(Comparator.naturalOrder())
@@ -473,7 +473,7 @@ public class BankService {
 
         int easy = 0, medium = 0, hard = 0;
         Set<String> topicSet = new HashSet<>();
-        LocalDateTime last = null;
+        Instant last = null;
         for (BankQuestion q : qs) {
             if (q.getDifficulty() != null) {
                 switch (q.getDifficulty()) {
