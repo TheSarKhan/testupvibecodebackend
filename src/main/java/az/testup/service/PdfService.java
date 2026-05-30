@@ -282,24 +282,41 @@ public class PdfService {
             if (q.getQuestionType() == QuestionType.MCQ || q.getQuestionType() == QuestionType.TRUE_FALSE || q.getQuestionType() == QuestionType.MULTI_SELECT) {
                 List<Option> options = q.getOptions();
                 options.sort(Comparator.comparing(Option::getOrderIndex, Comparator.nullsLast(Comparator.naturalOrder())));
-                
+
                 Font oLabelFont = derivedFont(oFont, true, false);
-                char optionChar = 'A';
-                for (Option opt : options) {
-                    Paragraph oPara = new Paragraph();
-                    oPara.add(new Chunk("   " + optionChar + ") ", oLabelFont));
-                    String optContent = opt.getContent();
-                    if (optContent == null || optContent.isBlank() || optContent.replaceAll("<[^>]+>", "").isBlank()) {
-                        optContent = optionChar + " variantı";
+                boolean anyOptionImage = options.stream()
+                        .anyMatch(o -> o.getAttachedImage() != null && !o.getAttachedImage().trim().isEmpty());
+
+                if (anyOptionImage) {
+                    // When options carry images, render each option (label + text
+                    // + image) as one PdfPTable cell so the picture can never be
+                    // laid out next to a different option's text — the bug where
+                    // image-MCQ variants and their pictures got scrambled in the
+                    // PDF (BUG-247). Same approach already used for MATCHING.
+                    PdfPTable optTable = new PdfPTable(1);
+                    try { optTable.setWidthPercentage(100f); } catch (Exception ignored) {}
+                    optTable.setSpacingBefore(2f);
+                    optTable.setSpacingAfter(2f);
+                    char optionChar = 'A';
+                    for (Option opt : options) {
+                        optTable.addCell(buildOptionCell(optionChar, opt.getContent(), opt.getAttachedImage(), oLabelFont, oFont));
+                        optionChar++;
                     }
-                    addRichText(oPara, optContent, oFont);
-                    oPara.setSpacingAfter(2f);
-                    document.add(oPara);
-                    
-                    if (opt.getAttachedImage() != null && !opt.getAttachedImage().trim().isEmpty()) {
-                        addImageToDocument(document, opt.getAttachedImage());
+                    document.add(optTable);
+                } else {
+                    char optionChar = 'A';
+                    for (Option opt : options) {
+                        Paragraph oPara = new Paragraph();
+                        oPara.add(new Chunk("   " + optionChar + ") ", oLabelFont));
+                        String optContent = opt.getContent();
+                        if (optContent == null || optContent.isBlank() || optContent.replaceAll("<[^>]+>", "").isBlank()) {
+                            optContent = optionChar + " variantı";
+                        }
+                        addRichText(oPara, optContent, oFont);
+                        oPara.setSpacingAfter(2f);
+                        document.add(oPara);
+                        optionChar++;
                     }
-                    optionChar++;
                 }
             } else if (q.getQuestionType() == QuestionType.OPEN_AUTO || q.getQuestionType() == QuestionType.OPEN_MANUAL) {
                 Paragraph field = new Paragraph("   Cavab: __________________________________________________", oFont);
@@ -692,6 +709,53 @@ public class PdfService {
             }
         }
         return cell;
+    }
+
+    /**
+     * Build one MCQ option as a self-contained PdfPCell: the label (A) B) …),
+     * the option text and, when present, its image — all in a single cell so
+     * the layout engine keeps them together and an option's picture is never
+     * rendered beside another option's text (BUG-247).
+     */
+    private PdfPCell buildOptionCell(char optionChar, String content, String imageUrl, Font labelFont, Font oFont) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPadding(4f);
+
+        Paragraph p = new Paragraph();
+        p.add(new Chunk("   " + optionChar + ") ", labelFont));
+        String optContent = content;
+        if (optContent == null || optContent.isBlank() || optContent.replaceAll("<[^>]+>", "").isBlank()) {
+            optContent = optionChar + " variantı";
+        }
+        addRichText(p, optContent, oFont);
+        cell.addElement(p);
+
+        if (imageUrl != null && !imageUrl.trim().isEmpty()) {
+            try {
+                Image img = loadImage(imageUrl, PageSize.A4.getWidth() - 120);
+                if (img != null) cell.addElement(img);
+            } catch (Exception e) {
+                log.warn("Could not embed option image in PDF", e);
+            }
+        }
+        return cell;
+    }
+
+    /** Load (base64 data-URL or remote URL) + scale an image to fit maxWidth. */
+    private Image loadImage(String imageUrl, float maxWidth) throws Exception {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
+        Image img;
+        if (imageUrl.startsWith("data:image")) {
+            String base64Data = imageUrl.substring(imageUrl.indexOf(",") + 1);
+            img = Image.getInstance(java.util.Base64.getDecoder().decode(base64Data));
+        } else {
+            img = Image.getInstance(imageUrl);
+        }
+        if (img.getPlainWidth() > maxWidth) {
+            img.scalePercent((maxWidth / img.getPlainWidth()) * 100f);
+        }
+        return img;
     }
 
     /** Load + scale an image to fit a half-page-wide PdfPCell. */
