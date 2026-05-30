@@ -150,6 +150,9 @@ public class ExamService {
             }
         }
 
+        // Keep questions grouped by subject (new questions to a subject's tail).
+        resortQuestionsBySubject(exam);
+
         Exam savedExam = examRepository.save(exam);
 
         // Record usage
@@ -481,6 +484,10 @@ public class ExamService {
             }
             exam.getPassages().clear();
         }
+
+        // Regroup questions by subject so a newly added question lands at the
+        // end of its own subject section, not the end of the whole exam (#253).
+        resortQuestionsBySubject(exam);
 
         Exam savedExam = examRepository.save(exam);
         auditLogService.log(AuditAction.EXAM_UPDATED, teacher.getEmail(), teacher.getFullName(), "EXAM", savedExam.getTitle(), "Status: " + savedExam.getStatus());
@@ -897,6 +904,43 @@ public class ExamService {
         }
 
         return question;
+    }
+
+    /**
+     * Regroup the exam's questions so a question sits at the end of its own
+     * subject section rather than at the very end of the whole exam.
+     *
+     * A question added through the editor carries the highest orderIndex (exam
+     * end). The standard create/update flow used that value verbatim and never
+     * regrouped by subject, so in a multi-subject exam the new question landed
+     * after every other subject instead of after its own (BUG-253). This mirrors
+     * the collaborative flow's resortParentQuestionsBySubject: stable sort by the
+     * subject's position in exam.subjects, ties broken by the current orderIndex
+     * (so each subject's internal order is preserved and a max-orderIndex new
+     * question falls to its subject's tail), then renumber sequentially.
+     *
+     * Single-subject / ungrouped exams have nothing to regroup and are skipped.
+     */
+    private void resortQuestionsBySubject(Exam exam) {
+        List<String> subjectOrder = exam.getSubjects() != null
+                ? exam.getSubjects() : java.util.Collections.emptyList();
+        if (subjectOrder.size() <= 1) return;
+
+        java.util.function.ToIntFunction<Question> subjectRank = q -> {
+            String s = q.getSubjectGroup();
+            if (s == null) return Integer.MAX_VALUE;
+            int idx = subjectOrder.indexOf(s);
+            return idx < 0 ? Integer.MAX_VALUE - 1 : idx;
+        };
+
+        List<Question> qs = new ArrayList<>(exam.getQuestions());
+        qs.sort(java.util.Comparator
+                .comparingInt(subjectRank)
+                .thenComparingInt(q -> q.getOrderIndex() == null ? Integer.MAX_VALUE : q.getOrderIndex()));
+        for (int i = 0; i < qs.size(); i++) {
+            Question q = qs.get(i);
+            if (q.getOrderIndex() == null || q.getOrderIndex() != i) q.setOrderIndex(i);
+        }
     }
 
     private ExamResponse mapToResponse(Exam exam) {
