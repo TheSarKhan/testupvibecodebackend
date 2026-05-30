@@ -53,4 +53,10 @@ public class ExamResponse {
     private Double averageRating;
     /** Number of students who rated this exam */
     private long ratingCount;
+    /**
+     * Number of attempts (submitted submissions) on this exam. Mirrors the
+     * list endpoint's participantCount so the detail/entry page shows the same
+     * "Cəhd" value instead of always 0 (#255).
+     */
+    private long participantCount;
 }

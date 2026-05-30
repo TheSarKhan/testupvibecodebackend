@@ -1023,6 +1023,9 @@ public class ExamService {
                 .pendingManualCount(submissionRepository.countPendingGradingByExamIdExcludingHidden(exam.getId()))
                 .averageRating(submissionRepository.findAverageRatingByExamId(exam.getId()))
                 .ratingCount(submissionRepository.countRatingsByExamId(exam.getId()))
+                // Attempt count (submitted submissions) — same metric as the list
+                // endpoint, so the detail page no longer always shows 0 (#255).
+                .participantCount(submissionRepository.countByExamIdAndSubmittedAtIsNotNull(exam.getId()))
                 .build();
     }
 
