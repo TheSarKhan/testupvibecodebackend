@@ -24,30 +24,36 @@ import java.util.*;
 @RequiredArgsConstructor
 public class GeminiService {
 
-    // Renamed from `groq.api-key` to `openai.api-key` so the env var
-    // matches the provider it's actually pointing at. Keep both readable
-    // by falling back to the old key when only the legacy var is set —
-    // avoids breaking deployments that still ship `GROQ_API_KEY`.
-    @Value("${openai.api-key:${groq.api-key:}}")
+    @Value("${gemini.api-key:}")
     private String apiKey;
 
-    private static final String OPENAI_URL =
-        "https://api.openai.com/v1/chat/completions";
+    // Google Gemini "generateContent" endpoint. The model id is baked into the
+    // URL path (…/models/{model}:generateContent). The API key travels in the
+    // `x-goog-api-key` header, not a bearer token.
+    private static final String GEMINI_API_BASE =
+        "https://generativelanguage.googleapis.com/v1beta/models/";
 
-    // Pinned to the dated GPT-4o release that supports structured outputs
-    // (`response_format: json_schema`) — the unpinned `gpt-4o` alias can
-    // silently rotate to a checkpoint without this feature.
-    private static final String OPENAI_MODEL = "gpt-4o-2024-11-20";
+    // Primary model. The newest models occasionally return 503 "high demand"
+    // under load, so we fall back through these (in order) when the primary is
+    // overloaded/rate-limited. All accept the same request shape; quality order
+    // is roughly 2.5-flash ≈ 3.5-flash > 3.1-flash-lite.
+    private static final String GEMINI_PRIMARY_MODEL = "gemini-3.5-flash";
+    private static final java.util.List<String> GEMINI_FALLBACK_MODELS =
+        java.util.List.of("gemini-2.5-flash", "gemini-3.1-flash-lite");
+
+    private static String geminiUrl(String model) {
+        return GEMINI_API_BASE + model + ":generateContent";
+    }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<BankQuestionRequest> generateQuestions(GenerateQuestionsRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("OpenAI API açarı konfiqurasiya edilməyib. .env-də OPENAI_API_KEY təyin edin.");
+            throw new IllegalStateException("Gemini API açarı konfiqurasiya edilməyib. .env-də GEMINI_API_KEY təyin edin.");
         }
 
         String prompt = buildPrompt(req);
-        String rawResponse = callGroq(prompt, req);
+        String rawResponse = callGemini(prompt, req);
         List<BankQuestionRequest> parsed = parseResponse(rawResponse, req);
         List<BankQuestionRequest> filtered = filterValidLatex(parsed);
 
@@ -61,7 +67,7 @@ public class GeminiService {
             retryReq.setQuestionType(req.getQuestionType());
             retryReq.setCount(requested - filtered.size());
             try {
-                String retryRaw = callGroq(buildPrompt(retryReq), retryReq);
+                String retryRaw = callGemini(buildPrompt(retryReq), retryReq);
                 List<BankQuestionRequest> retryFiltered = filterValidLatex(parseResponse(retryRaw, retryReq));
                 filtered.addAll(retryFiltered);
             } catch (Exception ignored) {}
@@ -330,8 +336,8 @@ public class GeminiService {
         // HARD mode is the one teachers complain about most — the model regresses
         // to "medium dressed as hard". This gate forces an explicit self-check
         // BEFORE the question is emitted: count the steps, name the trap, justify
-        // why a top student would still need to think. Without this, GPT-4o tends
-        // to produce textbook-grade problems even when asked for olympiad-grade.
+        // why a top student would still need to think. Without this, the model
+        // tends to produce textbook-grade problems even when asked for olympiad-grade.
         String hardChallengeGate = isHard ? (isMath ? """
 
                 ── HARD MODE — ÇƏTİNLİK QAPISI (məcburi self-check) ──
@@ -499,12 +505,12 @@ public class GeminiService {
     // ── API call ──────────────────────────────────────────────────────────────
 
     /**
-     * Subject-aware temperature, tuned for GPT-4o.
+     * Subject-aware sampling temperature (Gemini accepts 0–2; we stay well below 1).
      * - Math / science: very low → deterministic, fewer hallucinated numbers.
      * - History: low → factual recall must stay accurate.
      * - Language / humanities: moderate → richer phrasing without losing precision.
-     * GPT-4o is calibrated so 0.3–0.7 is the sweet spot; going above 0.8 noticeably
-     * degrades reasoning quality, even on creative tasks.
+     * 0.3–0.7 is the reliable band for structured-JSON generation; going higher
+     * noticeably degrades reasoning quality, even on creative tasks.
      */
     private double temperatureFor(GenerateQuestionsRequest req) {
         // HARD mode needs more creative problem construction — at the base
@@ -520,46 +526,52 @@ public class GeminiService {
     }
 
     /**
-     * Token budget. GPT-4o supports up to 16 384 output tokens; we cap below
-     * that to leave headroom for the JSON schema overhead. Math questions
-     * spend more tokens on LaTeX escaping so they get a larger per-question
-     * allowance.
+     * Output-token ceiling. On Gemini 2.5/3.x the model's internal "thinking"
+     * tokens are billed as output and count against this same budget, so the
+     * cap must cover thinking + the JSON answer or the response truncates
+     * (finishReason MAX_TOKENS) before any text is emitted. We budget
+     * generously — the cap is a ceiling, not a charge. Math/LaTeX and HARD
+     * difficulty reason more, so they get a larger allowance.
      */
     private int maxTokensFor(GenerateQuestionsRequest req) {
-        int perQuestion = isMathSubject(req.getSubjectName()) ? 600 : 450;
-        return Math.min(16000, 1200 + perQuestion * Math.max(1, req.getCount()));
+        int perQuestion = isMathSubject(req.getSubjectName()) ? 700 : 500;
+        int thinkingHeadroom = "HARD".equals(req.getDifficulty()) ? 8000 : 4000;
+        return Math.min(40000, thinkingHeadroom + perQuestion * Math.max(1, req.getCount()) * 2);
     }
 
-    private String callGroq(String prompt, GenerateQuestionsRequest req) {
+    private String callGemini(String prompt, GenerateQuestionsRequest req) {
         RestTemplate rest = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
+        // Gemini authenticates via this header, not a bearer token.
+        headers.set("x-goog-api-key", apiKey);
 
-        // Structured Outputs (`response_format: json_schema`) constrains the
-        // model to exactly one shape — wrong shape = automatic regenerate
-        // inside OpenAI before the response even reaches us. Eliminates the
-        // class of bugs where the model emits {"data": [...]} or wraps the
-        // array in prose. The schema is question-type-specific so the model
-        // can't put `options` on a FILL_IN_THE_BLANK or `distractors` on an MCQ.
+        // Structured output: responseMimeType=application/json + responseSchema
+        // constrains Gemini to exactly one JSON shape, so the model can't wrap
+        // the array in prose or attach `options` to a FILL_IN_THE_BLANK. The
+        // schema is question-type-specific (Gemini's OpenAPI-subset format).
         String schema = buildJsonSchema(req);
 
+        // The system prompt goes in `systemInstruction`; the task prompt is the
+        // sole user turn. `maxOutputTokens` must cover the model's internal
+        // thinking (always on for Pro, billed as output) PLUS the JSON answer —
+        // we budget generously; the cap is only a ceiling, billing follows the
+        // tokens actually produced.
         String body = """
             {
-              "model": "%s",
-              "messages": [
-                {"role": "system", "content": %s},
-                {"role": "user",   "content": %s}
+              "systemInstruction": { "parts": [ { "text": %s } ] },
+              "contents": [
+                { "role": "user", "parts": [ { "text": %s } ] }
               ],
-              "temperature": %s,
-              "top_p": %s,
-              "max_tokens": %d,
-              "frequency_penalty": 0.2,
-              "presence_penalty": 0.1,
-              "response_format": %s
+              "generationConfig": {
+                "temperature": %s,
+                "topP": %s,
+                "maxOutputTokens": %d,
+                "responseMimeType": "application/json",
+                "responseSchema": %s
+              }
             }
             """.formatted(
-                OPENAI_MODEL,
                 toJsonString(buildSystemMessage()),
                 toJsonString(prompt),
                 String.format(java.util.Locale.ROOT, "%.2f", temperatureFor(req)),
@@ -568,34 +580,102 @@ public class GeminiService {
                 schema);
 
         HttpEntity<String> entity = new HttpEntity<>(body, headers);
-        ResponseEntity<String> response = rest.postForEntity(OPENAI_URL, entity, String.class);
+        ResponseEntity<String> response = postWithFallback(rest, entity);
 
         try {
             JsonNode root = objectMapper.readTree(response.getBody());
-            // OpenAI returns the model's refusal in `message.refusal` when
-            // safety filters trip. Surface that instead of silently returning
-            // empty content, which would otherwise look like a parse error.
-            JsonNode refusal = root.at("/choices/0/message/refusal");
-            if (refusal != null && !refusal.isMissingNode() && !refusal.isNull() && !refusal.asText().isBlank()) {
-                throw new RuntimeException("OpenAI sualı rədd etdi: " + refusal.asText());
+
+            // Safety filter tripped before generation → promptFeedback.blockReason.
+            JsonNode block = root.at("/promptFeedback/blockReason");
+            if (!block.isMissingNode() && !block.isNull() && !block.asText().isBlank()) {
+                throw new RuntimeException("Gemini sorğunu rədd etdi (blok: " + block.asText() + ")");
             }
-            return root.at("/choices/0/message/content").asText();
+
+            JsonNode candidate = root.at("/candidates/0");
+            // Gemini 2.5/3.x may split the answer across multiple parts and can
+            // emit a separate "thought" part (thought:true) whose text must be
+            // skipped. Concatenate the text of every non-thought part.
+            StringBuilder sb = new StringBuilder();
+            JsonNode parts = candidate.at("/content/parts");
+            if (parts.isArray()) {
+                for (JsonNode part : parts) {
+                    if (part.path("thought").asBoolean(false)) continue;
+                    JsonNode t = part.get("text");
+                    if (t != null && !t.isNull()) sb.append(t.asText());
+                }
+            }
+            if (sb.length() == 0) {
+                String finish = candidate.at("/finishReason").asText("");
+                throw new RuntimeException("Gemini boş cavab qaytardı"
+                        + (finish.isBlank() ? "" : " (finishReason: " + finish + ")")
+                        + ". Çətinlik/sual sayını azaldın və ya yenidən cəhd edin.");
+            }
+            return sb.toString();
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
-            throw new RuntimeException("OpenAI cavabı parse edilə bilmədi: " + e.getMessage());
+            throw new RuntimeException("Gemini cavabı parse edilə bilmədi: " + e.getMessage());
         }
     }
 
     /**
-     * Build a JSON Schema constraining the model's output to the exact shape
-     * required for the question type being requested. OpenAI's Structured
-     * Outputs feature uses this to guarantee the response matches.
+     * POST with a model-fallback chain. The newest model ({@code GEMINI_PRIMARY_MODEL})
+     * intermittently returns 503 "high demand" under load; when it does, we fall
+     * back through {@code GEMINI_FALLBACK_MODELS} (which currently have more
+     * capacity) so the teacher's generation still succeeds. Two rounds over the
+     * whole chain absorb transient blips. Only 5xx, 429 (rate/overload) and
+     * network errors trigger fallback — 400/401/403/404 surface immediately
+     * because they won't self-heal by switching model.
+     */
+    private ResponseEntity<String> postWithFallback(RestTemplate rest, HttpEntity<String> entity) {
+        java.util.List<String> models = new ArrayList<>();
+        models.add(GEMINI_PRIMARY_MODEL);
+        models.addAll(GEMINI_FALLBACK_MODELS);
+
+        RuntimeException last = null;
+        for (int round = 1; round <= 2; round++) {
+            for (String model : models) {
+                try {
+                    ResponseEntity<String> r = rest.postForEntity(geminiUrl(model), entity, String.class);
+                    if (!model.equals(GEMINI_PRIMARY_MODEL)) {
+                        log.warn("Gemini primary ({}) əlçatmaz idi — fallback model istifadə olundu: {}",
+                                GEMINI_PRIMARY_MODEL, model);
+                    }
+                    return r;
+                } catch (org.springframework.web.client.HttpStatusCodeException e) {
+                    boolean retryable = e.getStatusCode().is5xxServerError()
+                            || e.getStatusCode().value() == 429;
+                    if (!retryable) throw e; // 400/401/403/404 — won't self-heal
+                    last = e;
+                    log.warn("Gemini [{}] round {}: {}", model, round, e.getStatusCode());
+                } catch (org.springframework.web.client.ResourceAccessException e) {
+                    last = e; // timeout / connection reset
+                    log.warn("Gemini şəbəkə xətası [{}] round {}: {}", model, round, e.getMessage());
+                }
+            }
+            if (round < 2) {
+                try {
+                    Thread.sleep(800L);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw last != null ? last
+                : new RuntimeException("Gemini sorğusu uğursuz oldu (bütün modellər əlçatmaz)");
+    }
+
+    /**
+     * Build a Gemini responseSchema (OpenAPI-3.0 subset) constraining the
+     * model's output to the exact shape required for the requested question
+     * type. Gemini types are upper-case ("OBJECT"/"STRING"/…) and the schema
+     * does not use `additionalProperties`/`strict`. We generate one of three
+     * schemas (MCQ/MULTI_SELECT, FILL_IN_THE_BLANK, OPEN_AUTO) so the model
+     * can't put `options` on a FILL or `distractors` on an MCQ.
      *
-     * Strict mode requires every property to be in `required` and
-     * `additionalProperties: false` everywhere — so we generate one of three
-     * schemas (MCQ/MULTI_SELECT, FILL_IN_THE_BLANK, OPEN_AUTO) instead of one
-     * "union" schema with optional fields.
+     * Exact array size is enforced by the prompt text + the in-Java truncation
+     * in {@code generateQuestions}, not the schema.
      */
     private String buildJsonSchema(GenerateQuestionsRequest req) {
         String qType = req.getQuestionType();
@@ -604,86 +684,67 @@ public class GeminiService {
 
         String questionItemSchema;
         if (isFill) {
-            // Note: OpenAI's strict-mode schema doesn't support minItems/maxItems —
-            // count constraints live in the prompt text instead ("DƏQİQ 3 yanlış variant").
             questionItemSchema = """
                 {
-                  "type": "object",
+                  "type": "OBJECT",
                   "properties": {
-                    "content":       { "type": "string", "description": "Question stem containing exactly one ___ (three underscores)." },
-                    "correctAnswer": { "type": "string", "description": "The correct word/number/phrase that fills the blank. 1–3 words or one number." },
+                    "content":       { "type": "STRING", "description": "Question stem containing exactly one ___ (three underscores)." },
+                    "correctAnswer": { "type": "STRING", "description": "The correct word/number/phrase that fills the blank. 1-3 words or one number." },
                     "distractors":   {
-                      "type": "array",
-                      "items": { "type": "string" },
+                      "type": "ARRAY",
+                      "items": { "type": "STRING" },
                       "description": "Exactly 3 plausible-but-wrong answers, each matching the format/length of the correct answer."
                     }
                   },
-                  "required": ["content", "correctAnswer", "distractors"],
-                  "additionalProperties": false
+                  "required": ["content", "correctAnswer", "distractors"]
                 }
                 """;
         } else if (isOpen) {
             questionItemSchema = """
                 {
-                  "type": "object",
+                  "type": "OBJECT",
                   "properties": {
-                    "content":       { "type": "string", "description": "Question stem. Tələbə qısa cavab yazır." },
-                    "correctAnswer": { "type": "string", "description": "The canonical correct answer — one word, one number, or one short phrase." }
+                    "content":       { "type": "STRING", "description": "Question stem." },
+                    "correctAnswer": { "type": "STRING", "description": "The canonical correct answer - one word, one number, or one short phrase." }
                   },
-                  "required": ["content", "correctAnswer"],
-                  "additionalProperties": false
+                  "required": ["content", "correctAnswer"]
                 }
                 """;
         } else {
-            // MCQ and MULTI_SELECT share the same shape; the SYSTEM prompt
-            // and user prompt tell the model how many `isCorrect=true` options
-            // to produce (1 for MCQ, 2 for MULTI_SELECT).
+            // MCQ and MULTI_SELECT share the same shape; the prompt tells the
+            // model how many isCorrect=true options to emit (1 for MCQ, 2 for MULTI_SELECT).
             questionItemSchema = """
                 {
-                  "type": "object",
+                  "type": "OBJECT",
                   "properties": {
-                    "content": { "type": "string", "description": "Question stem." },
+                    "content": { "type": "STRING", "description": "Question stem." },
                     "options": {
-                      "type": "array",
+                      "type": "ARRAY",
                       "items": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                          "text":      { "type": "string" },
-                          "isCorrect": { "type": "boolean" }
+                          "text":      { "type": "STRING" },
+                          "isCorrect": { "type": "BOOLEAN" }
                         },
-                        "required": ["text", "isCorrect"],
-                        "additionalProperties": false
+                        "required": ["text", "isCorrect"]
                       }
                     }
                   },
-                  "required": ["content", "options"],
-                  "additionalProperties": false
+                  "required": ["content", "options"]
                 }
                 """;
         }
 
-        // Wrap the per-question schema in { questions: [...] }. The exact array
-        // size constraint cannot live in the strict schema (OpenAI doesn't
-        // support minItems/maxItems there) — the prompt text and the in-Java
-        // truncation in `generateQuestions` enforce it.
         return ("""
             {
-              "type": "json_schema",
-              "json_schema": {
-                "name": "exam_questions",
-                "strict": true,
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "questions": {
-                      "type": "array",
-                      "items": %s
-                    }
-                  },
-                  "required": ["questions"],
-                  "additionalProperties": false
+              "type": "OBJECT",
+              "properties": {
+                "questions": {
+                  "type": "ARRAY",
+                  "items": %s
                 }
-              }
+              },
+              "required": ["questions"]
             }
             """).formatted(questionItemSchema.trim());
     }
@@ -866,7 +927,7 @@ public class GeminiService {
 
     public List<BankQuestionRequest> generateExam(GenerateExamRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("OpenAI API açarı konfiqurasiya edilməyib.");
+            throw new IllegalStateException("Gemini API açarı konfiqurasiya edilməyib. .env-də GEMINI_API_KEY təyin edin.");
         }
         List<BankQuestionRequest> all = new ArrayList<>();
         if (req.getTypeCounts() == null || req.getTypeCounts().isEmpty()) return all;

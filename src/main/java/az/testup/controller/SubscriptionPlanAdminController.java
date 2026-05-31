@@ -20,12 +20,29 @@ public class SubscriptionPlanAdminController {
 
     private final SubscriptionPlanService subscriptionPlanService;
 
+    /**
+     * PUBLIC list used by the pricing page and any teacher-facing plan
+     * switcher. Filters out admin-hidden plans so promo/sunset SKUs don't
+     * leak to end users.
+     */
     @GetMapping
+    public ResponseEntity<List<SubscriptionPlanResponse>> getVisiblePlans() {
+        return ResponseEntity.ok(subscriptionPlanService.getVisiblePlans());
+    }
+
+    /**
+     * ADMIN list — every plan, hidden or visible. Used by the admin panel and
+     * by the "assign plan to user" modal where admins must still see the
+     * hidden plans to assign them manually.
+     */
+    @GetMapping("/all")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<List<SubscriptionPlanResponse>> getAllPlans() {
         return ResponseEntity.ok(subscriptionPlanService.getAllPlans());
     }
 
     @GetMapping("/paged")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<org.springframework.data.domain.Page<SubscriptionPlanResponse>> getPagedPlans(
             @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
             @org.springframework.web.bind.annotation.RequestParam(defaultValue = "12") int size) {

@@ -122,6 +122,50 @@ public class DataSeeder implements CommandLineRunner {
         log.info("Tags seeded: {} tags", tagRepository.count());
     }
 
+    /**
+     * Builder for a multi-month variant of an existing base plan. Copies the
+     * limits/feature flags verbatim from the base plan so the only thing
+     * differing is the price and the duration; we apply a fixed-tier discount
+     * (3 ay → 10%, 6 ay → 15%, 12 ay → 20%) off the base monthly price.
+     */
+    private SubscriptionPlan buildDurationVariant(SubscriptionPlan base, int months, double discountPct, String displayName) {
+        double discounted = Math.round(base.getPrice() * months * (1.0 - discountPct / 100.0) * 100.0) / 100.0;
+        return SubscriptionPlan.builder()
+                .name(displayName)
+                .price(discounted)
+                .level(base.getLevel())
+                .description(base.getDescription())
+                .monthlyExamLimit(base.getMonthlyExamLimit())
+                .maxQuestionsPerExam(base.getMaxQuestionsPerExam())
+                .maxSavedExamsLimit(base.getMaxSavedExamsLimit())
+                .maxParticipantsPerExam(base.getMaxParticipantsPerExam())
+                .studentResultAnalysis(base.isStudentResultAnalysis())
+                .examEditing(base.isExamEditing())
+                .addImage(base.isAddImage())
+                .addPassageQuestion(base.isAddPassageQuestion())
+                .downloadPastExams(base.isDownloadPastExams())
+                .downloadAsPdf(base.isDownloadAsPdf())
+                .multipleSubjects(base.isMultipleSubjects())
+                .useTemplateExams(base.isUseTemplateExams())
+                .manualChecking(base.isManualChecking())
+                .selectExamDuration(base.isSelectExamDuration())
+                .useQuestionBank(base.isUseQuestionBank())
+                .createQuestionBank(base.isCreateQuestionBank())
+                .importQuestionsFromPdf(base.isImportQuestionsFromPdf())
+                .monthlyAiQuestionLimit(base.getMonthlyAiQuestionLimit())
+                .useAiExamGeneration(base.isUseAiExamGeneration())
+                .durationMonths(months)
+                .visible(true)
+                .build();
+    }
+
+    /** Idempotent: seeds a duration variant only if no plan with that name exists yet. */
+    private void seedDurationVariantIfMissing(SubscriptionPlan base, int months, double discountPct, String displayName) {
+        if (subscriptionPlanRepository.findByName(displayName).isEmpty()) {
+            subscriptionPlanRepository.save(buildDurationVariant(base, months, discountPct, displayName));
+        }
+    }
+
     @Transactional
     public void seedSubscriptionPlans() {
         if (subscriptionPlanRepository.count() == 0) {
@@ -208,6 +252,15 @@ public class DataSeeder implements CommandLineRunner {
 
             subscriptionPlanRepository.saveAll(List.of(freePlan, basicPlan, unlimitedPlan));
             log.info("3 Subscription Plans (Free, Basic, Limitsiz) seeded successfully.");
+
+            // Now seed the 3/6/12-month variants for each paid plan.
+            seedDurationVariantIfMissing(basicPlan,     3, 10.0, "Basic 3 ay");
+            seedDurationVariantIfMissing(basicPlan,     6, 15.0, "Basic 6 ay");
+            seedDurationVariantIfMissing(basicPlan,    12, 20.0, "Basic 12 ay");
+            seedDurationVariantIfMissing(unlimitedPlan, 3, 10.0, "Limitsiz 3 ay");
+            seedDurationVariantIfMissing(unlimitedPlan, 6, 15.0, "Limitsiz 6 ay");
+            seedDurationVariantIfMissing(unlimitedPlan,12, 20.0, "Limitsiz 12 ay");
+            log.info("Duration variant plans seeded: Basic/Limitsiz × 3/6/12 ay");
         } else {
             // Migrate existing plans: ensure level and new AI fields are set correctly
             subscriptionPlanRepository.findAll().forEach(plan -> {
@@ -237,6 +290,21 @@ public class DataSeeder implements CommandLineRunner {
                 }
 
                 if (changed) subscriptionPlanRepository.save(plan);
+            });
+
+            // Backfill 3/6/12-month variants on existing deployments that were
+            // seeded before the duration-variant rollout. Safe to call every
+            // start: seedDurationVariantIfMissing is a no-op if the named plan
+            // already exists.
+            subscriptionPlanRepository.findByName("Basic").ifPresent(basic -> {
+                seedDurationVariantIfMissing(basic,  3, 10.0, "Basic 3 ay");
+                seedDurationVariantIfMissing(basic,  6, 15.0, "Basic 6 ay");
+                seedDurationVariantIfMissing(basic, 12, 20.0, "Basic 12 ay");
+            });
+            subscriptionPlanRepository.findByName("Limitsiz").ifPresent(unlim -> {
+                seedDurationVariantIfMissing(unlim,  3, 10.0, "Limitsiz 3 ay");
+                seedDurationVariantIfMissing(unlim,  6, 15.0, "Limitsiz 6 ay");
+                seedDurationVariantIfMissing(unlim, 12, 20.0, "Limitsiz 12 ay");
             });
         }
     }

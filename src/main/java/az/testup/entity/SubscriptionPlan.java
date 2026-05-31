@@ -54,4 +54,23 @@ public class SubscriptionPlan {
 
     /** Whether AI exam generation is allowed */
     private boolean useAiExamGeneration;
+
+    /**
+     * Billing duration in months for this plan row. Each "Basic / Limitsiz × 1/3/6/12 ay"
+     * combination lives as its own row so the storefront can show distinct
+     * SKUs and the payment flow doesn't have to multiply at runtime.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer durationMonths = 1;
+
+    /**
+     * Admin-controlled visibility. When false, the plan is hidden from the
+     * public pricing page but admins can still assign it to users manually.
+     * Lets us A/B promotional tiers, sunset legacy SKUs, or pull a plan
+     * temporarily without deleting it.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean visible = true;
 }

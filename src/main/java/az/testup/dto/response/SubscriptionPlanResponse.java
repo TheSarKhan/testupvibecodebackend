@@ -34,4 +34,10 @@ public class SubscriptionPlanResponse {
 
     private Integer monthlyAiQuestionLimit;
     private boolean useAiExamGeneration;
+
+    /** Plan length in months — 1/3/6/12 are the storefront-supported values. */
+    private Integer durationMonths;
+
+    /** Admin-controlled toggle. When false, the plan is hidden from the public pricing page. */
+    private boolean visible;
 }

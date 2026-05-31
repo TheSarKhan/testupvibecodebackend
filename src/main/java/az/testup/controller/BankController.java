@@ -4,6 +4,7 @@ import az.testup.dto.request.BankQuestionRequest;
 import az.testup.dto.request.BankSubjectRequest;
 import az.testup.dto.response.BankQuestionResponse;
 import az.testup.dto.response.BankSubjectResponse;
+import az.testup.dto.response.BankTopicResponse;
 import az.testup.entity.User;
 import az.testup.enums.Difficulty;
 import az.testup.enums.QuestionType;
@@ -123,6 +124,17 @@ public class BankController {
             @PathVariable Long id,
             @AuthenticationPrincipal UserDetails ud) {
         return ResponseEntity.ok(bankService.getStats(id, getUser(ud)));
+    }
+
+    /**
+     * Topic options for the editor: the teacher's own reusable topics for this
+     * subject (recently-used first) merged with admin preset topics.
+     */
+    @GetMapping("/subjects/{id}/topics")
+    public ResponseEntity<List<BankTopicResponse>> getTopics(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails ud) {
+        return ResponseEntity.ok(bankService.getTopics(id, getUser(ud)));
     }
 
     @PostMapping("/questions")

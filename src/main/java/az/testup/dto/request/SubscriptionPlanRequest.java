@@ -44,4 +44,11 @@ public class SubscriptionPlanRequest {
     /** Monthly AI question generation limit. null/0 = disabled, -1 = unlimited */
     private Integer monthlyAiQuestionLimit;
     private boolean useAiExamGeneration;
+
+    /** 1/3/6/12 — defaults to 1 month when admin omits the field. */
+    @Min(value = 1, message = "durationMonths must be >= 1")
+    private Integer durationMonths = 1;
+
+    /** Defaults to true so plans created without this field stay visible. */
+    private boolean visible = true;
 }

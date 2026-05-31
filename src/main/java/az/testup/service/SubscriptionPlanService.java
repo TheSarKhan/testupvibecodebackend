@@ -19,6 +19,22 @@ public class SubscriptionPlanService {
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final AuditLogService auditLogService;
 
+    /**
+     * Public-facing list: only plans the admin has flagged as visible.
+     * Used by the pricing page and any teacher-facing plan switcher.
+     */
+    public List<SubscriptionPlanResponse> getVisiblePlans() {
+        return subscriptionPlanRepository.findAll()
+                .stream()
+                .filter(SubscriptionPlan::isVisible)
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Admin list: every plan, regardless of visibility, so admins can flip
+     * hidden plans back on and still manually assign them to users.
+     */
     public List<SubscriptionPlanResponse> getAllPlans() {
         return subscriptionPlanRepository.findAll()
                 .stream()
@@ -93,6 +109,8 @@ public class SubscriptionPlanService {
         r.setImportQuestionsFromPdf(e.isImportQuestionsFromPdf());
         r.setMonthlyAiQuestionLimit(e.getMonthlyAiQuestionLimit());
         r.setUseAiExamGeneration(e.isUseAiExamGeneration());
+        r.setDurationMonths(e.getDurationMonths() != null ? e.getDurationMonths() : 1);
+        r.setVisible(e.isVisible());
         return r;
     }
 
@@ -121,6 +139,8 @@ public class SubscriptionPlanService {
                 .importQuestionsFromPdf(req.isImportQuestionsFromPdf())
                 .monthlyAiQuestionLimit(req.getMonthlyAiQuestionLimit())
                 .useAiExamGeneration(req.isUseAiExamGeneration())
+                .durationMonths(req.getDurationMonths() != null ? req.getDurationMonths() : 1)
+                .visible(req.isVisible())
                 .build();
     }
 
@@ -148,5 +168,7 @@ public class SubscriptionPlanService {
         e.setImportQuestionsFromPdf(req.isImportQuestionsFromPdf());
         e.setMonthlyAiQuestionLimit(req.getMonthlyAiQuestionLimit());
         e.setUseAiExamGeneration(req.isUseAiExamGeneration());
+        if (req.getDurationMonths() != null) e.setDurationMonths(req.getDurationMonths());
+        e.setVisible(req.isVisible());
     }
 }

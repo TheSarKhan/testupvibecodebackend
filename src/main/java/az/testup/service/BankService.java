@@ -14,7 +14,9 @@ import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.BankQuestionRepository;
 import az.testup.repository.BankSubjectRepository;
+import az.testup.repository.BankTopicRepository;
 import az.testup.repository.ExamSubjectRepository;
+import az.testup.repository.SubjectTopicRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -22,12 +24,14 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.text.Collator;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,8 +44,13 @@ public class BankService {
 
     private final BankSubjectRepository subjectRepository;
     private final BankQuestionRepository questionRepository;
+    private final BankTopicRepository topicRepository;
     private final ExamSubjectRepository examSubjectRepository;
+    private final SubjectTopicRepository subjectTopicRepository;
     private final AuditLogService auditLogService;
+
+    /** Number of recently-used topics pinned to the top of the picker. */
+    private static final int RECENT_TOPIC_LIMIT = 6;
 
     // ─── Subjects ────────────────────────────────────────────────────────────
 
@@ -208,6 +217,62 @@ public class BankService {
         };
     }
 
+    // ─── Topics ──────────────────────────────────────────────────────────────
+
+    /**
+     * Topic options for the question editor: the teacher's own topics for this
+     * subject (recently-used pinned first) merged with the admin's preset topics
+     * for the matching exam subject (alphabetical).
+     */
+    @Transactional(readOnly = true)
+    public List<BankTopicResponse> getTopics(Long subjectId, User user) {
+        BankSubject subject = subjectRepository.findById(subjectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
+        if (!subject.getOwner().getId().equals(user.getId()) && !subject.getIsGlobal()) {
+            throw new BadRequestException("Bu fənnə giriş icazəniz yoxdur");
+        }
+
+        // Teacher's own topics, most-recently-used first.
+        List<String> ownNames = topicRepository
+                .findBySubjectIdAndOwnerIdOrderByLastUsedAtDesc(subjectId, user.getId())
+                .stream().map(BankTopic::getName).toList();
+
+        // Admin preset topics for the matching exam subject (by name).
+        List<String> presetNames = examSubjectRepository.findByName(subject.getName())
+                .map(es -> subjectTopicRepository
+                        .findBySubjectIdOrderByOrderIndexAscNameAsc(es.getId())
+                        .stream().map(SubjectTopic::getName).toList())
+                .orElse(List.of());
+
+        List<String> recent = ownNames.stream().limit(RECENT_TOPIC_LIMIT).toList();
+        Set<String> recentSet = new HashSet<>(recent);
+
+        // Everything else, de-duplicated and sorted alphabetically (az locale).
+        Set<String> rest = new LinkedHashSet<>(ownNames);
+        rest.addAll(presetNames);
+        rest.removeAll(recentSet);
+        Collator collator = Collator.getInstance(new Locale("az"));
+        List<String> restSorted = rest.stream().sorted(collator).toList();
+
+        List<BankTopicResponse> out = new ArrayList<>();
+        recent.forEach(n -> out.add(new BankTopicResponse(n, true)));
+        restSorted.forEach(n -> out.add(new BankTopicResponse(n, false)));
+        return out;
+    }
+
+    /** Upsert the teacher's topic registry so a saved topic is reusable next time. */
+    private void touchTopic(BankSubject subject, User user, String topicRaw) {
+        String name = normalizeText(topicRaw);
+        if (name == null) return;
+        BankTopic t = topicRepository
+                .findBySubjectIdAndOwnerIdAndName(subject.getId(), user.getId(), name)
+                .orElseGet(() -> BankTopic.builder()
+                        .subject(subject).owner(user).name(name)
+                        .createdAt(Instant.now()).build());
+        t.setLastUsedAt(Instant.now());
+        topicRepository.save(t);
+    }
+
     // ─── Questions: CRUD ─────────────────────────────────────────────────────
 
     @Transactional
@@ -234,6 +299,7 @@ public class BankService {
         applyOptions(q, req.getOptions());
         applyMatchingPairs(q, req.getMatchingPairs());
         BankQuestion savedQ = questionRepository.save(q);
+        touchTopic(subject, user, req.getTopic());
         auditLogService.log(AuditAction.BANK_QUESTION_CREATED, user.getEmail(), user.getFullName(),
                 "BANK_QUESTION", "ID:" + savedQ.getId(),
                 "Fənn: " + subject.getName() + ", Tip: " + savedQ.getQuestionType());
@@ -265,6 +331,7 @@ public class BankService {
         q.getMatchingPairs().clear();
         applyMatchingPairs(q, req.getMatchingPairs());
         BankQuestion savedQ = questionRepository.save(q);
+        touchTopic(q.getSubject(), user, req.getTopic());
         auditLogService.log(AuditAction.BANK_QUESTION_UPDATED, user.getEmail(), user.getFullName(),
                 "BANK_QUESTION", "ID:" + savedQ.getId(),
                 "Fənn: " + q.getSubject().getName());
