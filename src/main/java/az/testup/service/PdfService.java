@@ -144,6 +144,11 @@ public class PdfService {
             oFont = FontFactory.getFont(FontFactory.HELVETICA, 10);
         }
 
+        // Platform logo (centered, above the title). Loaded from the classpath
+        // so it ships with the JAR — no external file dependency at runtime.
+        // Failures are non-fatal: the PDF still renders without it.
+        renderLogo(document);
+
         // Title
         Paragraph title = new Paragraph(exam.getTitle(), titleFont);
         title.setAlignment(Element.ALIGN_CENTER);
@@ -219,8 +224,62 @@ public class PdfService {
         // their questions.
         List<Question> questions = renderOrder;
 
+        // Multi-subject exam → print a section header at every subject change
+        // so the student can tell where one fənn ends and the next begins.
+        // Numbering stays GLOBAL (matches the on-screen exam where qNum runs
+        // continuously across subjects); the header shows the subject name
+        // plus the global question range for that section ("Suallar 5-12").
+        // `subjectGroup == null` means "main section" which by convention is
+        // exam.subjects[0]; we normalise so the first header gets a name too.
+        List<String> examSubjects = exam.getSubjects();
+        boolean multiSubject = examSubjects != null && examSubjects.size() > 1;
+        String firstSubject = (examSubjects != null && !examSubjects.isEmpty())
+                ? examSubjects.get(0) : null;
+
+        // Pre-compute the (subject, startQ, endQ) tuples in display order.
+        // Done up-front so renderSubjectHeader can show the range at the
+        // moment it prints the header rather than guessing it after the fact.
+        // Walks renderOrder (the flat global-numbering list) and starts a new
+        // section every time the effective subject changes.
+        java.util.List<String> sectionSubjects = new java.util.ArrayList<>();
+        java.util.List<int[]> sectionRanges = new java.util.ArrayList<>();
+        if (multiSubject) {
+            String prevSubj = null;
+            int sectionStart = 1;
+            for (int idx = 0; idx < renderOrder.size(); idx++) {
+                String raw = renderOrder.get(idx).getSubjectGroup();
+                String s = (raw != null && !raw.isBlank()) ? raw : firstSubject;
+                if (!java.util.Objects.equals(s, prevSubj)) {
+                    if (prevSubj != null) {
+                        sectionSubjects.add(prevSubj);
+                        sectionRanges.add(new int[]{sectionStart, idx});
+                    }
+                    prevSubj = s;
+                    sectionStart = idx + 1;
+                }
+            }
+            if (prevSubj != null) {
+                sectionSubjects.add(prevSubj);
+                sectionRanges.add(new int[]{sectionStart, renderOrder.size()});
+            }
+        }
+
+        String currentSubject = null;
+        int sectionIdx = 0;
         int qNum = 0;
         for (Object renderItem : renderItems) {
+            if (multiSubject) {
+                String rawGroup = (renderItem instanceof Passage rp)
+                        ? rp.getSubjectGroup()
+                        : ((Question) renderItem).getSubjectGroup();
+                String itemSubject = (rawGroup != null && !rawGroup.isBlank()) ? rawGroup : firstSubject;
+                if (itemSubject != null && !itemSubject.equals(currentSubject)) {
+                    int[] range = sectionIdx < sectionRanges.size() ? sectionRanges.get(sectionIdx) : null;
+                    renderSubjectHeader(document, itemSubject, range, qFont, metaFont);
+                    currentSubject = itemSubject;
+                    sectionIdx++;
+                }
+            }
             if (renderItem instanceof Passage pas) {
                 renderPassageHeader(document, pas, qFont, oFont, metaFont);
                 continue;
@@ -862,6 +921,56 @@ public class PdfService {
      * so the student has the source material in front of them when
      * answering.
      */
+    /**
+     * Prints the platform logo centered at the top of the PDF. The image
+     * lives in src/main/resources/static/logo.png and is loaded through the
+     * classpath so it works whether the app is exploded on disk or running
+     * from the fat JAR. Width is capped at ~120pt — large enough to be
+     * recognisable, small enough to leave breathing room above the title.
+     */
+    private void renderLogo(Document document) {
+        try (java.io.InputStream in = getClass().getResourceAsStream("/static/logo.png")) {
+            if (in == null) return;
+            byte[] bytes = in.readAllBytes();
+            Image logo = Image.getInstance(bytes);
+            scaleToBox(logo, 120f, 60f);
+            logo.setAlignment(Image.ALIGN_CENTER);
+            logo.setSpacingAfter(8f);
+            document.add(logo);
+        } catch (Exception e) {
+            log.warn("Could not embed platform logo in PDF", e);
+        }
+    }
+
+    /**
+     * Section divider for multi-subject exams: subject name (centered, bold)
+     * with the global question range next to it. Compact — one rule below,
+     * no flanking empty paragraphs — so it reads as a section break without
+     * eating half a page in vertical space. Numbering is intentionally NOT
+     * reset here; the answer-key page relies on the same global question
+     * order.
+     */
+    private void renderSubjectHeader(Document document, String subjectName, int[] range, Font qFont, Font metaFont) {
+        try {
+            Font headerFont = derivedFont(qFont, true, false);
+            headerFont.setSize(qFont.getSize() + 1f);
+            Paragraph header = new Paragraph();
+            header.setAlignment(Element.ALIGN_CENTER);
+            header.setSpacingBefore(2f);
+            header.setSpacingAfter(6f);
+            header.add(new Chunk(subjectName.toUpperCase(), headerFont));
+            if (range != null && range[1] >= range[0]) {
+                String rangeText = range[0] == range[1]
+                        ? "  ·  Sual " + range[0]
+                        : "  ·  Suallar " + range[0] + "-" + range[1];
+                header.add(new Chunk(rangeText, derivedFont(metaFont, false, true)));
+            }
+            document.add(header);
+        } catch (Exception e) {
+            log.warn("Failed to render subject header in PDF", e);
+        }
+    }
+
     private void renderPassageHeader(Document document, Passage passage, Font qFont, Font oFont, Font metaFont) {
         try {
             boolean isText = passage.getPassageType() == PassageType.TEXT;
