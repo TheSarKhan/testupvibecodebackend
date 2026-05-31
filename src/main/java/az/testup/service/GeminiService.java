@@ -61,6 +61,21 @@ public class GeminiService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // Reused HTTP client with explicit timeouts. Without them a stalled Gemini
+    // call hangs indefinitely and the whole request blocks until Cloudflare's
+    // ~100s proxy limit trips a 504. Connect 8s; read 35s (a legit call — even
+    // HARD — finishes well under that, so 35s only catches genuine hangs, after
+    // which we fall back to another model).
+    private final RestTemplate restTemplate = buildRestTemplate();
+
+    private static RestTemplate buildRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory f =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        f.setConnectTimeout(8_000);
+        f.setReadTimeout(35_000);
+        return new RestTemplate(f);
+    }
+
     public List<BankQuestionRequest> generateQuestions(GenerateQuestionsRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException("Gemini API açarı konfiqurasiya edilməyib. .env-də GEMINI_API_KEY təyin edin.");
@@ -554,7 +569,7 @@ public class GeminiService {
     }
 
     private String callGemini(String prompt, GenerateQuestionsRequest req) {
-        RestTemplate rest = new RestTemplate();
+        RestTemplate rest = restTemplate;
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         // Gemini authenticates via this header, not a bearer token.
@@ -652,9 +667,17 @@ public class GeminiService {
     private ResponseEntity<String> postWithFallback(
             RestTemplate rest, HttpEntity<String> entity, java.util.List<String> models) {
         String primary = models.get(0);
+        // Hard ceiling on the whole chain so a string of slow/hanging calls can't
+        // push the request past Cloudflare's ~100s proxy limit (which returns a
+        // 504 to the user). Once we're past the deadline we stop trying.
+        long deadline = System.currentTimeMillis() + 60_000L;
         RuntimeException last = null;
         for (int round = 1; round <= 2; round++) {
             for (String model : models) {
+                if (System.currentTimeMillis() >= deadline) {
+                    throw last != null ? last
+                            : new RuntimeException("Gemini sorğusu vaxt limitini keçdi");
+                }
                 try {
                     ResponseEntity<String> r = rest.postForEntity(geminiUrl(model), entity, String.class);
                     if (!model.equals(primary)) {
@@ -669,17 +692,19 @@ public class GeminiService {
                     last = e;
                     log.warn("Gemini [{}] round {}: {}", model, round, e.getStatusCode());
                 } catch (org.springframework.web.client.ResourceAccessException e) {
-                    last = e; // timeout / connection reset
+                    last = e; // read/connect timeout or connection reset → try next model
                     log.warn("Gemini şəbəkə xətası [{}] round {}: {}", model, round, e.getMessage());
                 }
             }
-            if (round < 2) {
+            if (round < 2 && System.currentTimeMillis() < deadline) {
                 try {
                     Thread.sleep(800L);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
                 }
+            } else {
+                break;
             }
         }
         throw last != null ? last

@@ -16,4 +16,7 @@ public class GenerateExamRequest {
     private List<String> topicNames;
     private String difficulty;     // EASY / MEDIUM / HARD, default MEDIUM
     private Map<String, Integer> typeCounts; // e.g. {"MCQ": 5, "OPEN_AUTO": 2}
+    // Optional exam title for background (async) generation. When blank, a
+    // default "AI İmtahanı — {subject} · {date}" title is generated.
+    private String title;
 }

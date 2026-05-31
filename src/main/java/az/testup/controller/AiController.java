@@ -7,6 +7,7 @@ import az.testup.entity.User;
 import az.testup.enums.AuditAction;
 import az.testup.exception.SubscriptionLimitExceededException;
 import az.testup.repository.UserRepository;
+import az.testup.service.AiAsyncExamService;
 import az.testup.service.AuditLogService;
 import az.testup.service.GeminiService;
 import az.testup.service.SubscriptionValidatorService;
@@ -25,6 +26,7 @@ import java.util.Map;
 public class AiController {
 
     private final GeminiService geminiService;
+    private final AiAsyncExamService aiAsyncExamService;
     private final SubscriptionValidatorService subscriptionValidatorService;
     private final UserRepository userRepository;
     private final AuditLogService auditLogService;
@@ -101,6 +103,41 @@ public class AiController {
             return ResponseEntity.status(503).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "İmtahan generasiyası zamanı xəta: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/ai/generate-exam-async
+     * Validates limits synchronously, then generates the exam in a background
+     * thread and saves it as a DRAFT. Returns 202 immediately so a large
+     * (50–60+ question) exam never blocks the request past Cloudflare's proxy
+     * timeout. When done, the teacher gets a notification linking to the draft.
+     */
+    @PostMapping("/generate-exam-async")
+    public ResponseEntity<?> generateExamAsync(
+            @RequestBody GenerateExamRequest req,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        try {
+            User user = getUser(userDetails);
+
+            // Validate up front so the teacher gets immediate feedback if they're
+            // over a limit — the background job won't be able to surface a 403.
+            subscriptionValidatorService.validateAiExamGeneration(user.getId());
+            int totalQuestions = req.getTypeCounts() == null ? 5
+                    : req.getTypeCounts().values().stream().mapToInt(Integer::intValue).sum();
+            subscriptionValidatorService.validateAiQuestions(user.getId(), totalQuestions);
+            subscriptionValidatorService.validateMonthlyExamCreation(user.getId());
+            subscriptionValidatorService.validateTotalSavedExams(user.getId());
+
+            aiAsyncExamService.generateExamInBackground(user.getId(), req, req.getTitle());
+
+            return ResponseEntity.accepted().body(Map.of(
+                    "message", "İmtahan arxa fonda yaradılır. Hazır olanda bildiriş alacaqsınız.",
+                    "questionCount", totalQuestions));
+        } catch (SubscriptionLimitExceededException e) {
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "Generasiya başladıla bilmədi: " + e.getMessage()));
         }
     }
 
