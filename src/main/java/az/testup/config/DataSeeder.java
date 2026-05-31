@@ -1512,6 +1512,12 @@ public class DataSeeder implements CommandLineRunner {
         entityManager.createNativeQuery("DELETE FROM answers WHERE submission_id IN (SELECT id FROM submissions WHERE exam_id = :eid)").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM submissions WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM questions WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        // Passages were missing from the cascade, which crashed the app at
+        // startup whenever a sample exam had reading/listening passages
+        // (FK violation: passages.exam_id → exams.id). Questions are already
+        // gone by this point so passages no longer have child rows pinning
+        // them, and the table itself can be cleared by exam_id.
+        entityManager.createNativeQuery("DELETE FROM passages WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM exam_subject_list WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM student_saved_exams WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM exam_access_codes WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
