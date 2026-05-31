@@ -33,16 +33,30 @@ public class GeminiService {
     private static final String GEMINI_API_BASE =
         "https://generativelanguage.googleapis.com/v1beta/models/";
 
-    // Primary model. The newest models occasionally return 503 "high demand"
-    // under load, so we fall back through these (in order) when the primary is
-    // overloaded/rate-limited. All accept the same request shape; quality order
-    // is roughly 2.5-flash ≈ 3.5-flash > 3.1-flash-lite.
-    private static final String GEMINI_PRIMARY_MODEL = "gemini-3.5-flash";
-    private static final java.util.List<String> GEMINI_FALLBACK_MODELS =
-        java.util.List.of("gemini-2.5-flash", "gemini-3.1-flash-lite");
+    // Difficulty-aware model chains (primary first, then fallbacks tried on
+    // 503/429). Normal (easy/medium) questions favour the cheap & fast lite
+    // model with thinking DISABLED — measured ~2.3s and ~13× cheaper. HARD
+    // questions use the stronger 2.5-flash WITH a thinking budget so olympiad-
+    // grade reasoning stays accurate. The newest 3.5-flash is intentionally not
+    // the primary: it frequently returns 503 and costs the most per token.
+    private static final java.util.List<String> MODELS_FAST =
+        java.util.List.of("gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash");
+    private static final java.util.List<String> MODELS_QUALITY =
+        java.util.List.of("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite");
+
+    // Thinking-token budget. HARD questions get a budget for quality; everything
+    // else runs with thinking OFF (0) — the single biggest speed/cost lever,
+    // since thinking tokens are billed as (expensive) output and dominate latency.
+    // 2048 keeps olympiad-grade reasoning meaningful while ~halving HARD latency
+    // vs an unbounded/large budget (measured ~15s → ~7s on 2.5-flash).
+    private static final int HARD_THINKING_BUDGET = 2048;
 
     private static String geminiUrl(String model) {
         return GEMINI_API_BASE + model + ":generateContent";
+    }
+
+    private boolean isHard(GenerateQuestionsRequest req) {
+        return "HARD".equals(req.getDifficulty());
     }
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -557,6 +571,11 @@ public class GeminiService {
         // thinking (always on for Pro, billed as output) PLUS the JSON answer —
         // we budget generously; the cap is only a ceiling, billing follows the
         // tokens actually produced.
+        // thinkingBudget: 0 disables the model's internal reasoning (fast/cheap),
+        // a positive value caps it (HARD questions only). Accepted by the 2.5 and
+        // 3.1 lite/flash models in our chains.
+        int thinkingBudget = isHard(req) ? HARD_THINKING_BUDGET : 0;
+
         String body = """
             {
               "systemInstruction": { "parts": [ { "text": %s } ] },
@@ -567,6 +586,7 @@ public class GeminiService {
                 "temperature": %s,
                 "topP": %s,
                 "maxOutputTokens": %d,
+                "thinkingConfig": { "thinkingBudget": %d },
                 "responseMimeType": "application/json",
                 "responseSchema": %s
               }
@@ -577,10 +597,12 @@ public class GeminiService {
                 String.format(java.util.Locale.ROOT, "%.2f", temperatureFor(req)),
                 String.format(java.util.Locale.ROOT, "%.2f", topPFor(req)),
                 maxTokensFor(req),
+                thinkingBudget,
                 schema);
 
         HttpEntity<String> entity = new HttpEntity<>(body, headers);
-        ResponseEntity<String> response = postWithFallback(rest, entity);
+        ResponseEntity<String> response = postWithFallback(
+                rest, entity, isHard(req) ? MODELS_QUALITY : MODELS_FAST);
 
         try {
             JsonNode root = objectMapper.readTree(response.getBody());
@@ -619,27 +641,25 @@ public class GeminiService {
     }
 
     /**
-     * POST with a model-fallback chain. The newest model ({@code GEMINI_PRIMARY_MODEL})
-     * intermittently returns 503 "high demand" under load; when it does, we fall
-     * back through {@code GEMINI_FALLBACK_MODELS} (which currently have more
-     * capacity) so the teacher's generation still succeeds. Two rounds over the
-     * whole chain absorb transient blips. Only 5xx, 429 (rate/overload) and
-     * network errors trigger fallback — 400/401/403/404 surface immediately
-     * because they won't self-heal by switching model.
+     * POST through a model-fallback chain. The primary (first entry) intermittently
+     * returns 503 "high demand" under load; when it does, we fall back through the
+     * rest of {@code models} (which currently have more capacity) so the teacher's
+     * generation still succeeds. Two rounds over the whole chain absorb transient
+     * blips. Only 5xx, 429 (rate/overload) and network errors trigger fallback —
+     * 400/401/403/404 surface immediately because they won't self-heal by
+     * switching model.
      */
-    private ResponseEntity<String> postWithFallback(RestTemplate rest, HttpEntity<String> entity) {
-        java.util.List<String> models = new ArrayList<>();
-        models.add(GEMINI_PRIMARY_MODEL);
-        models.addAll(GEMINI_FALLBACK_MODELS);
-
+    private ResponseEntity<String> postWithFallback(
+            RestTemplate rest, HttpEntity<String> entity, java.util.List<String> models) {
+        String primary = models.get(0);
         RuntimeException last = null;
         for (int round = 1; round <= 2; round++) {
             for (String model : models) {
                 try {
                     ResponseEntity<String> r = rest.postForEntity(geminiUrl(model), entity, String.class);
-                    if (!model.equals(GEMINI_PRIMARY_MODEL)) {
+                    if (!model.equals(primary)) {
                         log.warn("Gemini primary ({}) əlçatmaz idi — fallback model istifadə olundu: {}",
-                                GEMINI_PRIMARY_MODEL, model);
+                                primary, model);
                     }
                     return r;
                 } catch (org.springframework.web.client.HttpStatusCodeException e) {
