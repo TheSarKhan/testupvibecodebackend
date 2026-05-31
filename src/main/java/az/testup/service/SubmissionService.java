@@ -972,39 +972,46 @@ public class SubmissionService {
     private double[] singleSectionFormulaTotal(Submission submission) {
         Exam exam = submission.getExam();
         TemplateSection section = null;
-        int sectionCount = -1;
         try {
             List<TemplateSection> sections = exam.getTemplateSections();
-            sectionCount = sections == null ? 0 : sections.size();
             if (sections != null && sections.size() == 1) {
                 section = sections.get(0);
             } else if (sections == null || sections.isEmpty()) {
                 section = exam.getTemplateSection();
             }
         } catch (Exception ignored) { /* lazy load issue → treat as no section */ }
-        if (section == null) {
-            log.info("[formula] exam={} no single templateSection link (templateSections size={}, templateSection={}) → using raw sum",
-                    exam.getId(), sectionCount, exam.getTemplateSection() != null);
+
+        boolean isTemplateExam = exam.getExamType() == az.testup.enums.ExamType.TEMPLATE
+                || exam.getExamType() == az.testup.enums.ExamType.OLIMPIYADA;
+        if (section == null && !isTemplateExam) {
+            // Not a template exam and no section → plain points sum, no formula.
             return null;
         }
-
-        String formula = section.getFormula();
+        String formula = section != null ? section.getFormula() : null;
+        int questionCount = section != null && section.getQuestionCount() != null
+                ? section.getQuestionCount() : submission.getAnswers().size();
+        String sectionName = section != null ? section.getSubjectName() : "(no section)";
+        boolean defaulted = false;
         if (formula == null || formula.isBlank()) {
-            log.info("[formula] exam={} section='{}' has no formula → using raw sum", exam.getId(), section.getSubjectName());
-            return null;
+            // The editor requires a formula, so this is only a safety net. Default
+            // to the standard penalty s - w/4: with w = sum of WRONG MCQ points,
+            // each wrong removes 0.25 of its own value (e.g. 15 correct + 5 wrong
+            // worth 1.5 → 15 − 7.5/4 = 13.125).
+            formula = "s - w/4";
+            defaulted = true;
         }
 
-        Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), section.getQuestionCount());
-        Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), section.getQuestionCount());
+        Map<String, Double> actualVars = buildFormulaVariables(submission.getAnswers(), questionCount);
+        Map<String, Double> maxVars = buildMaxFormulaVariables(submission.getAnswers(), questionCount);
         double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
         double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
         double percent = maxRaw > 0 ? Math.max(0.0, rawScore / maxRaw * 100.0) : 0.0;
 
         double maxScore = submission.getMaxScore() != null ? submission.getMaxScore() : 0.0;
         double score = percent / 100.0 * maxScore;
-        log.info("[formula] exam={} section='{}' formula='{}' actual(a={},b={},s={},w={},n={}) raw={} maxRaw={} percent={} → {}/{} bal",
-                exam.getId(), section.getSubjectName(), formula,
-                actualVars.get("a"), actualVars.get("b"), actualVars.get("s"), actualVars.get("w"), actualVars.get("n"),
+        log.info("[formula] exam={} section='{}' formula='{}'{} actual(s={},w={},a={},b={}) raw={} maxRaw={} percent={} → {}/{} bal",
+                exam.getId(), sectionName, formula, defaulted ? " (default)" : "",
+                actualVars.get("s"), actualVars.get("w"), actualVars.get("a"), actualVars.get("b"),
                 rawScore, maxRaw, Math.round(percent * 100.0) / 100.0,
                 Math.round(score * 100.0) / 100.0, maxScore);
         return new double[] { Math.round(score * 100.0) / 100.0, maxScore };
@@ -1013,7 +1020,8 @@ public class SubmissionService {
     /** Counts answer outcomes per question type for formula evaluation. */
     private Map<String, Double> buildFormulaVariables(List<Answer> answers, int totalQuestionCount) {
         long mcq_correct = 0, mcq_wrong = 0, mcq_blank = 0;
-        double mcq_score_sum = 0.0;  // sum of points from correct MCQ answers
+        double mcq_score_sum = 0.0;       // s = sum of points of CORRECT MCQ answers
+        double mcq_wrong_score_sum = 0.0; // w = sum of points of WRONG MCQ answers
         long multi_correct = 0, multi_wrong = 0;
         long open_correct = 0, open_wrong = 0;
         double manual_correct = 0.0, manual_wrong = 0.0; // fractional for partial credit
@@ -1021,12 +1029,12 @@ public class SubmissionService {
         long match_correct = 0, match_wrong = 0;
         for (Answer a : answers) {
             QuestionType type = a.getQuestion().getQuestionType();
-            double pts = a.getQuestion().getPoints();
+            double pts = a.getQuestion().getPoints() != null ? a.getQuestion().getPoints() : 0.0;
             double score = a.getScore() != null ? a.getScore() : 0.0;
             if (type == QuestionType.MCQ || type == QuestionType.TRUE_FALSE) {
                 if (a.getSelectedOptionId() == null) mcq_blank++;
                 else if (score >= pts) { mcq_correct++; mcq_score_sum += score; }
-                else { mcq_wrong++; }
+                else { mcq_wrong++; mcq_wrong_score_sum += pts; }
             } else if (type == QuestionType.MULTI_SELECT) {
                 if (score >= pts) multi_correct++; else multi_wrong++;
             } else if (type == QuestionType.OPEN_AUTO) {
@@ -1045,8 +1053,8 @@ public class SubmissionService {
         }
         Map<String, Double> v = new HashMap<>();
         v.put("a", (double) mcq_correct);    v.put("b", (double) mcq_wrong);    v.put("c", (double) mcq_blank);
-        v.put("s", mcq_score_sum);   // sum of points from correct MCQ answers
-        v.put("w", (double) mcq_wrong);   // count of wrong MCQ answers (olympiad penalty: s - w/4.0)
+        v.put("s", mcq_score_sum);          // sum of points of CORRECT MCQ answers
+        v.put("w", mcq_wrong_score_sum);    // sum of points of WRONG MCQ answers (penalty: s - w/4)
         v.put("d", (double) multi_correct);  v.put("e", (double) multi_wrong);
         v.put("f", (double) open_correct);   v.put("g", (double) open_wrong);
         v.put("l", manual_correct);          v.put("m", manual_wrong);
@@ -1072,7 +1080,7 @@ public class SubmissionService {
         Map<String, Double> v = new HashMap<>();
         v.put("a", (double) mcq);    v.put("b", 0.0); v.put("c", 0.0);
         v.put("s", mcq_score_max); // max possible MCQ score (all correct)
-        v.put("w", 0.0);           // max scenario: no wrong answers
+        v.put("w", 0.0);           // max scenario: no wrong answers → no wrong points
         v.put("d", (double) multi);  v.put("e", 0.0);
         v.put("f", (double) open);   v.put("g", 0.0);
         v.put("l", (double) manual); v.put("m", 0.0);
@@ -1282,29 +1290,41 @@ public class SubmissionService {
                 }
             }
 
-            // Compute formulaPercent for multi-section template exams
+            // Apply the section's scoring formula so the per-subject bal AND the
+            // hero ring reflect the formula — not the raw correct-points sum.
+            // Sections with no explicit formula fall back to the standard penalty
+            // s - w/4 (w = sum of wrong MCQ points → 0.25 of each wrong's value).
             Double formulaPercent = null;
-            if (isMultiSection) {
-                TemplateSection section = sectionByName.get(subjectName);
-                if (section != null) {
-                    Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
-                    Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
-                    double rawScore = FormulaEvaluator.evaluate(section.getFormula(), actualVars);
-                    double maxRaw = FormulaEvaluator.evaluate(section.getFormula(), maxVars);
-                    formulaPercent = maxRaw > 0 ? Math.max(0.0, Math.round(rawScore / maxRaw * 10000.0) / 100.0) : 0.0;
-                }
-            }
-
-            // sectionScore = formulaPercent/100 * section.maxScore (if both available)
             Double sectionMaxScore = null;
             Double sectionScore = null;
             if (isMultiSection) {
                 TemplateSection section = sectionByName.get(subjectName);
-                if (section != null && section.getMaxScore() != null && formulaPercent != null) {
-                    sectionMaxScore = section.getMaxScore();
-                    sectionScore = formulaPercent / 100.0 * sectionMaxScore;
+                if (section != null) {
+                    String formula = section.getFormula();
+                    boolean defaulted = false;
+                    if (formula == null || formula.isBlank()) {
+                        formula = "s - w/4";
+                        defaulted = true;
+                    }
+                    Map<String, Double> actualVars = buildFormulaVariables(sectionAnswers, section.getQuestionCount());
+                    Map<String, Double> maxVars = buildMaxFormulaVariables(sectionAnswers, section.getQuestionCount());
+                    double rawScore = FormulaEvaluator.evaluate(formula, actualVars);
+                    double maxRaw = FormulaEvaluator.evaluate(formula, maxVars);
+                    formulaPercent = maxRaw > 0 ? Math.max(0.0, Math.round(rawScore / maxRaw * 10000.0) / 100.0) : 0.0;
+                    // Section's declared maxScore when present, else the raw point
+                    // sum of this section's questions.
+                    sectionMaxScore = section.getMaxScore() != null ? section.getMaxScore() : maxScore;
+                    sectionScore = Math.round(formulaPercent / 100.0 * sectionMaxScore * 100.0) / 100.0;
+                    log.info("[formula] exam={} section='{}' formula='{}'{} s={} w={} percent={} → {}/{} bal",
+                            exam.getId(), subjectName, formula, defaulted ? " (default)" : "",
+                            actualVars.get("s"), actualVars.get("w"), formulaPercent, sectionScore, sectionMaxScore);
                 }
             }
+
+            // The displayed (and ring-summed) score reflects the formula when one
+            // applied; otherwise the raw points sum.
+            double displayScore = sectionScore != null ? sectionScore : totalScore;
+            double displayMax = sectionMaxScore != null ? sectionMaxScore : maxScore;
 
             stats.add(SubjectStatResponse.builder()
                     .subjectName(subjectName)
@@ -1313,8 +1333,8 @@ public class SubmissionService {
                     .wrongCount(wrong)
                     .skippedCount(skipped)
                     .pendingManualCount(pending)
-                    .totalScore(totalScore)
-                    .maxScore(maxScore)
+                    .totalScore(displayScore)
+                    .maxScore(displayMax)
                     .formulaPercent(formulaPercent)
                     .sectionScore(sectionScore)
                     .sectionMaxScore(sectionMaxScore)
