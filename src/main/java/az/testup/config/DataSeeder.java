@@ -98,11 +98,13 @@ public class DataSeeder implements CommandLineRunner {
         seedSubjects();
         migrateExamSubjectsToList();
         seedSubjectTopics();
-        seedDimTemplate();
         seedTags();
-        seedSampleRiyaziyyatExam();
-        seedSampleMultiSubjectExam();
-        seedSampleIngilisDiliExam();
+        seedOlimpiyadaTemplate();
+        seedSampleOlimpiyadaExam();
+        // For now only the "Olimpiada" template/exam is seeded. Other sample
+        // templates and exams are intentionally disabled and any previously
+        // seeded ones are removed below.
+        cleanupNonOlimpiadaSamples();
     }
 
     @Transactional
@@ -523,9 +525,22 @@ public class DataSeeder implements CommandLineRunner {
         // Point groups JSON for each section
         String azDiliPointGroups = "[{\"from\":1,\"to\":15,\"points\":1.0},{\"from\":16,\"to\":20,\"points\":1.5}]";
         String riyazPointGroups  = "[{\"from\":1,\"to\":35,\"points\":1.0},{\"from\":36,\"to\":40,\"points\":1.5}]";
+        // Standard penalty: s − w/4, where s = sum of correct MCQ points and
+        // w = sum of WRONG MCQ points. Each wrong removes 0.25 of its OWN value.
+        // e.g. 15 correct(1) + 5 wrong(1.5) → 15 − 7.5/4 = 13.125 / 22.5.
         String olimpFormula      = "s - w/4.0";
 
-        Template template = templateRepository.findByTitle("Olimpiyada").orElse(null);
+        Template template = templateRepository.findByTitle("Olimpiada").orElse(null);
+        if (template == null) {
+            // Migrate the old misspelled title ("Olimpiyada" → "Olimpiada") in
+            // place so existing exams keep their section links instead of a
+            // duplicate template being created.
+            Template legacy = templateRepository.findByTitle("Olimpiyada").orElse(null);
+            if (legacy != null) {
+                legacy.setTitle("Olimpiada");
+                template = templateRepository.save(legacy);
+            }
+        }
 
         if (template != null) {
             // Patch stale fields if template already exists
@@ -539,6 +554,12 @@ public class DataSeeder implements CommandLineRunner {
             // Patch sections: formula + pointGroups (use JPQL to avoid lazy collection access)
             final Template finalTemplate = template;
             new TransactionTemplate(transactionManager).execute(status -> {
+                // Fix the old misspelled subtitle text in place.
+                entityManager.createQuery(
+                        "UPDATE TemplateSubtitle s SET s.subtitle = 'Respublika Fənn Olimpiadası'" +
+                        " WHERE s.template = :t AND s.subtitle = 'Respublika Fənn Olimpiyadası'")
+                        .setParameter("t", finalTemplate)
+                        .executeUpdate();
                 List<TemplateSection> sections = entityManager.createQuery(
                         "SELECT s FROM TemplateSection s JOIN s.subtitle sub WHERE sub.template = :t",
                         TemplateSection.class)
@@ -559,21 +580,21 @@ public class DataSeeder implements CommandLineRunner {
                 }
                 return null;
             });
-            log.debug("Olimpiyada şablonu yoxlanıldı/yeniləndi");
+            log.debug("Olimpiada şablonu yoxlanıldı/yeniləndi");
             return;
         }
 
         // Create new template
         template = templateRepository.save(
                 Template.builder()
-                        .title("Olimpiyada")
+                        .title("Olimpiada")
                         .templateType(TemplateType.OLIMPIYADA)
                         .build());
 
         TemplateSubtitle subtitle = subtitleRepository.save(
                 TemplateSubtitle.builder()
                         .template(template)
-                        .subtitle("Respublika Fənn Olimpiyadası")
+                        .subtitle("Respublika Fənn Olimpiadası")
                         .orderIndex(0)
                         .build());
 
@@ -603,7 +624,7 @@ public class DataSeeder implements CommandLineRunner {
                         .build());
         addTypeCount(riyaz, QuestionType.MCQ, 40, 0);
 
-        log.info("Olimpiyada şablonu uğurla yaradıldı");
+        log.info("Olimpiada şablonu uğurla yaradıldı");
     }
 
     private void seedDimTemplate() {
@@ -1127,7 +1148,13 @@ public class DataSeeder implements CommandLineRunner {
         User teacher = userRepository.findByEmail(teacherEmail).orElse(null);
         if (teacher == null) { log.warn("Müəllim tapılmadı: {}", teacherEmail); return; }
 
-        String examTitle = "Azərbaycan dili + Riyaziyyat — Respublika Olimpiyadası Nümunəsi";
+        String examTitle = "Azərbaycan dili + Riyaziyyat — Respublika Olimpiadası Nümunəsi";
+        String legacyExamTitle = "Azərbaycan dili + Riyaziyyat — Respublika Olimpiyadası Nümunəsi";
+        // Rename any existing exam with the old misspelled title in place, so the
+        // lookup below matches it (no duplicate exam is created).
+        examRepository.findByTeacherAndDeletedFalse(teacher).stream()
+                .filter(e -> legacyExamTitle.equals(e.getTitle()))
+                .forEach(e -> { e.setTitle(examTitle); examRepository.save(e); });
         examRepository.findByTeacherAndDeletedFalse(teacher).stream()
                 .filter(e -> examTitle.equals(e.getTitle()))
                 .findFirst()
@@ -1141,7 +1168,7 @@ public class DataSeeder implements CommandLineRunner {
                             .setParameter("eid", existing.getId())
                             .getSingleResult();
                     if (staleCount > 0) {
-                        log.info("Olimpiyada nümunə imtahanı köhnə (1.0pt) strukturdadır, yenilənir...");
+                        log.info("Olimpiada nümunə imtahanı köhnə (1.0pt) strukturdadır, yenilənir...");
                         Long examId = existing.getId();
                         new TransactionTemplate(transactionManager).execute(status -> {
                             // Delete in FK-safe order using native SQL (JPQL bulk DELETE does not cascade)
@@ -1181,10 +1208,10 @@ public class DataSeeder implements CommandLineRunner {
                 });
         boolean alreadyExists = examRepository.findByTeacherAndDeletedFalse(teacher).stream()
                 .anyMatch(e -> examTitle.equals(e.getTitle()));
-        if (alreadyExists) { log.debug("Olimpiyada nümunə imtahanı artıq mövcuddur, keçilir"); return; }
+        if (alreadyExists) { log.debug("Olimpiada nümunə imtahanı artıq mövcuddur, keçilir"); return; }
 
-        Template template = templateRepository.findByTitle("Olimpiyada").orElse(null);
-        if (template == null) { log.warn("Olimpiyada şablonu tapılmadı"); return; }
+        Template template = templateRepository.findByTitle("Olimpiada").orElse(null);
+        if (template == null) { log.warn("Olimpiada şablonu tapılmadı"); return; }
 
         TemplateSection azSection = entityManager.createQuery(
                 "SELECT s FROM TemplateSection s WHERE s.subtitle.template.id = :tid AND s.subjectName = :name",
@@ -1199,14 +1226,14 @@ public class DataSeeder implements CommandLineRunner {
                 .getResultList().stream().findFirst().orElse(null);
 
         if (azSection == null || riyazSection == null) {
-            log.warn("Olimpiyada bölmələri tapılmadı"); return;
+            log.warn("Olimpiada bölmələri tapılmadı"); return;
         }
 
         Exam exam = Exam.builder()
                 .title(examTitle)
-                .description("Azərbaycan dili (20 sual) və Riyaziyyat (40 sual) üzrə Respublika Fənn Olimpiyadası "
+                .description("Azərbaycan dili (20 sual) və Riyaziyyat (40 sual) üzrə Respublika Fənn Olimpiadası "
                         + "formatında nümunə imtahan. Bütün düzgün cavablar E variantındadır. "
-                        + "4 yanlış cavab 1 doğrunu silir.")
+                        + "Hər yanlış cavab öz dəyərinin 0.25-ni silir.")
                 .subjects(new java.util.ArrayList<>(List.of("Azərbaycan dili", "Riyaziyyat")))
                 .visibility(ExamVisibility.PUBLIC)
                 .examType(ExamType.OLIMPIYADA)
@@ -1429,7 +1456,68 @@ public class DataSeeder implements CommandLineRunner {
             E, "Riyaziyyat", 1.5);
 
         examRepository.save(exam);
-        log.info("Olimpiyada nümunə imtahanı yaradıldı: \"{}\"", examTitle);
+        log.info("Olimpiada nümunə imtahanı yaradıldı: \"{}\"", examTitle);
+    }
+
+    /**
+     * Keep only the "Olimpiada" template/exam for now: hard-delete the seeded
+     * "DİM Buraxılış" template (and its subtitles/sections) plus the other seeded
+     * sample exams. Exams referencing the removed template are detached first so
+     * foreign keys don't block the delete. Idempotent — safe to run every start.
+     */
+    @Transactional
+    public void cleanupNonOlimpiadaSamples() {
+        new TransactionTemplate(transactionManager).execute(status -> {
+            // 1. Remove the other seeded sample exams (FK-safe, by title).
+            List<String> sampleExamTitles = List.of(
+                    "İngilis dili — Mətn & Dinləmə Nümunəsi",
+                    "Riyaziyyat — DİM Buraxılış Nümunəsi",
+                    "Riyaziyyat + İngilis dili — DİM Buraxılış Nümunəsi"
+            );
+            for (String title : sampleExamTitles) {
+                List<?> ids = entityManager.createNativeQuery("SELECT id FROM exams WHERE title = :t")
+                        .setParameter("t", title).getResultList();
+                for (Object idObj : ids) {
+                    deleteExamCascade(((Number) idObj).longValue());
+                }
+            }
+
+            // 2. Hard-delete EVERY template except "Olimpiada" (+ its subtitles
+            //    and sections), detaching any exams that still reference them.
+            //    Those exams keep their questions/answers but lose the template
+            //    link (the teacher can re-link or delete them later).
+            List<?> dimIds = entityManager.createNativeQuery(
+                    "SELECT id FROM templates WHERE title <> 'Olimpiada'").getResultList();
+            for (Object idObj : dimIds) {
+                long tid = ((Number) idObj).longValue();
+                String secSubquery = "(SELECT s.id FROM template_sections s "
+                        + "JOIN template_subtitles st ON s.subtitle_id = st.id WHERE st.template_id = " + tid + ")";
+                entityManager.createNativeQuery("UPDATE exams SET template_section_id = NULL WHERE template_section_id IN " + secSubquery).executeUpdate();
+                entityManager.createNativeQuery("DELETE FROM exam_template_sections WHERE section_id IN " + secSubquery).executeUpdate();
+                entityManager.createNativeQuery("UPDATE exams SET template_id = " + "NULL WHERE template_id = " + tid).executeUpdate();
+                entityManager.createNativeQuery("DELETE FROM template_section_type_counts WHERE section_id IN " + secSubquery).executeUpdate();
+                entityManager.createNativeQuery("DELETE FROM template_sections WHERE subtitle_id IN (SELECT id FROM template_subtitles WHERE template_id = " + tid + ")").executeUpdate();
+                entityManager.createNativeQuery("DELETE FROM template_subtitles WHERE template_id = " + tid).executeUpdate();
+                entityManager.createNativeQuery("DELETE FROM templates WHERE id = " + tid).executeUpdate();
+            }
+            log.info("Cleanup: yalnız 'Olimpiada' saxlanıldı — digər nümunə şablon/imtahanlar silindi");
+            return null;
+        });
+    }
+
+    /** FK-safe hard delete of a single exam and all its dependent rows. */
+    private void deleteExamCascade(long examId) {
+        entityManager.createNativeQuery("DELETE FROM matching_pairs WHERE question_id IN (SELECT id FROM questions WHERE exam_id = :eid)").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM options WHERE question_id IN (SELECT id FROM questions WHERE exam_id = :eid)").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM answers WHERE submission_id IN (SELECT id FROM submissions WHERE exam_id = :eid)").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM submissions WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM questions WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_subject_list WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM student_saved_exams WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_access_codes WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_tags WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_template_sections WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exams WHERE id = :eid").setParameter("eid", examId).executeUpdate();
     }
 
     private void buildMcq(Exam exam, int orderIndex, String content, String[] opts, int correctIdx) {
