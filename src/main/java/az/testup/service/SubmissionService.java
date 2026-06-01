@@ -22,7 +22,6 @@ import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.QuestionRepository;
-import az.testup.repository.StudentSavedExamRepository;
 import az.testup.repository.SubmissionRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,7 +56,6 @@ public class SubmissionService {
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
-    private final StudentSavedExamRepository studentSavedExamRepository;
     private final PaymentOrderRepository paymentOrderRepository;
     private final ObjectMapper objectMapper;
     private final NotificationService notificationService;
@@ -595,12 +593,10 @@ public class SubmissionService {
         auditLogService.log(AuditAction.EXAM_SUBMITTED, subEmail, subName, "EXAM", submission.getExam().getTitle(),
                 String.format("Bal: %.2f / %.2f", submission.getTotalScore(), submission.getMaxScore()));
 
-        // Remove exam from student's depot after completion
-        if (submission.getStudent() != null) {
-            studentSavedExamRepository.deleteByStudentIdAndExamId(
-                    submission.getStudent().getId(),
-                    submission.getExam().getId());
-        }
+        // NOTE: a saved ("Saxladığım") exam is intentionally NOT removed from the
+        // student's depot on completion. It stays until the student removes it
+        // themselves, so they can revisit exams they saved (BUG: used saved exam
+        // auto-disappeared from "Saxladığım").
 
         // Notify teacher of new submission
         User teacher = submission.getExam().getTeacher();
