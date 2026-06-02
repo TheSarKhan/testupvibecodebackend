@@ -362,9 +362,16 @@ public class ExamService {
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
-        if (!exam.getTeacher().getId().equals(teacher.getId())) {
-            // Use the typed exception so the frontend gets a clean 403 instead
-            // of the generic 500 the bare RuntimeException used to produce.
+        boolean isOwner = exam.getTeacher().getId().equals(teacher.getId());
+        boolean isAdmin = teacher.getRole() == az.testup.enums.Role.ADMIN;
+        boolean isCollaborator = exam.getCollaborativeParentId() != null
+                && examCollaboratorRepository.findByDraftExamId(exam.getId())
+                    .map(c -> c.getTeacher() != null && c.getTeacher().getId().equals(teacher.getId()))
+                    .orElse(false);
+        if (!isOwner && !isAdmin && !isCollaborator) {
+            // Owner, admin, or assigned collaborator only. Previously this only
+            // accepted the owner, so admin-panel edits of teacher-owned exams
+            // and collab-draft saves by the assigned collaborator both 403'd.
             throw new UnauthorizedException("Bu imtahanı redaktə etmək icazəniz yoxdur");
         }
 

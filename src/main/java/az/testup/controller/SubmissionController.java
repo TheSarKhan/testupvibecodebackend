@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
 
+import java.util.Collections;
 import java.util.List;
 
 @RestController
@@ -107,7 +108,15 @@ public class SubmissionController {
     @GetMapping("/ongoing")
     public ResponseEntity<List<SubmissionResponse>> getOngoingSubmissions(
             @AuthenticationPrincipal UserDetails userDetails) {
-        User student = getCurrentUser(userDetails);
+        // Anonymous / expired-token callers and non-student roles (teachers,
+        // admins) never have a server-side ongoing submission — return an empty
+        // list instead of throwing a 403 "İstifadəçi tapılmadı". This endpoint
+        // is polled by the ongoing-exam popup, so a hard error here surfaced as
+        // a console/network 403 on pages teachers legitimately use.
+        User student = getCurrentUserOrNull(userDetails);
+        if (student == null || student.getRole() != Role.STUDENT) {
+            return ResponseEntity.ok(Collections.emptyList());
+        }
         return ResponseEntity.ok(submissionService.getOngoingSubmissions(student));
     }
 
