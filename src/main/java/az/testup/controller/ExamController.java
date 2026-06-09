@@ -8,6 +8,7 @@ import az.testup.entity.PaymentOrder;
 import az.testup.entity.User;
 import az.testup.exception.UnauthorizedException;
 import az.testup.enums.AuditAction;
+import az.testup.enums.ExamStatus;
 import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.UserRepository;
 import az.testup.service.AuditLogService;
@@ -173,7 +174,12 @@ public class ExamController {
         if (user == null) return ResponseEntity.ok(List.of());
         List<PaymentOrder> orders = paymentOrderRepository.findPaidExamOrders(user.getId(), "PAID");
         List<Map<String, Object>> result = orders.stream()
-            .filter(order -> order.getExam() != null && examService.hasUnusedPurchase(order.getExam(), user))
+            .filter(order -> {
+                Exam ex = order.getExam();
+                // Skip deleted / closed (CANCELLED) exams so they drop out of "Alınanlar".
+                return ex != null && !ex.isDeleted() && ex.getStatus() != ExamStatus.CANCELLED
+                        && examService.hasUnusedPurchase(ex, user);
+            })
             .collect(Collectors.toMap(
                 order -> order.getExam().getId(),
                 order -> order,

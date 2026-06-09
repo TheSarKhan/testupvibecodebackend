@@ -4,6 +4,7 @@ import az.testup.dto.response.DepotExamResponse;
 import az.testup.entity.Exam;
 import az.testup.entity.StudentSavedExam;
 import az.testup.entity.User;
+import az.testup.enums.ExamStatus;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.ExamRepository;
@@ -47,6 +48,12 @@ public class DepotService {
     @Transactional(readOnly = true)
     public List<DepotExamResponse> getDepot(User student) {
         return savedExamRepository.findByStudentIdOrderBySavedAtDesc(student.getId()).stream()
+                // Hide exams that were deleted or closed (CANCELLED) by the
+                // owner/admin — they shouldn't linger in "Saxlananlar".
+                .filter(s -> {
+                    Exam e = s.getExam();
+                    return e != null && !e.isDeleted() && e.getStatus() != ExamStatus.CANCELLED;
+                })
                 .map(s -> mapToResponse(s))
                 .collect(Collectors.toList());
     }
