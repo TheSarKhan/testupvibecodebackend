@@ -97,6 +97,9 @@ public class GeminiService {
             retryReq.setTopicName(req.getTopicName());
             retryReq.setDifficulty(req.getDifficulty());
             retryReq.setQuestionType(req.getQuestionType());
+            retryReq.setInstructions(req.getInstructions());
+            retryReq.setGradeLevel(req.getGradeLevel());
+            retryReq.setLanguage(req.getLanguage());
             retryReq.setCount(requested - filtered.size());
             try {
                 String retryRaw = callGemini(buildPrompt(retryReq), retryReq);
@@ -196,6 +199,20 @@ public class GeminiService {
         java.util.Map.entry("ərəb dili",    "Arabic (العربية)"),
         java.util.Map.entry("ispan dili",   "Spanish (español)")
     );
+
+    /**
+     * Maps the teacher's explicit language pick (AZ/EN/RU) to the language name
+     * the prompt asks for. AZ and null return null — AZ is the default and is
+     * handled by the forceAzerbaijani flag in buildPrompt.
+     */
+    private String explicitLanguageFor(String language) {
+        if (language == null) return null;
+        return switch (language.trim().toUpperCase()) {
+            case "EN" -> "English";
+            case "RU" -> "Russian (русский язык)";
+            default -> null;
+        };
+    }
 
     /** If the subject is a foreign language fənn, returns the language name to write the question in. */
     private String foreignLanguageFor(String subjectName) {
@@ -359,6 +376,8 @@ public class GeminiService {
                        || "FILL_IN_THE_BLANK".equals(req.getQuestionType());
         boolean isFill  = "FILL_IN_THE_BLANK".equals(req.getQuestionType());
         boolean isMulti = "MULTI_SELECT".equals(req.getQuestionType());
+        boolean isTrueFalse = "TRUE_FALSE".equals(req.getQuestionType());
+        boolean isMatching  = "MATCHING".equals(req.getQuestionType());
         boolean isMath  = isMathSubject(req.getSubjectName());
 
         String diffRubric = difficultyRubric(req.getDifficulty(), isMath);
@@ -463,6 +482,29 @@ public class GeminiService {
             exampleJson = isMath
                 ? "{\"questions\":[{\"content\":\"$f(x) = 2x^{2} - 3$ funksiyasında $f(2)$ qiymətini tapın.\",\"correctAnswer\":\"$5$\"}]}"
                 : "{\"questions\":[{\"content\":\"Azərbaycan Xalq Cümhuriyyəti hansı ildə elan olunub?\",\"correctAnswer\":\"1918\"}]}";
+        } else if (isTrueFalse) {
+            typeRules = """
+                    SUAL TİPİ — DOĞRU/YANLIŞ (TRUE_FALSE):
+                    - `content` BİR HÖKM (təsdiq cümləsi) olsun — sual cümləsi YOX. Hökm birmənalı şəkildə ya doğru, ya yanlış olmalıdır.
+                    - DƏQİQ 2 variant: birincisi "Doğru", ikincisi "Yanlış" (məhz bu mətnlərlə, bu sırada).
+                    - DƏQİQ 1 variant `isCorrect: true` olsun — hökm doğrudursa "Doğru", yanlışdırsa "Yanlış".
+                    - Batch daxilində doğru və yanlış hökmləri QARIŞDIR (hamısı doğru və ya hamısı yanlış olmasın).
+                    - "Hər zaman", "heç vaxt" kimi mütləq ifadələrdən yalnız hökm həqiqətən mütləq olduqda istifadə et.""";
+            exampleJson = isMath
+                ? "{\"questions\":[{\"content\":\"$2^{3} = 8$ bərabərliyi doğrudur.\",\"options\":[{\"text\":\"Doğru\",\"isCorrect\":true},{\"text\":\"Yanlış\",\"isCorrect\":false}]}]}"
+                : "{\"questions\":[{\"content\":\"Azərbaycan Xalq Cümhuriyyəti 1918-ci ildə elan olunub.\",\"options\":[{\"text\":\"Doğru\",\"isCorrect\":true},{\"text\":\"Yanlış\",\"isCorrect\":false}]}]}";
+        } else if (isMatching) {
+            typeRules = """
+                    SUAL TİPİ — UYĞUNLAŞDIRMA (MATCHING):
+                    - `content` qısa tapşırıq təlimatı olsun (məs: "Anlayışları tərifləri ilə uyğunlaşdırın.").
+                    - `pairs`: 3-5 cüt, hər biri `{ "left": ..., "right": ... }`.
+                    - Hər sol element DƏQİQ BİR sağ elementlə uyğun gəlməlidir — heç bir sağ element iki sola uyğun OLMASIN.
+                    - Sağ elementlər bir-birinə yaxın/inandırıcı olsun ki, uyğunlaşdırma düşünmə tələb etsin,
+                      lakin hər cütün düzgünlüyü birmənalı qalsın.
+                    - Sol və sağ tərəflər QISA olsun (1-5 söz); uzun cümlələrdən qaç.""";
+            exampleJson = isMath
+                ? "{\"questions\":[{\"content\":\"Funksiyaları törəmələri ilə uyğunlaşdırın.\",\"pairs\":[{\"left\":\"$x^{2}$\",\"right\":\"$2x$\"},{\"left\":\"$\\\\sin x$\",\"right\":\"$\\\\cos x$\"},{\"left\":\"$e^{x}$\",\"right\":\"$e^{x}$\"}]}]}"
+                : "{\"questions\":[{\"content\":\"Ölkələri paytaxtları ilə uyğunlaşdırın.\",\"pairs\":[{\"left\":\"Azərbaycan\",\"right\":\"Bakı\"},{\"left\":\"Türkiyə\",\"right\":\"Ankara\"},{\"left\":\"Gürcüstan\",\"right\":\"Tbilisi\"}]}]}";
         } else if (isMulti) {
             typeRules = """
                     SUAL TİPİ — ÇOX SEÇİMLİ (MULTI_SELECT):
@@ -497,16 +539,29 @@ public class GeminiService {
               "Eyni şablonun kiçik dəyişikliyi yox, HƏQİQİ MÜXTƏLİFLİK."
             : "";
 
-        // Foreign-language fənn (İngilis dili, Rus dili, ...) — the question stem,
-        // options and answer must be in THAT language so students see authentic
-        // material instead of an Azerbaijani translation. Azərbaycan dili /
-        // Ədəbiyyat / native subjects keep the default Azerbaijani.
-        String foreignLang = foreignLanguageFor(req.getSubjectName());
-        String langLine = foreignLang != null
+        // Language priority: an explicit teacher choice (AZ/EN/RU) wins; otherwise
+        // foreign-language fənn (İngilis dili, Rus dili, ...) implies its own
+        // language; otherwise default Azerbaijani.
+        String explicitLang = explicitLanguageFor(req.getLanguage());
+        String foreignLang = explicitLang != null ? explicitLang : foreignLanguageFor(req.getSubjectName());
+        boolean forceAzerbaijani = "AZ".equalsIgnoreCase(req.getLanguage() == null ? "" : req.getLanguage().trim());
+        String langLine = (foreignLang != null && !forceAzerbaijani)
             ? "LANGUAGE / DİL: Write the ENTIRE question (stem, options, answer, distractors) in " + foreignLang + ". " +
               "DO NOT translate into Azerbaijani — the student is being tested ON this language. " +
               "Yalnız xahiş: bütün məzmun (sual mətni, variantlar, cavab, distraktorlar) " + foreignLang + " dilində olsun.\n"
             : "DİL: Azərbaycan dili (təmiz, müasir orfoqrafiya).\n";
+
+        // Optional grade level — calibrates vocabulary, context and depth.
+        String gradeLine = (req.getGradeLevel() != null && !req.getGradeLevel().isBlank())
+            ? "SİNİF SƏVİYYƏSİ: " + req.getGradeLevel().trim() +
+              " — məzmun, söz ehtiyatı və çətinlik məhz bu səviyyəyə uyğun olsun (nə aşağı, nə yuxarı).\n"
+            : "";
+
+        // Optional free-form teacher guidance. Format/output rules above always win.
+        String instructionsLine = (req.getInstructions() != null && !req.getInstructions().isBlank())
+            ? "MÜƏLLİM TƏLİMATI (məzmuna tətbiq et; yuxarıdakı FORMAT və JSON qaydalarını heç vaxt pozma): \"" +
+              req.getInstructions().trim().replace("\"", "'") + "\"\n"
+            : "";
 
         return ("FƏNN: " + req.getSubjectName() + "\n" +
                 topicLine + "\n" +
@@ -514,6 +569,8 @@ public class GeminiService {
                 styleCue + "\n" +
                 (diversityRule.isEmpty() ? "" : diversityRule + "\n") +
                 langLine +
+                gradeLine +
+                instructionsLine +
                 "SUAL SAYI: DƏQİQ " + req.getCount() + " sual.\n" +
                 latexNote +
                 hardChallengeGate + "\n\n" +
@@ -522,6 +579,8 @@ public class GeminiService {
                 "{ \"questions\": [ { \"content\": string" +
                 (isFill ? ", \"correctAnswer\": string, \"distractors\": [string, string, string]"
                         : isOpen ? ", \"correctAnswer\": string"
+                        : isMatching ? ", \"pairs\": [{ \"left\": string, \"right\": string }, … 3-5 ədəd]"
+                        : isTrueFalse ? ", \"options\": [{ \"text\": string, \"isCorrect\": boolean }, … DƏQİQ 2 ədəd]"
                         : ", \"options\": [{ \"text\": string, \"isCorrect\": boolean }, … 4 ədəd]") +
                 " }, … " + req.getCount() + " ədəd ] }\n\n" +
                 "STRUKTUR NÜMUNƏSİ (məzmunu kopyalama, yalnız format):\n" +
@@ -737,9 +796,32 @@ public class GeminiService {
         String qType = req.getQuestionType();
         boolean isFill = "FILL_IN_THE_BLANK".equals(qType);
         boolean isOpen = "OPEN_AUTO".equals(qType) || isFill;
+        boolean isMatching = "MATCHING".equals(qType);
 
         String questionItemSchema;
-        if (isFill) {
+        if (isMatching) {
+            questionItemSchema = """
+                {
+                  "type": "OBJECT",
+                  "properties": {
+                    "content": { "type": "STRING", "description": "Short matching-task instruction." },
+                    "pairs": {
+                      "type": "ARRAY",
+                      "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                          "left":  { "type": "STRING" },
+                          "right": { "type": "STRING" }
+                        },
+                        "required": ["left", "right"]
+                      },
+                      "description": "3-5 pairs; every left matches exactly one right."
+                    }
+                  },
+                  "required": ["content", "pairs"]
+                }
+                """;
+        } else if (isFill) {
             questionItemSchema = """
                 {
                   "type": "OBJECT",
@@ -841,6 +923,12 @@ public class GeminiService {
             .replace("\0", "\\0");       // null → \0 (rare, but cheap to handle)
     }
 
+    private String asTrimmedString(Object o) {
+        if (o == null) return null;
+        String s = String.valueOf(o).trim();
+        return s.isEmpty() ? null : s;
+    }
+
     private List<BankQuestionRequest> parseResponse(String raw, GenerateQuestionsRequest req) {
         String cleaned = raw.trim();
         // Strip markdown fences if present
@@ -918,7 +1006,11 @@ public class GeminiService {
                     // never persist with a null orderIndex (which broke PDF export —
                     // see BUG-05). isCorrect travels with each option object, so the
                     // shuffle never desynchronises the answer from its text.
-                    Collections.shuffle(optList);
+                    // TRUE_FALSE is the exception: "Doğru" must stay first,
+                    // "Yanlış" second — shuffling them just looks broken.
+                    if (!"TRUE_FALSE".equals(qt)) {
+                        Collections.shuffle(optList);
+                    }
                     for (int oi = 0; oi < optList.size(); oi++) {
                         optList.get(oi).setOrderIndex(oi);
                     }
@@ -928,6 +1020,44 @@ public class GeminiService {
                         optList.stream().filter(BankOptionRequest::getIsCorrect).findFirst()
                             .ifPresent(o -> q.setCorrectAnswer(o.getContent()));
                     }
+                }
+
+                // TRUE_FALSE sanity: exactly 2 options with exactly 1 correct.
+                // Anything else can't be graded — skip rather than save broken.
+                if ("TRUE_FALSE".equals(qt)) {
+                    List<BankOptionRequest> opts2 = q.getOptions();
+                    long correct = opts2 == null ? 0
+                            : opts2.stream().filter(o -> Boolean.TRUE.equals(o.getIsCorrect())).count();
+                    if (opts2 == null || opts2.size() != 2 || correct != 1) {
+                        log.warn("AI TRUE_FALSE question skipped — invalid option set: {}", item);
+                        continue;
+                    }
+                }
+
+                // MATCHING: map the {left, right} pairs onto matchingPairs.
+                if ("MATCHING".equals(qt)) {
+                    List<BankMatchingPairRequest> pairList = new ArrayList<>();
+                    Object rawPairs = item.get("pairs");
+                    if (rawPairs instanceof List<?> list) {
+                        for (Object p : list) {
+                            if (!(p instanceof Map<?, ?> pm)) continue;
+                            String left = restoreLatexControlChars(asTrimmedString(pm.get("left")));
+                            String right = restoreLatexControlChars(asTrimmedString(pm.get("right")));
+                            if (left == null || right == null) continue;
+                            if (!hasValidLatex(left) || !hasValidLatex(right)) continue;
+                            BankMatchingPairRequest pair = new BankMatchingPairRequest();
+                            pair.setLeftItem(left);
+                            pair.setRightItem(right);
+                            pair.setOrderIndex(pairList.size());
+                            pairList.add(pair);
+                        }
+                    }
+                    // Fewer than 2 valid pairs isn't a matching task — skip.
+                    if (pairList.size() < 2) {
+                        log.warn("AI MATCHING question skipped — not enough valid pairs: {}", item);
+                        continue;
+                    }
+                    q.setMatchingPairs(pairList);
                 }
 
                 // correctAnswer (OPEN_AUTO / FILL_IN_THE_BLANK)
@@ -975,7 +1105,7 @@ public class GeminiService {
                     continue;
                 }
 
-                q.setMatchingPairs(new ArrayList<>());
+                if (q.getMatchingPairs() == null) q.setMatchingPairs(new ArrayList<>());
                 result.add(q);
             }
             return result;
@@ -984,6 +1114,33 @@ public class GeminiService {
                     e.getMessage(), raw.substring(0, Math.min(300, raw.length())));
             throw new ServiceUnavailableException("AI-dən gələn suallar emal edilə bilmədi. Yenidən cəhd edin.");
         }
+    }
+
+    /**
+     * Normalises the optional difficulty mix to positive EASY/MEDIUM/HARD
+     * entries and validates its sum against the total of typeCounts. Empty map
+     * = no mix (legacy single-difficulty path). Called both by the controller
+     * (so a bad mix fails fast with a 400 before the async job is queued) and
+     * by generateExam itself.
+     */
+    public Map<String, Integer> normalizedDifficultyMix(GenerateExamRequest req) {
+        Map<String, Integer> mix = new LinkedHashMap<>();
+        if (req.getDifficultyMix() != null) {
+            for (String key : List.of("EASY", "MEDIUM", "HARD")) {
+                Integer v = req.getDifficultyMix().get(key);
+                if (v != null && v > 0) mix.put(key, v);
+            }
+        }
+        if (!mix.isEmpty()) {
+            int total = req.getTypeCounts() == null ? 0
+                    : req.getTypeCounts().values().stream().mapToInt(Integer::intValue).sum();
+            int mixTotal = mix.values().stream().mapToInt(Integer::intValue).sum();
+            if (mixTotal != total) {
+                throw new BadRequestException("Çətinlik bölgüsünün cəmi (" + mixTotal
+                        + ") seçilmiş sual sayı ilə (" + total + ") uyğun gəlmir.");
+            }
+        }
+        return mix;
     }
 
     public List<BankQuestionRequest> generateExam(GenerateExamRequest req) {
@@ -1017,29 +1174,59 @@ public class GeminiService {
             }
         }
 
+        // Difficulty mix (BUG-21): when the teacher specifies a per-difficulty
+        // breakdown it overrides the single `difficulty`.
+        Map<String, Integer> remainingMix = normalizedDifficultyMix(req);
+        boolean useMix = !remainingMix.isEmpty();
+
         List<String> usedHints = new ArrayList<>();
 
         for (String type : orderedTypes) {
             int count = req.getTypeCounts().getOrDefault(type, 0);
             if (count <= 0) continue;
 
-            GenerateQuestionsRequest qReq = new GenerateQuestionsRequest();
-            qReq.setSubjectName(req.getSubjectName());
-            // Append exam-level coherence hint so each batch knows it's part of a larger exam
-            // and must avoid overlapping sub-topics with previously generated batches.
-            qReq.setTopicName(buildExamScopedTopic(topics, totalRequested, count, usedHints));
-            qReq.setDifficulty(req.getDifficulty() != null ? req.getDifficulty() : "MEDIUM");
-            qReq.setQuestionType(type);
-            qReq.setCount(Math.min(count, 15));
+            // One sub-batch per difficulty drawn from the remaining mix; without
+            // a mix it's a single batch at the legacy single difficulty.
+            List<String[]> batches = new ArrayList<>(); // [difficulty, count]
+            if (useMix) {
+                int left = count;
+                for (String diff : List.of("EASY", "MEDIUM", "HARD")) {
+                    if (left == 0) break;
+                    int avail = remainingMix.getOrDefault(diff, 0);
+                    if (avail <= 0) continue;
+                    int take = Math.min(left, avail);
+                    remainingMix.put(diff, avail - take);
+                    batches.add(new String[]{diff, String.valueOf(take)});
+                    left -= take;
+                }
+            } else {
+                batches.add(new String[]{req.getDifficulty() != null ? req.getDifficulty() : "MEDIUM",
+                        String.valueOf(count)});
+            }
 
-            List<BankQuestionRequest> generated = generateQuestions(qReq);
-            all.addAll(generated);
+            for (String[] batch : batches) {
+                int batchCount = Integer.parseInt(batch[1]);
+                GenerateQuestionsRequest qReq = new GenerateQuestionsRequest();
+                qReq.setSubjectName(req.getSubjectName());
+                // Append exam-level coherence hint so each batch knows it's part of a larger exam
+                // and must avoid overlapping sub-topics with previously generated batches.
+                qReq.setTopicName(buildExamScopedTopic(topics, totalRequested, batchCount, usedHints));
+                qReq.setDifficulty(batch[0]);
+                qReq.setQuestionType(type);
+                qReq.setCount(Math.min(batchCount, 15));
+                qReq.setInstructions(req.getInstructions());
+                qReq.setGradeLevel(req.getGradeLevel());
+                qReq.setLanguage(req.getLanguage());
 
-            // Remember a few sub-topics from this batch so the next batch can be told to avoid them.
-            for (int i = 0; i < Math.min(2, generated.size()); i++) {
-                String c = generated.get(i).getContent();
-                if (c != null && !c.isBlank()) {
-                    usedHints.add(c.substring(0, Math.min(80, c.length())));
+                List<BankQuestionRequest> generated = generateQuestions(qReq);
+                all.addAll(generated);
+
+                // Remember a few sub-topics from this batch so the next batch can be told to avoid them.
+                for (int i = 0; i < Math.min(2, generated.size()); i++) {
+                    String c = generated.get(i).getContent();
+                    if (c != null && !c.isBlank()) {
+                        usedHints.add(c.substring(0, Math.min(80, c.length())));
+                    }
                 }
             }
         }
@@ -1051,10 +1238,12 @@ public class GeminiService {
     private int typePriority(String type) {
         return switch (type == null ? "" : type) {
             case "MCQ" -> 1;
-            case "MULTI_SELECT" -> 2;
-            case "FILL_IN_THE_BLANK" -> 3;
-            case "OPEN_AUTO" -> 4;
-            case "OPEN_MANUAL" -> 5;
+            case "TRUE_FALSE" -> 2;
+            case "MULTI_SELECT" -> 3;
+            case "MATCHING" -> 4;
+            case "FILL_IN_THE_BLANK" -> 5;
+            case "OPEN_AUTO" -> 6;
+            case "OPEN_MANUAL" -> 7;
             default -> 9;
         };
     }
@@ -1109,6 +1298,8 @@ public class GeminiService {
             case "OPEN_MANUAL"        -> QuestionType.OPEN_MANUAL;
             case "FILL_IN_THE_BLANK"  -> QuestionType.FILL_IN_THE_BLANK;
             case "MULTI_SELECT"       -> QuestionType.MULTI_SELECT;
+            case "TRUE_FALSE"         -> QuestionType.TRUE_FALSE;
+            case "MATCHING"           -> QuestionType.MATCHING;
             default                   -> QuestionType.MCQ;
         };
     }

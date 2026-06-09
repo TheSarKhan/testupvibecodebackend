@@ -129,6 +129,10 @@ public class AiController {
             subscriptionValidatorService.validateMonthlyExamCreation(user.getId());
             subscriptionValidatorService.validateTotalSavedExams(user.getId());
 
+            // Fail fast on an inconsistent difficulty mix — the background job
+            // can only surface a generic failure notification, not a 400.
+            geminiService.normalizedDifficultyMix(req);
+
             aiAsyncExamService.generateExamInBackground(user.getId(), req, req.getTitle());
 
             return ResponseEntity.accepted().body(Map.of(
@@ -136,6 +140,8 @@ public class AiController {
                     "questionCount", totalQuestions));
         } catch (SubscriptionLimitExceededException e) {
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (az.testup.exception.BadRequestException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "Generasiya başladıla bilmədi: " + e.getMessage()));
         }
