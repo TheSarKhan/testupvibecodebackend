@@ -24,8 +24,11 @@ public class ExamSubject {
     // Metadata
     private String color;       // hex e.g. "#6366f1"
     private String iconEmoji;   // e.g. "📐"
-    /** Display category for picker filter pills, e.g. "Dəqiq elmlər". Null = uncategorised. */
-    private String category;
+
+    /** Admin-managed picker category. Null = uncategorised (only visible under "Hamısı"). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private SubjectCategory category;
     @Column(columnDefinition = "TEXT")
     private String description;
 

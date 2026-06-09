@@ -26,6 +26,7 @@ public class DataSeeder implements CommandLineRunner {
     private final PasswordEncoder passwordEncoder;
     private final ExamSubjectRepository subjectRepository;
     private final SubjectTopicRepository subjectTopicRepository;
+    private final az.testup.repository.SubjectCategoryRepository subjectCategoryRepository;
     private final EntityManager entityManager;
     private final TemplateRepository templateRepository;
     private final TemplateSubtitleRepository subtitleRepository;
@@ -307,6 +308,11 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     private void seedSubjects() {
+        // Category rows are created by V31 (and admins can add more); resolve
+        // them once by name so subjects can reference the managed entities.
+        Map<String, az.testup.entity.SubjectCategory> categoriesByName = new java.util.HashMap<>();
+        subjectCategoryRepository.findAll().forEach(c -> categoriesByName.put(c.getName(), c));
+
         if (subjectRepository.count() == 0) {
             for (String name : DEFAULT_SUBJECTS) {
                 String[] meta = SUBJECT_METADATA.get(name);
@@ -315,7 +321,7 @@ public class DataSeeder implements CommandLineRunner {
                         .isDefault(true)
                         .color(meta != null ? meta[0] : null)
                         .iconEmoji(meta != null ? meta[1] : null)
-                        .category(SUBJECT_CATEGORIES.get(name))
+                        .category(categoriesByName.get(SUBJECT_CATEGORIES.get(name)))
                         .build();
                 subjectRepository.save(subject);
             }
@@ -339,12 +345,13 @@ public class DataSeeder implements CommandLineRunner {
                 });
             }
             // Backfill category for known subjects that don't have one yet
-            // (covers DBs created before V30 whose names weren't in the
-            // migration's IN lists, e.g. fresh installs with custom data).
+            // (covers DBs whose names weren't in the migration's IN lists).
             for (Map.Entry<String, String> entry : SUBJECT_CATEGORIES.entrySet()) {
+                az.testup.entity.SubjectCategory category = categoriesByName.get(entry.getValue());
+                if (category == null) continue;
                 subjectRepository.findByName(entry.getKey()).ifPresent(subject -> {
                     if (subject.getCategory() == null) {
-                        subject.setCategory(entry.getValue());
+                        subject.setCategory(category);
                         subjectRepository.save(subject);
                     }
                 });

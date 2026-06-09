@@ -3,6 +3,7 @@ package az.testup.controller;
 import az.testup.dto.response.SubjectTopicResponse;
 import az.testup.entity.ExamSubject;
 import az.testup.repository.ExamSubjectRepository;
+import az.testup.repository.SubjectCategoryRepository;
 import az.testup.repository.SubjectTopicRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +19,7 @@ public class SubjectController {
 
     private final ExamSubjectRepository subjectRepository;
     private final SubjectTopicRepository subjectTopicRepository;
+    private final SubjectCategoryRepository subjectCategoryRepository;
 
     @GetMapping
     public ResponseEntity<List<String>> getSubjects() {
@@ -39,7 +41,29 @@ public class SubjectController {
                     m.put("name", s.getName());
                     m.put("color", s.getColor());
                     m.put("iconEmoji", s.getIconEmoji());
-                    m.put("category", s.getCategory());
+                    m.put("category", s.getCategory() != null ? s.getCategory().getName() : null);
+                    m.put("categoryId", s.getCategory() != null ? s.getCategory().getId() : null);
+                    return m;
+                })
+                .toList();
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Picker filter categories in admin-defined pill order. Readable by any
+     * user — the exam-creation modal builds its filter pills from this.
+     */
+    @GetMapping("/categories")
+    public ResponseEntity<List<java.util.Map<String, Object>>> getCategories() {
+        List<java.util.Map<String, Object>> result = subjectCategoryRepository
+                .findAllByOrderByOrderIndexAscNameAsc()
+                .stream()
+                .map(c -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", c.getId());
+                    m.put("name", c.getName());
+                    m.put("orderIndex", c.getOrderIndex());
+                    m.put("color", c.getColor());
                     return m;
                 })
                 .toList();

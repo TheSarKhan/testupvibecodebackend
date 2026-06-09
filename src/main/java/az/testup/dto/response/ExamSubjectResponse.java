@@ -9,6 +9,7 @@ public record ExamSubjectResponse(
         String name,
         String color,
         String iconEmoji,
+        Long categoryId,
         String category,
         String description,
         @JsonProperty("default") boolean isDefault,

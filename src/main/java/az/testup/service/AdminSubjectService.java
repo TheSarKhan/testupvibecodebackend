@@ -1,9 +1,11 @@
 package az.testup.service;
 
 import az.testup.dto.response.ExamSubjectResponse;
+import az.testup.dto.response.SubjectCategoryResponse;
 import az.testup.dto.response.SubjectStatsResponse;
 import az.testup.dto.response.SubjectTopicResponse;
 import az.testup.entity.ExamSubject;
+import az.testup.entity.SubjectCategory;
 import az.testup.entity.SubjectTopic;
 import az.testup.enums.AuditAction;
 import az.testup.enums.Difficulty;
@@ -11,6 +13,7 @@ import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.BankQuestionRepository;
 import az.testup.repository.ExamSubjectRepository;
+import az.testup.repository.SubjectCategoryRepository;
 import az.testup.repository.SubjectTopicRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -32,6 +35,7 @@ public class AdminSubjectService {
 
     private final ExamSubjectRepository subjectRepository;
     private final SubjectTopicRepository subjectTopicRepository;
+    private final SubjectCategoryRepository subjectCategoryRepository;
     private final BankQuestionRepository bankQuestionRepository;
     private final AuditLogService auditLogService;
 
@@ -45,16 +49,15 @@ public class AdminSubjectService {
     }
 
     @Transactional
-    public ExamSubjectResponse addSubject(String name, String category) {
+    public ExamSubjectResponse addSubject(String name, Long categoryId) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) throw new BadRequestException("Fənn adı boş ola bilməz");
         if (subjectRepository.existsByName(trimmed)) {
             throw new BadRequestException("Bu fənn artıq mövcuddur");
         }
-        String trimmedCategory = category == null || category.isBlank() ? null : category.trim();
         ExamSubject saved = subjectRepository.save(ExamSubject.builder()
                 .name(trimmed)
-                .category(trimmedCategory)
+                .category(resolveCategory(categoryId))
                 .isDefault(false)
                 .build());
         auditLogService.log(AuditAction.SUBJECT_ADDED, "admin", "Admin", "SUBJECT", trimmed, null);
@@ -108,14 +111,17 @@ public class AdminSubjectService {
 
     @Transactional
     public ExamSubjectResponse updateSubjectMetadata(Long id, String color, String iconEmoji,
-                                                     String description, String category) {
+                                                     String description, String categoryIdRaw) {
         ExamSubject subject = subjectRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
         if (color != null) subject.setColor(color);
         if (iconEmoji != null) subject.setIconEmoji(iconEmoji);
         if (description != null) subject.setDescription(description);
-        // Empty string clears the category (uncategorised); null = leave untouched.
-        if (category != null) subject.setCategory(category.isBlank() ? null : category.trim());
+        // categoryId comes as a string from the generic map body:
+        // null = leave untouched, "" = clear, numeric = assign that category.
+        if (categoryIdRaw != null) {
+            subject.setCategory(categoryIdRaw.isBlank() ? null : resolveCategory(parseCategoryId(categoryIdRaw)));
+        }
         ExamSubject saved = subjectRepository.save(subject);
         auditLogService.logCurrent(AuditAction.SUBJECT_UPDATED, "SUBJECT", saved.getName(), null);
         return toResponse(saved);
@@ -166,7 +172,8 @@ public class AdminSubjectService {
                 s.getName(),
                 s.getColor(),
                 s.getIconEmoji(),
-                s.getCategory(),
+                s.getCategory() != null ? s.getCategory().getId() : null,
+                s.getCategory() != null ? s.getCategory().getName() : null,
                 s.getDescription(),
                 s.isDefault(),
                 topics
@@ -175,5 +182,85 @@ public class AdminSubjectService {
 
     private SubjectTopicResponse toTopicResponse(SubjectTopic t) {
         return new SubjectTopicResponse(t.getId(), t.getName(), t.getGradeLevel());
+    }
+
+    // ── Subject categories (admin-managed picker groups) ──
+
+    @Transactional(readOnly = true)
+    public List<SubjectCategoryResponse> getCategories() {
+        return subjectCategoryRepository.findAllByOrderByOrderIndexAscNameAsc()
+                .stream().map(this::toCategoryResponse).toList();
+    }
+
+    @Transactional
+    public SubjectCategoryResponse createCategory(String name, Integer orderIndex, String color) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) throw new BadRequestException("Kateqoriya adı boş ola bilməz");
+        if (subjectCategoryRepository.existsByName(trimmed)) {
+            throw new BadRequestException("Bu kateqoriya artıq mövcuddur");
+        }
+        SubjectCategory saved = subjectCategoryRepository.save(SubjectCategory.builder()
+                .name(trimmed)
+                .orderIndex(orderIndex)
+                .color(color)
+                .isDefault(false)
+                .build());
+        auditLogService.logCurrent(AuditAction.SUBJECT_ADDED, "SUBJECT_CATEGORY", saved.getName(), null);
+        return toCategoryResponse(saved);
+    }
+
+    @Transactional
+    public SubjectCategoryResponse updateCategory(Long id, String name, Integer orderIndex, String color) {
+        SubjectCategory category = subjectCategoryRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Kateqoriya tapılmadı"));
+        if (name != null && !name.isBlank()) {
+            String trimmed = name.trim();
+            if (!trimmed.equals(category.getName()) && subjectCategoryRepository.existsByName(trimmed)) {
+                throw new BadRequestException("Bu kateqoriya artıq mövcuddur");
+            }
+            category.setName(trimmed);
+        }
+        if (orderIndex != null) category.setOrderIndex(orderIndex);
+        if (color != null) category.setColor(color.isBlank() ? null : color);
+        SubjectCategory saved = subjectCategoryRepository.save(category);
+        auditLogService.logCurrent(AuditAction.SUBJECT_UPDATED, "SUBJECT_CATEGORY", saved.getName(), null);
+        return toCategoryResponse(saved);
+    }
+
+    @Transactional
+    public void deleteCategory(Long id) {
+        SubjectCategory category = subjectCategoryRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Kateqoriya tapılmadı"));
+        if (category.isDefault()) {
+            throw new BadRequestException("Default kateqoriyalar silinə bilməz");
+        }
+        // Detach subjects in-session too (the DB FK is ON DELETE SET NULL, but
+        // managed ExamSubject entities must not keep a reference to a deleted row).
+        subjectRepository.findAll().stream()
+                .filter(s -> s.getCategory() != null && s.getCategory().getId().equals(id))
+                .forEach(s -> {
+                    s.setCategory(null);
+                    subjectRepository.save(s);
+                });
+        auditLogService.logCurrent(AuditAction.SUBJECT_DELETED, "SUBJECT_CATEGORY", category.getName(), null);
+        subjectCategoryRepository.deleteById(id);
+    }
+
+    private SubjectCategoryResponse toCategoryResponse(SubjectCategory c) {
+        return new SubjectCategoryResponse(c.getId(), c.getName(), c.getOrderIndex(), c.getColor(), c.isDefault());
+    }
+
+    private SubjectCategory resolveCategory(Long categoryId) {
+        if (categoryId == null) return null;
+        return subjectCategoryRepository.findById(categoryId)
+                .orElseThrow(() -> new ResourceNotFoundException("Kateqoriya tapılmadı"));
+    }
+
+    private Long parseCategoryId(String raw) {
+        try {
+            return Long.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new BadRequestException("Kateqoriya ID düzgün deyil");
+        }
     }
 }

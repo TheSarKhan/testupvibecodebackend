@@ -1,6 +1,7 @@
 package az.testup.controller.admin;
 
 import az.testup.dto.response.ExamSubjectResponse;
+import az.testup.dto.response.SubjectCategoryResponse;
 import az.testup.dto.response.SubjectStatsResponse;
 import az.testup.dto.response.SubjectTopicResponse;
 import az.testup.service.AdminSubjectService;
@@ -36,8 +37,11 @@ public class AdminSubjectController {
 
     @PostMapping
     public ResponseEntity<ExamSubjectResponse> addSubject(@RequestBody Map<String, String> body) {
+        String rawCategoryId = body.get("categoryId");
+        Long categoryId = rawCategoryId == null || rawCategoryId.isBlank()
+                ? null : Long.valueOf(rawCategoryId.trim());
         return ResponseEntity.ok(adminSubjectService.addSubject(
-                body.getOrDefault("name", ""), body.get("category")));
+                body.getOrDefault("name", ""), categoryId));
     }
 
     @DeleteMapping("/{id}")
@@ -64,11 +68,46 @@ public class AdminSubjectController {
                                                                      @RequestBody Map<String, String> body) {
         return ResponseEntity.ok(adminSubjectService.updateSubjectMetadata(
                 id, body.get("color"), body.get("iconEmoji"), body.get("description"),
-                body.get("category")));
+                body.get("categoryId")));
     }
 
     @GetMapping("/{id}/stats")
     public ResponseEntity<SubjectStatsResponse> getSubjectStats(@PathVariable Long id) {
         return ResponseEntity.ok(adminSubjectService.getSubjectStats(id));
+    }
+
+    // ── Subject categories (admin-managed picker groups) ──
+
+    @GetMapping("/categories")
+    public ResponseEntity<java.util.List<SubjectCategoryResponse>> getCategories() {
+        return ResponseEntity.ok(adminSubjectService.getCategories());
+    }
+
+    @PostMapping("/categories")
+    public ResponseEntity<SubjectCategoryResponse> createCategory(@RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(adminSubjectService.createCategory(
+                body.getOrDefault("name", ""), parseIntOrNull(body.get("orderIndex")), body.get("color")));
+    }
+
+    @PutMapping("/categories/{categoryId}")
+    public ResponseEntity<SubjectCategoryResponse> updateCategory(@PathVariable Long categoryId,
+                                                                  @RequestBody Map<String, String> body) {
+        return ResponseEntity.ok(adminSubjectService.updateCategory(
+                categoryId, body.get("name"), parseIntOrNull(body.get("orderIndex")), body.get("color")));
+    }
+
+    @DeleteMapping("/categories/{categoryId}")
+    public ResponseEntity<Void> deleteCategory(@PathVariable Long categoryId) {
+        adminSubjectService.deleteCategory(categoryId);
+        return ResponseEntity.noContent().build();
+    }
+
+    private Integer parseIntOrNull(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return Integer.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }
