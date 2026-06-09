@@ -179,59 +179,9 @@ public class DataSeeder implements CommandLineRunner {
 
     @Transactional
     public void seedSubscriptionPlans() {
-        // Free tier
-        SubscriptionPlan freePlan = ensureTier(SubscriptionPlan.builder()
-                .name("Free")
-                .level(0)
-                .description("Platformamızla tanış olmaq üçün limitsiz müddətli pulsuz plan.")
-                .monthlyExamLimit(2)
-                .maxQuestionsPerExam(20)
-                .maxSavedExamsLimit(5)
-                .maxParticipantsPerExam(10)
-                .studentResultAnalysis(false)
-                .examEditing(false)
-                .addImage(false)
-                .addPassageQuestion(false)
-                .downloadPastExams(false)
-                .downloadAsPdf(false)
-                .multipleSubjects(false)
-                .useTemplateExams(false)
-                .manualChecking(false)
-                .selectExamDuration(false)
-                .useQuestionBank(false)
-                .createQuestionBank(false)
-                .importQuestionsFromPdf(false)
-                .monthlyAiQuestionLimit(0)
-                .useAiExamGeneration(false)
-                .build());
-
-        // Basic tier
-        SubscriptionPlan basicPlan = ensureTier(SubscriptionPlan.builder()
-                .name("Basic")
-                .level(1)
-                .description("Fərdi müəllimlər üçün nəzərdə tutulmuş orta səviyyəli plan.")
-                .monthlyExamLimit(10)
-                .maxQuestionsPerExam(100)
-                .maxSavedExamsLimit(50)
-                .maxParticipantsPerExam(50)
-                .studentResultAnalysis(true)
-                .examEditing(true)
-                .addImage(true)
-                .addPassageQuestion(true)
-                .downloadPastExams(true)
-                .downloadAsPdf(true)
-                .multipleSubjects(true)
-                .useTemplateExams(true)
-                .manualChecking(false)
-                .selectExamDuration(true)
-                .useQuestionBank(true)
-                .createQuestionBank(false)
-                .importQuestionsFromPdf(false)
-                .monthlyAiQuestionLimit(30)
-                .useAiExamGeneration(false)
-                .build());
-
-        // Unlimited tier
+        // Only the Limitsiz tier is seeded — it's auto-assigned to admin/teacher
+        // accounts (see assignUnlimitedPlanToUser). The Free/Basic tiers are no
+        // longer seeded; the public plans are managed from the admin panel.
         SubscriptionPlan unlimitedPlan = ensureTier(SubscriptionPlan.builder()
                 .name("Limitsiz")
                 .level(2)
@@ -257,11 +207,8 @@ public class DataSeeder implements CommandLineRunner {
                 .useAiExamGeneration(true)
                 .build());
 
-        // Price ladders (idempotent). Free has a single 0-AZN 1-month row.
-        seedPrice(freePlan, 1, 0.0);
-        seedPriceLadder(basicPlan, 29.90);      // 1:29.90  3:80.73  6:152.49  12:286.94
         seedPriceLadder(unlimitedPlan, 59.90);  // 1:59.90  3:161.73 6:305.49  12:575.04
-        log.info("Subscription tiers + price ladders seeded (Free/Basic/Limitsiz).");
+        log.info("Subscription tier + price ladder seeded (Limitsiz).");
     }
 
     private void assignUnlimitedPlanToUser(User user) {
