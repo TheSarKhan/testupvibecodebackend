@@ -86,6 +86,9 @@ public class UserSubscriptionService {
             current.setPaymentProvider(provider);
             current.setTransactionId(txId);
             current.setAmountPaid(current.getAmountPaid() + amountPaid);
+            if (request.getDurationMonths() != null && request.getDurationMonths() > 0) {
+                current.setDurationMonths(request.getDurationMonths());
+            }
             return userSubscriptionMapper.toResponse(userSubscriptionRepository.save(current));
         }
 
@@ -98,12 +101,15 @@ public class UserSubscriptionService {
         userSubscriptionRepository.deactivateAllForUser(user.getId());
         userSubscriptionRepository.flush();
 
-        return save(user, newPlan, now, now.plusDays(durationDays), provider, txId, amountPaid);
+        Integer subDurationMonths = request.getDurationMonths() != null && request.getDurationMonths() > 0
+                ? request.getDurationMonths() : null;
+        return save(user, newPlan, now, now.plusDays(durationDays), provider, txId, amountPaid, subDurationMonths);
     }
 
     private UserSubscriptionResponse save(User user, SubscriptionPlan plan,
                                            LocalDateTime start, LocalDateTime end,
-                                           String provider, String txId, double amountPaid) {
+                                           String provider, String txId, double amountPaid,
+                                           Integer durationMonths) {
         UserSubscription sub = UserSubscription.builder()
                 .user(user)
                 .plan(plan)
@@ -113,6 +119,7 @@ public class UserSubscriptionService {
                 .paymentProvider(provider)
                 .transactionId(txId)
                 .amountPaid(amountPaid)
+                .durationMonths(durationMonths)
                 .build();
         return userSubscriptionMapper.toResponse(userSubscriptionRepository.save(sub));
     }

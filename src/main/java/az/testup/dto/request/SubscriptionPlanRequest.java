@@ -1,19 +1,17 @@
 package az.testup.dto.request;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+
+import java.util.List;
 
 @Data
 public class SubscriptionPlanRequest {
 
     @NotBlank(message = "Plan name is required")
     private String name;
-
-    @NotNull(message = "Price is required")
-    @Min(value = 0, message = "Price cannot be negative")
-    private Double price;
 
     @Min(value = 0, message = "Level cannot be negative")
     private Integer level = 0;
@@ -45,10 +43,10 @@ public class SubscriptionPlanRequest {
     private Integer monthlyAiQuestionLimit;
     private boolean useAiExamGeneration;
 
-    /** 1/3/6/12 — defaults to 1 month when admin omits the field. */
-    @Min(value = 1, message = "durationMonths must be >= 1")
-    private Integer durationMonths = 1;
-
     /** Defaults to true so plans created without this field stay visible. */
     private boolean visible = true;
+
+    /** Billing options for this tier (1/3/6/12-month prices). Replaces the old flat price. */
+    @Valid
+    private List<PlanPriceRequest> prices;
 }

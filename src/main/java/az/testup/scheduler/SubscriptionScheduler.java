@@ -9,6 +9,7 @@ import az.testup.repository.SubscriptionUsageRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.ExamService;
 import az.testup.service.KapitalBankService;
+import az.testup.service.PricingService;
 import az.testup.service.SubmissionService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ public class SubscriptionScheduler {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final SubscriptionUsageRepository subscriptionUsageRepository;
     private final SubmissionService submissionService;
+    private final PricingService pricingService;
 
     /**
      * Runs every 10 minutes. Picks up orders stuck in PENDING or PROCESSING
@@ -76,7 +78,8 @@ public class SubscriptionScheduler {
                         req.setDurationDays(order.getDurationDays());
                         req.setPaymentProvider("KAPITALBANK");
                         req.setTransactionId(order.getOrderId());
-                        double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
+                        double economicValue = pricingService.economicValue(
+                                order.getPlan().getId(), order.getMonths(), order.getDurationDays());
                         req.setAmountPaid(economicValue);
                         userSubscriptionService.assignSubscription(req);
                         log.info("Payment recovery: subscription activated for orderId={}", order.getOrderId());

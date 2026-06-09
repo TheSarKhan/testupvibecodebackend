@@ -4,6 +4,7 @@ import az.testup.dto.request.AssignSubscriptionRequest;
 import az.testup.entity.Exam;
 import az.testup.entity.PaymentOrder;
 import az.testup.entity.SubscriptionPlan;
+import az.testup.entity.SubscriptionPlanPrice;
 import az.testup.entity.User;
 import az.testup.entity.UserSubscription;
 import az.testup.exception.BadRequestException;
@@ -19,6 +20,7 @@ import az.testup.enums.AuditAction;
 import az.testup.service.AuditLogService;
 import az.testup.service.ExamService;
 import az.testup.service.KapitalBankService;
+import az.testup.service.PricingService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -52,6 +54,7 @@ public class PaymentController {
     private final UserRepository userRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final UserSubscriptionService userSubscriptionService;
+    private final PricingService pricingService;
     private final AuditLogService auditLogService;
     private final ExamRepository examRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
@@ -98,36 +101,52 @@ public class PaymentController {
             return ResponseEntity.badRequest().body(Map.of("message", "Plan tapılmadı"));
         }
 
-        // Defensive null guards: SubscriptionPlan.price is a boxed Double in
-        // the entity and older rows can be null. Without these guards any
-        // arithmetic below NPEs and the controller returns a 500
-        // ("Daxili server xətası") to the user.
-        double newPrice = plan.getPrice() != null ? plan.getPrice() : 0.0;
-        if (newPrice <= 0) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Bu plan pulsuz olduğu üçün birbaşa aktivdir"));
+        LocalDateTime now = LocalDateTime.now();
+        Optional<UserSubscription> currentOpt = userSubscriptionRepository
+                .findActiveSubscriptionByUserIdAndDate(user.getId(), now);
+
+        // ── Plan-change rule ──────────────────────────────────────────────
+        // Upgrading (lower tier → higher) and same-tier renewals are allowed
+        // any time. Downgrading (higher tier → lower) is blocked while a paid
+        // subscription is still active; the user can buy a lower tier only
+        // after the current one expires. findActiveSubscriptionByUserIdAndDate
+        // already filters out expired subs, so a lapsed/Free user can buy
+        // anything.
+        Map<String, Object> downgradeBlock = checkPlanChangeAllowed(currentOpt.orElse(null), plan);
+        if (downgradeBlock != null) {
+            return ResponseEntity.badRequest().body(downgradeBlock);
         }
 
-        double totalAmount = newPrice * months;
+        // Resolve the price for the chosen (tier, duration). Price rows carry
+        // the TOTAL for the whole period — do NOT multiply by months again.
+        SubscriptionPlanPrice priceRow = pricingService.findPrice(plan.getId(), months).orElse(null);
+        if (priceRow == null || priceRow.getPrice() == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Bu müddət üçün qiymət tapılmadı"));
+        }
+        double totalAmount = priceRow.getPrice();
+        if (totalAmount <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Bu plan pulsuz olduğu üçün birbaşa aktivdir"));
+        }
+        // Monthly-equivalent of the target price, for the gift-credit comparison.
+        double newMonthlyPrice = totalAmount / months;
 
         // ── Prorate: monetary value of remaining time on current plan ──
         // We compute the credit in AZN of the unused portion of the active
         // subscription (only for plan SWITCH, not same-plan renewal).
         //
-        // Daily rate falls back to the current plan's listed price/30 when
+        // Daily rate falls back to the current tier's 1-month list price/30 when
         // amountPaid is 0 (e.g. manually-assigned subs). Remaining time uses
         // fractional days (hours/24.0) so the user never loses a partial day.
         double creditAzn = 0.0;
-        LocalDateTime now = LocalDateTime.now();
-        Optional<UserSubscription> currentOpt = userSubscriptionRepository
-                .findActiveSubscriptionByUserIdAndDate(user.getId(), now);
         if (currentOpt.isPresent()) {
             UserSubscription current = currentOpt.get();
             // Same defensive pattern — any of these references can be null on
             // legacy/manually-assigned subscription rows; bail out of the
             // credit calculation rather than 500-ing.
             SubscriptionPlan currentPlan = current.getPlan();
-            double currentPlanPrice = (currentPlan != null && currentPlan.getPrice() != null)
-                    ? currentPlan.getPrice() : 0.0;
+            // Monthly list price of the current tier (0 if free/unpriced).
+            double currentMonthlyPrice = currentPlan != null && currentPlan.getId() != null
+                    ? pricingService.monthlyListPrice(currentPlan.getId()) : 0.0;
             boolean isSamePlan = currentPlan != null && currentPlan.getId() != null
                     && currentPlan.getId().equals(plan.getId());
             if (!isSamePlan
@@ -138,7 +157,7 @@ public class PaymentController {
                 if (totalSeconds > 0 && remainingSeconds > 0) {
                     double totalDaysExact = totalSeconds / 86400.0;
                     double remainingDaysExact = remainingSeconds / 86400.0;
-                    double remainingListedValue = (currentPlanPrice / 30.0) * remainingDaysExact;
+                    double remainingListedValue = (currentMonthlyPrice / 30.0) * remainingDaysExact;
                     if (current.getAmountPaid() > 0) {
                         double oldDailyRate = current.getAmountPaid() / totalDaysExact;
                         creditAzn = oldDailyRate * remainingDaysExact;
@@ -148,7 +167,7 @@ public class PaymentController {
                         if (creditAzn > remainingListedValue) {
                             creditAzn = remainingListedValue;
                         }
-                    } else if (newPrice <= currentPlanPrice) {
+                    } else if (newMonthlyPrice <= currentMonthlyPrice) {
                         // Gift / admin-assigned plan being switched to an
                         // equal-or-cheaper tier — apply list-price credit. The
                         // historic guard (amountPaid > 0) exists to block a
@@ -170,8 +189,9 @@ public class PaymentController {
         chargeAmount = Math.round(chargeAmount * 100.0) / 100.0;
         double totalValue = creditAzn + chargeAmount;
         // Duration in days derived from total value at new plan's daily rate.
+        // Price rows hold the period total, so the daily rate is total/(months*30).
         // Use Math.round (not cast) so users don't lose a day from fractional truncation.
-        double newDailyRate = plan.getPrice() / 30.0;
+        double newDailyRate = totalAmount / (months * 30.0);
         long durationDays = Math.max(1L, Math.round(totalValue / newDailyRate));
 
         // Free switch: credit covers entire cost
@@ -179,7 +199,7 @@ public class PaymentController {
             AssignSubscriptionRequest req = new AssignSubscriptionRequest();
             req.setUserId(user.getId());
             req.setPlanId(plan.getId());
-            req.setDurationMonths(0);
+            req.setDurationMonths(months);
             req.setDurationDays(durationDays);
             req.setPaymentProvider("CREDIT");
             req.setAmountPaid(totalValue);
@@ -528,6 +548,32 @@ public class PaymentController {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    /**
+     * Plan-change rule for the PURCHASE path. Returns null when the change is
+     * allowed; otherwise a 400 body explaining why a downgrade is blocked.
+     *
+     * Upgrade (target tier level > current) and same-tier renewal (==) are
+     * always allowed. Downgrade (target level < current) is blocked while a paid
+     * subscription is active — the user must wait until the current plan expires.
+     * A user with no active sub, or only a Free (level 0) one, can buy anything.
+     *
+     * NOTE: admin assignment (UserSubscriptionService.assignSubscription) does
+     * NOT call this — admins may assign any tier in any direction.
+     */
+    private Map<String, Object> checkPlanChangeAllowed(UserSubscription current, SubscriptionPlan target) {
+        if (current == null || current.getPlan() == null) return null;
+        Integer curLevelObj = current.getPlan().getLevel();
+        int curLevel = curLevelObj != null ? curLevelObj : 0;
+        if (curLevel <= 0) return null; // Free / no real tier → anything purchasable
+        int newLevel = target.getLevel() != null ? target.getLevel() : 0;
+        if (newLevel >= curLevel) return null; // upgrade or same-tier renewal
+        String end = current.getEndDate() != null
+                ? current.getEndDate().toLocalDate().toString() : "";
+        return Map.of("message", "Hazırkı \"" + current.getPlan().getName() + "\" planınız "
+                + end + " tarixinə qədər aktivdir. Daha aşağı plana yalnız bu müddət "
+                + "bitdikdən sonra keçə bilərsiniz.");
+    }
+
     private boolean isPaidStatus(String status) {
         if (status == null || status.isBlank()) return false;
         String s = status.toUpperCase().replace(" ", "").replace("_", "");
@@ -574,7 +620,8 @@ public class PaymentController {
             request.setDurationDays(order.getDurationDays());
             request.setPaymentProvider("KAPITALBANK");
             request.setTransactionId(orderId);
-            double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
+            double economicValue = pricingService.economicValue(
+                    order.getPlan().getId(), order.getMonths(), order.getDurationDays());
             request.setAmountPaid(economicValue);
 
             boolean isSwitching = userSubscriptionRepository

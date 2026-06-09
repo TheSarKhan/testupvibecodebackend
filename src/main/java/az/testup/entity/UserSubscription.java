@@ -43,4 +43,13 @@ public class UserSubscription {
 
     @Column(nullable = false)
     private double amountPaid = 0.0;
+
+    /**
+     * Billing duration (in months) of the price this subscription was bought at.
+     * Stored so proration can recompute the daily rate (amountPaid / durationMonths*30)
+     * without depending on a {@code SubscriptionPlanPrice} row still existing/visible.
+     * Nullable for legacy/admin-assigned rows created before this column existed.
+     */
+    @Column(name = "duration_months")
+    private Integer durationMonths;
 }

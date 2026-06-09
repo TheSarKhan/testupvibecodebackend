@@ -28,6 +28,7 @@ public class AdminRevenueService {
     private final KapitalBankService kapitalBankService;
     private final UserSubscriptionService userSubscriptionService;
     private final ExamService examService;
+    private final PricingService pricingService;
     private final AuditLogService auditLogService;
 
     public RevenueStatsResponse getRevenueStats() {
@@ -213,7 +214,8 @@ public class AdminRevenueService {
                     logNote + ". İstifadəçi: " + student.getEmail()
                             + ". Məbləğ: " + order.getAmount() + " AZN");
         } else {
-            double economicValue = order.getDurationDays() * (order.getPlan().getPrice() / 30.0);
+            double economicValue = pricingService.economicValue(
+                    order.getPlan().getId(), order.getMonths(), order.getDurationDays());
             AssignSubscriptionRequest req = new AssignSubscriptionRequest();
             req.setUserId(order.getUser().getId());
             req.setPlanId(order.getPlan().getId());

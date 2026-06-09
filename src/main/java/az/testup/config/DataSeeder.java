@@ -31,6 +31,7 @@ public class DataSeeder implements CommandLineRunner {
     private final TemplateSubtitleRepository subtitleRepository;
     private final TemplateSectionRepository sectionRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
+    private final SubscriptionPlanPriceRepository subscriptionPlanPriceRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final TagRepository tagRepository;
     private final ExamRepository examRepository;
@@ -123,190 +124,144 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     /**
-     * Builder for a multi-month variant of an existing base plan. Copies the
-     * limits/feature flags verbatim from the base plan so the only thing
-     * differing is the price and the duration; we apply a fixed-tier discount
-     * (3 ay → 10%, 6 ay → 15%, 12 ay → 20%) off the base monthly price.
+     * Period total from a monthly price with a fixed-tier discount
+     * (3 ay → 10%, 6 ay → 15%, 12 ay → 20%), rounded to AZN cents.
      */
-    private SubscriptionPlan buildDurationVariant(SubscriptionPlan base, int months, double discountPct, String displayName) {
-        double discounted = Math.round(base.getPrice() * months * (1.0 - discountPct / 100.0) * 100.0) / 100.0;
-        return SubscriptionPlan.builder()
-                .name(displayName)
-                .price(discounted)
-                .level(base.getLevel())
-                .description(base.getDescription())
-                .monthlyExamLimit(base.getMonthlyExamLimit())
-                .maxQuestionsPerExam(base.getMaxQuestionsPerExam())
-                .maxSavedExamsLimit(base.getMaxSavedExamsLimit())
-                .maxParticipantsPerExam(base.getMaxParticipantsPerExam())
-                .studentResultAnalysis(base.isStudentResultAnalysis())
-                .examEditing(base.isExamEditing())
-                .addImage(base.isAddImage())
-                .addPassageQuestion(base.isAddPassageQuestion())
-                .downloadPastExams(base.isDownloadPastExams())
-                .downloadAsPdf(base.isDownloadAsPdf())
-                .multipleSubjects(base.isMultipleSubjects())
-                .useTemplateExams(base.isUseTemplateExams())
-                .manualChecking(base.isManualChecking())
-                .selectExamDuration(base.isSelectExamDuration())
-                .useQuestionBank(base.isUseQuestionBank())
-                .createQuestionBank(base.isCreateQuestionBank())
-                .importQuestionsFromPdf(base.isImportQuestionsFromPdf())
-                .monthlyAiQuestionLimit(base.getMonthlyAiQuestionLimit())
-                .useAiExamGeneration(base.isUseAiExamGeneration())
-                .durationMonths(months)
-                .visible(true)
-                .build();
+    private static double monthlyToPeriod(double monthly, int months, double discountPct) {
+        return Math.round(monthly * months * (1.0 - discountPct / 100.0) * 100.0) / 100.0;
     }
 
-    /** Idempotent: seeds a duration variant only if no plan with that name exists yet. */
-    private void seedDurationVariantIfMissing(SubscriptionPlan base, int months, double discountPct, String displayName) {
-        if (subscriptionPlanRepository.findByName(displayName).isEmpty()) {
-            subscriptionPlanRepository.save(buildDurationVariant(base, months, discountPct, displayName));
+    /** Idempotent: seeds a (tier, duration) price row only if it doesn't exist yet. */
+    private void seedPrice(SubscriptionPlan plan, int months, double price) {
+        if (subscriptionPlanPriceRepository.findByPlanIdAndDurationMonths(plan.getId(), months).isEmpty()) {
+            subscriptionPlanPriceRepository.save(SubscriptionPlanPrice.builder()
+                    .plan(plan)
+                    .durationMonths(months)
+                    .price(price)
+                    .visible(true)
+                    .build());
         }
+    }
+
+    /** Seed the 1/3/6/12-month price ladder for a paid tier from its monthly price. */
+    private void seedPriceLadder(SubscriptionPlan plan, double monthly) {
+        seedPrice(plan, 1, monthly);
+        seedPrice(plan, 3, monthlyToPeriod(monthly, 3, 10.0));
+        seedPrice(plan, 6, monthlyToPeriod(monthly, 6, 15.0));
+        seedPrice(plan, 12, monthlyToPeriod(monthly, 12, 20.0));
+    }
+
+    /**
+     * Create the tier if missing, otherwise patch its level + AI fields (the
+     * fields earlier deployments may have stored differently). Returns the
+     * persisted tier. Prices live on subscription_plan_prices and are seeded
+     * separately so a feature change touches exactly one tier row.
+     */
+    private SubscriptionPlan ensureTier(SubscriptionPlan desired) {
+        SubscriptionPlan existing = subscriptionPlanRepository.findByName(desired.getName()).orElse(null);
+        if (existing == null) {
+            return subscriptionPlanRepository.save(desired);
+        }
+        boolean changed = false;
+        if (!java.util.Objects.equals(existing.getLevel(), desired.getLevel())) {
+            existing.setLevel(desired.getLevel());
+            changed = true;
+        }
+        if (!java.util.Objects.equals(existing.getMonthlyAiQuestionLimit(), desired.getMonthlyAiQuestionLimit())
+                || existing.isUseAiExamGeneration() != desired.isUseAiExamGeneration()) {
+            existing.setMonthlyAiQuestionLimit(desired.getMonthlyAiQuestionLimit());
+            existing.setUseAiExamGeneration(desired.isUseAiExamGeneration());
+            changed = true;
+        }
+        if (changed) subscriptionPlanRepository.save(existing);
+        return existing;
     }
 
     @Transactional
     public void seedSubscriptionPlans() {
-        if (subscriptionPlanRepository.count() == 0) {
-            // Free Plan
-            SubscriptionPlan freePlan = SubscriptionPlan.builder()
-                    .name("Free")
-                    .price(0.0)
-                    .level(0)
-                    .description("Platformamızla tanış olmaq üçün limitsiz müddətli pulsuz plan.")
-                    .monthlyExamLimit(2)
-                    .maxQuestionsPerExam(20)
-                    .maxSavedExamsLimit(5)
-                    .maxParticipantsPerExam(10)
-                    .studentResultAnalysis(false)
-                    .examEditing(false)
-                    .addImage(false)
-                    .addPassageQuestion(false)
-                    .downloadPastExams(false)
-                    .downloadAsPdf(false)
-                    .multipleSubjects(false)
-                    .useTemplateExams(false)
-                    .manualChecking(false)
-                    .selectExamDuration(false)
-                    .useQuestionBank(false)
-                    .createQuestionBank(false)
-                    .importQuestionsFromPdf(false)
-                    .monthlyAiQuestionLimit(0)
-                    .useAiExamGeneration(false)
-                    .build();
+        // Free tier
+        SubscriptionPlan freePlan = ensureTier(SubscriptionPlan.builder()
+                .name("Free")
+                .level(0)
+                .description("Platformamızla tanış olmaq üçün limitsiz müddətli pulsuz plan.")
+                .monthlyExamLimit(2)
+                .maxQuestionsPerExam(20)
+                .maxSavedExamsLimit(5)
+                .maxParticipantsPerExam(10)
+                .studentResultAnalysis(false)
+                .examEditing(false)
+                .addImage(false)
+                .addPassageQuestion(false)
+                .downloadPastExams(false)
+                .downloadAsPdf(false)
+                .multipleSubjects(false)
+                .useTemplateExams(false)
+                .manualChecking(false)
+                .selectExamDuration(false)
+                .useQuestionBank(false)
+                .createQuestionBank(false)
+                .importQuestionsFromPdf(false)
+                .monthlyAiQuestionLimit(0)
+                .useAiExamGeneration(false)
+                .build());
 
-            // Basic Plan
-            SubscriptionPlan basicPlan = SubscriptionPlan.builder()
-                    .name("Basic")
-                    .price(29.90)
-                    .level(1)
-                    .description("Fərdi müəllimlər üçün nəzərdə tutulmuş orta səviyyəli plan.")
-                    .monthlyExamLimit(10)
-                    .maxQuestionsPerExam(100)
-                    .maxSavedExamsLimit(50)
-                    .maxParticipantsPerExam(50)
-                    .studentResultAnalysis(true)
-                    .examEditing(true)
-                    .addImage(true)
-                    .addPassageQuestion(true)
-                    .downloadPastExams(true)
-                    .downloadAsPdf(true)
-                    .multipleSubjects(true)
-                    .useTemplateExams(true)
-                    .manualChecking(false)
-                    .selectExamDuration(true)
-                    .useQuestionBank(true)
-                    .createQuestionBank(false)
-                    .importQuestionsFromPdf(false)
-                    .monthlyAiQuestionLimit(30)
-                    .useAiExamGeneration(false)
-                    .build();
+        // Basic tier
+        SubscriptionPlan basicPlan = ensureTier(SubscriptionPlan.builder()
+                .name("Basic")
+                .level(1)
+                .description("Fərdi müəllimlər üçün nəzərdə tutulmuş orta səviyyəli plan.")
+                .monthlyExamLimit(10)
+                .maxQuestionsPerExam(100)
+                .maxSavedExamsLimit(50)
+                .maxParticipantsPerExam(50)
+                .studentResultAnalysis(true)
+                .examEditing(true)
+                .addImage(true)
+                .addPassageQuestion(true)
+                .downloadPastExams(true)
+                .downloadAsPdf(true)
+                .multipleSubjects(true)
+                .useTemplateExams(true)
+                .manualChecking(false)
+                .selectExamDuration(true)
+                .useQuestionBank(true)
+                .createQuestionBank(false)
+                .importQuestionsFromPdf(false)
+                .monthlyAiQuestionLimit(30)
+                .useAiExamGeneration(false)
+                .build());
 
-            // Unlimited Plan
-            SubscriptionPlan unlimitedPlan = SubscriptionPlan.builder()
-                    .name("Limitsiz")
-                    .price(59.90)
-                    .level(2)
-                    .description("Bütün funksionallıqlardan və məhdudiyyətsiz limitlərdən faydalanın.")
-                    .monthlyExamLimit(-1)
-                    .maxQuestionsPerExam(-1)
-                    .maxSavedExamsLimit(-1)
-                    .maxParticipantsPerExam(-1)
-                    .studentResultAnalysis(true)
-                    .examEditing(true)
-                    .addImage(true)
-                    .addPassageQuestion(true)
-                    .downloadPastExams(true)
-                    .downloadAsPdf(true)
-                    .multipleSubjects(true)
-                    .useTemplateExams(true)
-                    .manualChecking(true)
-                    .selectExamDuration(true)
-                    .useQuestionBank(true)
-                    .createQuestionBank(true)
-                    .importQuestionsFromPdf(true)
-                    .monthlyAiQuestionLimit(-1)
-                    .useAiExamGeneration(true)
-                    .build();
+        // Unlimited tier
+        SubscriptionPlan unlimitedPlan = ensureTier(SubscriptionPlan.builder()
+                .name("Limitsiz")
+                .level(2)
+                .description("Bütün funksionallıqlardan və məhdudiyyətsiz limitlərdən faydalanın.")
+                .monthlyExamLimit(-1)
+                .maxQuestionsPerExam(-1)
+                .maxSavedExamsLimit(-1)
+                .maxParticipantsPerExam(-1)
+                .studentResultAnalysis(true)
+                .examEditing(true)
+                .addImage(true)
+                .addPassageQuestion(true)
+                .downloadPastExams(true)
+                .downloadAsPdf(true)
+                .multipleSubjects(true)
+                .useTemplateExams(true)
+                .manualChecking(true)
+                .selectExamDuration(true)
+                .useQuestionBank(true)
+                .createQuestionBank(true)
+                .importQuestionsFromPdf(true)
+                .monthlyAiQuestionLimit(-1)
+                .useAiExamGeneration(true)
+                .build());
 
-            subscriptionPlanRepository.saveAll(List.of(freePlan, basicPlan, unlimitedPlan));
-            log.info("3 Subscription Plans (Free, Basic, Limitsiz) seeded successfully.");
-
-            // Now seed the 3/6/12-month variants for each paid plan.
-            seedDurationVariantIfMissing(basicPlan,     3, 10.0, "Basic 3 ay");
-            seedDurationVariantIfMissing(basicPlan,     6, 15.0, "Basic 6 ay");
-            seedDurationVariantIfMissing(basicPlan,    12, 20.0, "Basic 12 ay");
-            seedDurationVariantIfMissing(unlimitedPlan, 3, 10.0, "Limitsiz 3 ay");
-            seedDurationVariantIfMissing(unlimitedPlan, 6, 15.0, "Limitsiz 6 ay");
-            seedDurationVariantIfMissing(unlimitedPlan,12, 20.0, "Limitsiz 12 ay");
-            log.info("Duration variant plans seeded: Basic/Limitsiz × 3/6/12 ay");
-        } else {
-            // Migrate existing plans: ensure level and new AI fields are set correctly
-            subscriptionPlanRepository.findAll().forEach(plan -> {
-                boolean changed = false;
-
-                if ("Free".equalsIgnoreCase(plan.getName())) {
-                    if (plan.getLevel() == null) { plan.setLevel(0); changed = true; }
-                    if (!Integer.valueOf(0).equals(plan.getMonthlyAiQuestionLimit()) || plan.isUseAiExamGeneration()) {
-                        plan.setMonthlyAiQuestionLimit(0);
-                        plan.setUseAiExamGeneration(false);
-                        changed = true;
-                    }
-                } else if ("Basic".equalsIgnoreCase(plan.getName())) {
-                    if (plan.getLevel() == null || plan.getLevel() != 1) { plan.setLevel(1); changed = true; }
-                    if (!Integer.valueOf(30).equals(plan.getMonthlyAiQuestionLimit()) || plan.isUseAiExamGeneration()) {
-                        plan.setMonthlyAiQuestionLimit(30);
-                        plan.setUseAiExamGeneration(false);
-                        changed = true;
-                    }
-                } else if ("Limitsiz".equalsIgnoreCase(plan.getName())) {
-                    if (plan.getLevel() == null || plan.getLevel() != 2) { plan.setLevel(2); changed = true; }
-                    if (!Integer.valueOf(-1).equals(plan.getMonthlyAiQuestionLimit()) || !plan.isUseAiExamGeneration()) {
-                        plan.setMonthlyAiQuestionLimit(-1);
-                        plan.setUseAiExamGeneration(true);
-                        changed = true;
-                    }
-                }
-
-                if (changed) subscriptionPlanRepository.save(plan);
-            });
-
-            // Backfill 3/6/12-month variants on existing deployments that were
-            // seeded before the duration-variant rollout. Safe to call every
-            // start: seedDurationVariantIfMissing is a no-op if the named plan
-            // already exists.
-            subscriptionPlanRepository.findByName("Basic").ifPresent(basic -> {
-                seedDurationVariantIfMissing(basic,  3, 10.0, "Basic 3 ay");
-                seedDurationVariantIfMissing(basic,  6, 15.0, "Basic 6 ay");
-                seedDurationVariantIfMissing(basic, 12, 20.0, "Basic 12 ay");
-            });
-            subscriptionPlanRepository.findByName("Limitsiz").ifPresent(unlim -> {
-                seedDurationVariantIfMissing(unlim,  3, 10.0, "Limitsiz 3 ay");
-                seedDurationVariantIfMissing(unlim,  6, 15.0, "Limitsiz 6 ay");
-                seedDurationVariantIfMissing(unlim, 12, 20.0, "Limitsiz 12 ay");
-            });
-        }
+        // Price ladders (idempotent). Free has a single 0-AZN 1-month row.
+        seedPrice(freePlan, 1, 0.0);
+        seedPriceLadder(basicPlan, 29.90);      // 1:29.90  3:80.73  6:152.49  12:286.94
+        seedPriceLadder(unlimitedPlan, 59.90);  // 1:59.90  3:161.73 6:305.49  12:575.04
+        log.info("Subscription tiers + price ladders seeded (Free/Basic/Limitsiz).");
     }
 
     private void assignUnlimitedPlanToUser(User user) {

@@ -20,9 +20,6 @@ public class SubscriptionPlan {
     private String name;
 
     @Column(nullable = false)
-    private Double price;
-
-    @Column(nullable = false)
     private Integer level = 0; // 0=Free, 1=Basic, 2=Limitsiz, etc.
 
     @Column(columnDefinition = "TEXT")
@@ -54,15 +51,6 @@ public class SubscriptionPlan {
 
     /** Whether AI exam generation is allowed */
     private boolean useAiExamGeneration;
-
-    /**
-     * Billing duration in months for this plan row. Each "Basic / Limitsiz × 1/3/6/12 ay"
-     * combination lives as its own row so the storefront can show distinct
-     * SKUs and the payment flow doesn't have to multiply at runtime.
-     */
-    @Column(nullable = false)
-    @Builder.Default
-    private Integer durationMonths = 1;
 
     /**
      * Admin-controlled visibility. When false, the plan is hidden from the
