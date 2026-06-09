@@ -236,48 +236,58 @@ public class PdfService {
         String firstSubject = (examSubjects != null && !examSubjects.isEmpty())
                 ? examSubjects.get(0) : null;
 
-        // Pre-compute the (subject, startQ, endQ) tuples in display order.
-        // Done up-front so renderSubjectHeader can show the range at the
-        // moment it prints the header rather than guessing it after the fact.
-        // Walks renderOrder (the flat global-numbering list) and starts a new
-        // section every time the effective subject changes.
-        java.util.List<String> sectionSubjects = new java.util.ArrayList<>();
-        java.util.List<int[]> sectionRanges = new java.util.ArrayList<>();
+        // Resolve the effective subject of every render item ONCE, on the same
+        // renderItems list the print loop walks. Previously the section ranges
+        // were pre-computed on renderOrder (questions only) while the loop
+        // detected subject changes on renderItems (passages included) — a
+        // passage with a blank subjectGroup fell back to firstSubject, created
+        // a phantom section boundary the range list never counted, and every
+        // header after it was paired with the wrong "Suallar X-Y" range
+        // (BUG-19). Single source of truth now: one list, one traversal.
+        // A blank-subject passage inherits the subject of its first child
+        // question (children always immediately follow their passage in
+        // renderItems), so a passage can never split its own subject section.
+        java.util.List<String> itemSubjects = new java.util.ArrayList<>(renderItems.size());
         if (multiSubject) {
-            String prevSubj = null;
-            int sectionStart = 1;
-            for (int idx = 0; idx < renderOrder.size(); idx++) {
-                String raw = renderOrder.get(idx).getSubjectGroup();
-                String s = (raw != null && !raw.isBlank()) ? raw : firstSubject;
-                if (!java.util.Objects.equals(s, prevSubj)) {
-                    if (prevSubj != null) {
-                        sectionSubjects.add(prevSubj);
-                        sectionRanges.add(new int[]{sectionStart, idx});
+            for (int idx = 0; idx < renderItems.size(); idx++) {
+                Object it = renderItems.get(idx);
+                String raw;
+                if (it instanceof Passage p) {
+                    raw = p.getSubjectGroup();
+                    if ((raw == null || raw.isBlank())
+                            && idx + 1 < renderItems.size()
+                            && renderItems.get(idx + 1) instanceof Question child
+                            && child.getPassage() != null
+                            && p.getId().equals(child.getPassage().getId())) {
+                        raw = child.getSubjectGroup();
                     }
-                    prevSubj = s;
-                    sectionStart = idx + 1;
+                } else {
+                    raw = ((Question) it).getSubjectGroup();
                 }
-            }
-            if (prevSubj != null) {
-                sectionSubjects.add(prevSubj);
-                sectionRanges.add(new int[]{sectionStart, renderOrder.size()});
+                itemSubjects.add((raw != null && !raw.isBlank()) ? raw : firstSubject);
             }
         }
 
         String currentSubject = null;
-        int sectionIdx = 0;
         int qNum = 0;
-        for (Object renderItem : renderItems) {
+        for (int itemIdx = 0; itemIdx < renderItems.size(); itemIdx++) {
+            Object renderItem = renderItems.get(itemIdx);
             if (multiSubject) {
-                String rawGroup = (renderItem instanceof Passage rp)
-                        ? rp.getSubjectGroup()
-                        : ((Question) renderItem).getSubjectGroup();
-                String itemSubject = (rawGroup != null && !rawGroup.isBlank()) ? rawGroup : firstSubject;
+                String itemSubject = itemSubjects.get(itemIdx);
                 if (itemSubject != null && !itemSubject.equals(currentSubject)) {
-                    int[] range = sectionIdx < sectionRanges.size() ? sectionRanges.get(sectionIdx) : null;
+                    // Section start. Range = global numbers of this section's
+                    // questions, found by scanning forward over the SAME list
+                    // until the subject changes, counting only questions.
+                    int sectionQuestions = 0;
+                    for (int j = itemIdx; j < renderItems.size(); j++) {
+                        if (!java.util.Objects.equals(itemSubjects.get(j), itemSubject)) break;
+                        if (renderItems.get(j) instanceof Question) sectionQuestions++;
+                    }
+                    int[] range = sectionQuestions > 0
+                            ? new int[]{qNum + 1, qNum + sectionQuestions}
+                            : null;
                     renderSubjectHeader(document, itemSubject, range, qFont, metaFont);
                     currentSubject = itemSubject;
-                    sectionIdx++;
                 }
             }
             if (renderItem instanceof Passage pas) {
