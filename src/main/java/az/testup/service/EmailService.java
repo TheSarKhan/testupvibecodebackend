@@ -124,7 +124,12 @@ public class EmailService {
                             double amount, String detailLine, LocalDateTime createdAt) {
         if (toEmail == null || toEmail.isBlank()) return;
         String name = toName != null && !toName.isBlank() ? toName : toEmail;
+        // createdAt is a wall-clock LocalDateTime in the server's zone. Convert it
+        // to Azerbaijan time (Asia/Baku, UTC+4) so the receipt shows the real
+        // local payment time regardless of where the server runs.
         String dateStr = (createdAt != null ? createdAt : LocalDateTime.now())
+                .atZone(java.time.ZoneId.systemDefault())
+                .withZoneSameInstant(java.time.ZoneId.of("Asia/Baku"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
         String amountStr = String.format(Locale.US, "%.2f AZN", amount);
         String row = """
