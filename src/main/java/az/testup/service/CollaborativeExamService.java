@@ -86,6 +86,7 @@ public class CollaborativeExamService {
     private final AuditLogService auditLogService;
     private final QuestionRepository questionRepository;
     private final SubmissionRepository submissionRepository;
+    private final PassageRepository passageRepository;
 
     // ─── Admin operations ───────────────────────────────────────────────────
 
@@ -376,19 +377,37 @@ public class CollaborativeExamService {
         log.info("[collab] approveDraft loaded: draft has {} questions; parent has {} existing; subject order={}",
                 snapshot.size(), parentExam.getQuestions().size(), subjectOrder);
 
+        // One parent passage per draft passage across the whole batch (COL-1 dedup).
+        Map<Long, Passage> passageMap = new HashMap<>();
         int processed = 0;
+        List<Long> autoRejected = new ArrayList<>();
         for (Question q : snapshot) {
-            if (q.getReviewStatus() == QuestionReviewStatus.PENDING) {
-                try {
-                    approveQuestionInternal(q, parentExam);
-                    processed++;
-                } catch (Exception e) {
-                    log.error("[collab] approveQuestion FAILED: qid={}, type={}, subject={}, content-len={}",
-                            q.getId(), q.getQuestionType(), q.getSubjectGroup(),
-                            q.getContent() != null ? q.getContent().length() : -1, e);
-                    throw e;
-                }
+            if (q.getReviewStatus() != QuestionReviewStatus.PENDING) continue;
+
+            // COL-9: a typeless draft question can't be copied (questions.question_type is
+            // NOT NULL) and previously 500'd the whole batch. Auto-reject it with a clear
+            // comment so the valid questions still get approved and the teacher can fix it.
+            if (q.getQuestionType() == null) {
+                q.setReviewStatus(QuestionReviewStatus.REJECTED);
+                q.setReviewComment("Sualın tipi təyin edilməyib — zəhmət olmasa sual tipini seçib yenidən göndərin.");
+                questionRepository.save(q);
+                autoRejected.add(q.getId());
+                continue;
             }
+
+            try {
+                approveQuestionInternal(q, parentExam, passageMap);
+                processed++;
+            } catch (Exception e) {
+                log.error("[collab] approveQuestion FAILED: qid={}, type={}, subject={}, content-len={}",
+                        q.getId(), q.getQuestionType(), q.getSubjectGroup(),
+                        q.getContent() != null ? q.getContent().length() : -1, e);
+                throw e;
+            }
+        }
+        if (!autoRejected.isEmpty()) {
+            log.warn("[collab] approveDraft: {} question(s) auto-rejected (missing type): {}",
+                    autoRejected.size(), autoRejected);
         }
         log.info("[collab] approveDraft loop done: approved={} in this round", processed);
         resortParentQuestionsBySubject(parentExam);
@@ -433,8 +452,11 @@ public class CollaborativeExamService {
         if (q.getReviewStatus() != QuestionReviewStatus.PENDING) {
             throw new BadRequestException("Bu sual təsdiq mərhələsində deyil");
         }
+        if (q.getQuestionType() == null) {
+            throw new BadRequestException("Sualın tipi təyin edilməyib — təsdiqlənə bilməz.");
+        }
         Exam parent = collab.getCollaborativeExam();
-        approveQuestionInternal(q, parent);
+        approveQuestionInternal(q, parent, new HashMap<>());
         // Keep the parent exam's question order grouped by subject after each per-question
         // approval — otherwise admin's hand-approval (Az-1, Tarix-1, Az-2) leaves the
         // parent interleaved and the student question-nav looks scrambled.
@@ -525,15 +547,15 @@ public class CollaborativeExamService {
      * Overwriting in place keeps existing student answers intact (Answer.question_id stays
      * valid), and keeps the parent exam stable for in-progress sessions.
      */
-    private void approveQuestionInternal(Question draftQ, Exam parentExam) {
+    private void approveQuestionInternal(Question draftQ, Exam parentExam, Map<Long, Passage> passageMap) {
+        // COL-7: resolve the previously-promoted parent question directly by id instead of
+        // scanning every parent question. Verify it still belongs to this parent exam.
         Question target = null;
         if (draftQ.getParentCopyId() != null) {
-            for (Question pq : parentExam.getQuestions()) {
-                if (pq.getId() != null && pq.getId().equals(draftQ.getParentCopyId())) {
-                    target = pq;
-                    break;
-                }
-            }
+            target = questionRepository.findById(draftQ.getParentCopyId())
+                    .filter(pq -> pq.getExam() != null && pq.getExam().getId() != null
+                            && pq.getExam().getId().equals(parentExam.getId()))
+                    .orElse(null);
         }
 
         if (target == null) {
@@ -556,6 +578,13 @@ public class CollaborativeExamService {
         target.setCorrectAnswer(draftQ.getCorrectAnswer());
         target.setSampleAnswer(draftQ.getSampleAnswer());
         target.setSubjectGroup(draftQ.getSubjectGroup());
+
+        // COL-1: bring the passage (reading text / listening audio / image) into the PARENT
+        // exam. The draft passage belongs to the draft exam, so we create/reuse an equivalent
+        // passage owned by the parent — never link the draft passage directly.
+        target.setPassage(draftQ.getPassage() == null
+                ? null
+                : resolveParentPassage(draftQ.getPassage(), parentExam, target, passageMap));
 
         // Rebuild options. orphanRemoval on the @OneToMany handles row deletion.
         // Option.isCorrect is NOT NULL on the DB — coerce null → false so a teacher who
@@ -595,7 +624,51 @@ public class CollaborativeExamService {
         questionRepository.saveAndFlush(draftQ);
     }
 
+    /**
+     * Resolve the parent-exam passage equivalent for a draft passage. Dedups within a batch
+     * via {@code passageMap} and reuses the passage already linked to the existing parent
+     * question on re-approval, so multiple questions sharing one passage — and repeated
+     * review rounds — never create duplicate passages in the parent exam (COL-1).
+     */
+    private Passage resolveParentPassage(Passage draftPassage, Exam parentExam,
+                                         Question existingTarget, Map<Long, Passage> passageMap) {
+        Long draftPassageId = draftPassage.getId();
+        if (draftPassageId != null && passageMap.containsKey(draftPassageId)) {
+            return passageMap.get(draftPassageId);
+        }
+        // Re-approval: reuse the passage already attached to the existing parent question
+        // (when it belongs to this parent exam) instead of creating a duplicate.
+        Passage parentPassage = null;
+        if (existingTarget != null && existingTarget.getPassage() != null
+                && existingTarget.getPassage().getExam() != null
+                && existingTarget.getPassage().getExam().getId() != null
+                && existingTarget.getPassage().getExam().getId().equals(parentExam.getId())) {
+            parentPassage = existingTarget.getPassage();
+        }
+        if (parentPassage == null) {
+            parentPassage = new Passage();
+            parentPassage.setExam(parentExam);
+            parentExam.getPassages().add(parentPassage);
+        }
+        parentPassage.setPassageType(draftPassage.getPassageType());
+        parentPassage.setTitle(draftPassage.getTitle());
+        parentPassage.setTextContent(draftPassage.getTextContent());
+        parentPassage.setAttachedImage(draftPassage.getAttachedImage());
+        parentPassage.setAudioContent(draftPassage.getAudioContent());
+        parentPassage.setListenLimit(draftPassage.getListenLimit());
+        parentPassage.setOrderIndex(draftPassage.getOrderIndex());
+        parentPassage.setSubjectGroup(draftPassage.getSubjectGroup());
+        passageRepository.save(parentPassage);
+        if (draftPassageId != null) passageMap.put(draftPassageId, parentPassage);
+        return parentPassage;
+    }
+
     private void finalizeReviewInternal(ExamCollaborator collab) {
+        // COL-3: a SUBMITTED collaborator with no draft would NPE here on the
+        // reject/finalize paths. Fail clearly instead of 500-ing.
+        if (collab.getDraftExam() == null) {
+            throw new BadRequestException("Bu təyinat üçün draft imtahan tapılmadı");
+        }
         List<Question> draftQs = collab.getDraftExam().getQuestions();
         long pending  = draftQs.stream().filter(q -> q.getReviewStatus() == QuestionReviewStatus.PENDING).count();
         long approved = draftQs.stream().filter(q -> q.getReviewStatus() == QuestionReviewStatus.APPROVED).count();
