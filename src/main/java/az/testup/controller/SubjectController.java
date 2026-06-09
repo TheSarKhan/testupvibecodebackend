@@ -39,6 +39,7 @@ public class SubjectController {
                     m.put("name", s.getName());
                     m.put("color", s.getColor());
                     m.put("iconEmoji", s.getIconEmoji());
+                    m.put("category", s.getCategory());
                     return m;
                 })
                 .toList();

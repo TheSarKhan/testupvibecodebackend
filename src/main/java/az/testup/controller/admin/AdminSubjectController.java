@@ -36,7 +36,8 @@ public class AdminSubjectController {
 
     @PostMapping
     public ResponseEntity<ExamSubjectResponse> addSubject(@RequestBody Map<String, String> body) {
-        return ResponseEntity.ok(adminSubjectService.addSubject(body.getOrDefault("name", "")));
+        return ResponseEntity.ok(adminSubjectService.addSubject(
+                body.getOrDefault("name", ""), body.get("category")));
     }
 
     @DeleteMapping("/{id}")
@@ -62,7 +63,8 @@ public class AdminSubjectController {
     public ResponseEntity<ExamSubjectResponse> updateSubjectMetadata(@PathVariable Long id,
                                                                      @RequestBody Map<String, String> body) {
         return ResponseEntity.ok(adminSubjectService.updateSubjectMetadata(
-                id, body.get("color"), body.get("iconEmoji"), body.get("description")));
+                id, body.get("color"), body.get("iconEmoji"), body.get("description"),
+                body.get("category")));
     }
 
     @GetMapping("/{id}/stats")

@@ -45,14 +45,16 @@ public class AdminSubjectService {
     }
 
     @Transactional
-    public ExamSubjectResponse addSubject(String name) {
+    public ExamSubjectResponse addSubject(String name, String category) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) throw new BadRequestException("Fənn adı boş ola bilməz");
         if (subjectRepository.existsByName(trimmed)) {
             throw new BadRequestException("Bu fənn artıq mövcuddur");
         }
+        String trimmedCategory = category == null || category.isBlank() ? null : category.trim();
         ExamSubject saved = subjectRepository.save(ExamSubject.builder()
                 .name(trimmed)
+                .category(trimmedCategory)
                 .isDefault(false)
                 .build());
         auditLogService.log(AuditAction.SUBJECT_ADDED, "admin", "Admin", "SUBJECT", trimmed, null);
@@ -105,12 +107,15 @@ public class AdminSubjectService {
     }
 
     @Transactional
-    public ExamSubjectResponse updateSubjectMetadata(Long id, String color, String iconEmoji, String description) {
+    public ExamSubjectResponse updateSubjectMetadata(Long id, String color, String iconEmoji,
+                                                     String description, String category) {
         ExamSubject subject = subjectRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
         if (color != null) subject.setColor(color);
         if (iconEmoji != null) subject.setIconEmoji(iconEmoji);
         if (description != null) subject.setDescription(description);
+        // Empty string clears the category (uncategorised); null = leave untouched.
+        if (category != null) subject.setCategory(category.isBlank() ? null : category.trim());
         ExamSubject saved = subjectRepository.save(subject);
         auditLogService.logCurrent(AuditAction.SUBJECT_UPDATED, "SUBJECT", saved.getName(), null);
         return toResponse(saved);
@@ -161,6 +166,7 @@ public class AdminSubjectService {
                 s.getName(),
                 s.getColor(),
                 s.getIconEmoji(),
+                s.getCategory(),
                 s.getDescription(),
                 s.isDefault(),
                 topics

@@ -71,6 +71,25 @@ public class DataSeeder implements CommandLineRunner {
             Map.entry("TEXNOLOGIYA", "Texnologiya")
     );
 
+    // Subject name → picker filter category (display string, matches V30 backfill)
+    private static final Map<String, String> SUBJECT_CATEGORIES = Map.ofEntries(
+            Map.entry("Riyaziyyat",       "Dəqiq elmlər"),
+            Map.entry("Fizika",           "Dəqiq elmlər"),
+            Map.entry("Informatika",      "Dəqiq elmlər"),
+            Map.entry("Məntiq",           "Dəqiq elmlər"),
+            Map.entry("Kimya",            "Təbiət"),
+            Map.entry("Biologiya",        "Təbiət"),
+            Map.entry("Coğrafiya",        "Təbiət"),
+            Map.entry("Tarix",            "Humanitar"),
+            Map.entry("Ədəbiyyat",        "Humanitar"),
+            Map.entry("Azərbaycan dili",  "Dillər"),
+            Map.entry("İngilis dili",     "Dillər"),
+            Map.entry("Rus dili",         "Dillər"),
+            Map.entry("Alman dili",       "Dillər"),
+            Map.entry("Fransız dili",     "Dillər"),
+            Map.entry("Xarici dil",       "Dillər")
+    );
+
     // Subject name → metadata [color, iconEmoji]
     private static final Map<String, String[]> SUBJECT_METADATA = Map.ofEntries(
             Map.entry("Riyaziyyat",       new String[]{"#6366f1", "📐"}),
@@ -296,6 +315,7 @@ public class DataSeeder implements CommandLineRunner {
                         .isDefault(true)
                         .color(meta != null ? meta[0] : null)
                         .iconEmoji(meta != null ? meta[1] : null)
+                        .category(SUBJECT_CATEGORIES.get(name))
                         .build();
                 subjectRepository.save(subject);
             }
@@ -314,6 +334,17 @@ public class DataSeeder implements CommandLineRunner {
                         changed = true;
                     }
                     if (changed) {
+                        subjectRepository.save(subject);
+                    }
+                });
+            }
+            // Backfill category for known subjects that don't have one yet
+            // (covers DBs created before V30 whose names weren't in the
+            // migration's IN lists, e.g. fresh installs with custom data).
+            for (Map.Entry<String, String> entry : SUBJECT_CATEGORIES.entrySet()) {
+                subjectRepository.findByName(entry.getKey()).ifPresent(subject -> {
+                    if (subject.getCategory() == null) {
+                        subject.setCategory(entry.getValue());
                         subjectRepository.save(subject);
                     }
                 });
