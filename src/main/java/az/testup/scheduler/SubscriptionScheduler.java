@@ -10,6 +10,7 @@ import az.testup.repository.UserSubscriptionRepository;
 import az.testup.service.ExamService;
 import az.testup.service.KapitalBankService;
 import az.testup.service.PricingService;
+import az.testup.service.PurchaseReceiptService;
 import az.testup.service.SubmissionService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +38,7 @@ public class SubscriptionScheduler {
     private final SubscriptionUsageRepository subscriptionUsageRepository;
     private final SubmissionService submissionService;
     private final PricingService pricingService;
+    private final PurchaseReceiptService purchaseReceiptService;
 
     /**
      * Runs every 10 minutes. Picks up orders stuck in PENDING or PROCESSING
@@ -84,6 +86,8 @@ public class SubscriptionScheduler {
                         userSubscriptionService.assignSubscription(req);
                         log.info("Payment recovery: subscription activated for orderId={}", order.getOrderId());
                     }
+                    // Receipt (once per order; idempotent via receiptSent flag).
+                    purchaseReceiptService.sendForOrder(order, order.getUser());
                 } else if (isFailedStatus(paymentStatus)) {
                     order.setStatus("FAILED");
                     paymentOrderRepository.save(order);

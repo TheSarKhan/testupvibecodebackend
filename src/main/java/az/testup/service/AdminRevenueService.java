@@ -29,6 +29,7 @@ public class AdminRevenueService {
     private final UserSubscriptionService userSubscriptionService;
     private final ExamService examService;
     private final PricingService pricingService;
+    private final PurchaseReceiptService purchaseReceiptService;
     private final AuditLogService auditLogService;
 
     public RevenueStatsResponse getRevenueStats() {
@@ -231,6 +232,9 @@ public class AdminRevenueService {
                             + ". Məbləğ: " + order.getAmount() + " AZN. Müddət: "
                             + order.getDurationDays() + " gün");
         }
+
+        // Receipt (once per order; idempotent via receiptSent flag).
+        purchaseReceiptService.sendForOrder(order, order.getUser());
     }
 
     private boolean isKbPaidStatus(String status) {

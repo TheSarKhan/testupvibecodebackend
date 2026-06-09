@@ -48,4 +48,13 @@ public class PaymentOrder {
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
+
+    /**
+     * Whether the purchase-receipt email has been sent for this order. Guards
+     * against duplicate receipts from verify retries, the KB callback, and the
+     * recovery scheduler all touching the same order.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean receiptSent = false;
 }

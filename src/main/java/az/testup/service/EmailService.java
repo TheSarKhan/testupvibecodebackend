@@ -7,6 +7,7 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -109,6 +110,52 @@ public class EmailService {
         } catch (Exception e) {
             log.error("SendPulse göndərmə xətası [{}]: {}", to, e.getMessage());
         }
+    }
+
+    // ─── Purchase receipt ─────────────────────────────────────────────────────
+
+    /**
+     * Sends an HTML purchase receipt. Runs async so a slow/failed mail server
+     * never blocks the payment callback; sendGmail already swallows + logs send
+     * errors internally, so activation is never affected by email failures.
+     */
+    @Async
+    public void sendReceipt(String toEmail, String toName, String orderId, String productName,
+                            double amount, String detailLine, LocalDateTime createdAt) {
+        if (toEmail == null || toEmail.isBlank()) return;
+        String name = toName != null && !toName.isBlank() ? toName : toEmail;
+        String dateStr = (createdAt != null ? createdAt : LocalDateTime.now())
+                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        String amountStr = String.format(Locale.US, "%.2f AZN", amount);
+        String row = """
+                <tr><td style="padding:10px 0;color:#6b7280;border-bottom:1px solid #f1f5f9;">%s</td>
+                <td style="padding:10px 0;text-align:right;font-weight:600;color:#111827;border-bottom:1px solid #f1f5f9;">%s</td></tr>""";
+        String body = """
+                <p style="margin:0 0 18px;">Hörmətli %s, ödənişiniz uğurla tamamlandı. Qəbziniz aşağıdadır:</p>
+                <table style="width:100%%;border-collapse:collapse;font-size:14px;">
+                %s
+                %s
+                %s
+                %s
+                %s
+                  <tr><td style="padding:14px 0;color:#111827;font-weight:700;">Ödənilən məbləğ</td>
+                  <td style="padding:14px 0;text-align:right;font-weight:700;font-size:18px;color:#4f46e5;">%s</td></tr>
+                </table>
+                <p style="margin:22px 0 0;color:#6b7280;">Bizi seçdiyiniz üçün təşəkkür edirik!</p>
+                """.formatted(
+                    esc(name),
+                    row.formatted("Sifariş №", esc(orderId)),
+                    row.formatted("Məhsul", esc(productName)),
+                    row.formatted("Təsvir", esc(detailLine)),
+                    row.formatted("Tarix", dateStr),
+                    row.formatted("Ödəniş üsulu", "Kapital Bank"),
+                    amountStr);
+        String html = buildHtmlRaw("Ödəniş qəbzi", body);
+        sendGmail(toEmail, name, "testup.az — Ödəniş qəbzi (#" + orderId + ")", html, null);
+    }
+
+    private static String esc(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     // ─── HTML builder ─────────────────────────────────────────────────────────

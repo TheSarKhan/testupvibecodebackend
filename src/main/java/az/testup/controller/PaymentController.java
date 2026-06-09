@@ -21,6 +21,7 @@ import az.testup.service.AuditLogService;
 import az.testup.service.ExamService;
 import az.testup.service.KapitalBankService;
 import az.testup.service.PricingService;
+import az.testup.service.PurchaseReceiptService;
 import az.testup.service.UserSubscriptionService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -55,6 +56,7 @@ public class PaymentController {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final UserSubscriptionService userSubscriptionService;
     private final PricingService pricingService;
+    private final PurchaseReceiptService purchaseReceiptService;
     private final AuditLogService auditLogService;
     private final ExamRepository examRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
@@ -609,10 +611,7 @@ public class PaymentController {
                 log.warn("activateOrder: skipping exam grant for order {} (user={}, shareLink={})",
                         orderId, orderUser != null ? orderUser.getId() : null, shareLink);
             }
-            return;
-        }
-
-        if (order.getPlan() != null) {
+        } else if (order.getPlan() != null) {
             AssignSubscriptionRequest request = new AssignSubscriptionRequest();
             request.setUserId(orderUser.getId());
             request.setPlanId(order.getPlan().getId());
@@ -636,5 +635,9 @@ public class PaymentController {
                     "Ödəniş: " + String.format("%.2f", order.getAmount()) + " AZN. Müddət: "
                             + order.getDurationDays() + " gün. OrderId: " + orderId);
         }
+
+        // Email the buyer a receipt — once per order, non-blocking; email
+        // failure is logged inside the receipt service and never breaks activation.
+        purchaseReceiptService.sendForOrder(order, verifyingUser);
     }
 }
