@@ -15,6 +15,7 @@ import az.testup.enums.ExamVisibility;
 import az.testup.enums.QuestionType;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
+import az.testup.exception.ServiceUnavailableException;
 import az.testup.repository.AnswerRepository;
 import az.testup.repository.ExamAccessCodeRepository;
 import az.testup.repository.ExamCollaboratorRepository;
@@ -1960,7 +1961,8 @@ public class SubmissionService {
             wb.write(out);
             return out.toByteArray();
         } catch (Exception e) {
-            throw new RuntimeException("Excel faylı yaradılarkən xəta baş verdi", e);
+            log.error("Submission results Excel export failed", e);
+            throw new ServiceUnavailableException("Excel faylı yaradıla bilmədi. Yenidən cəhd edin.", e);
         }
     }
 }

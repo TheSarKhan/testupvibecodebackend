@@ -1,5 +1,6 @@
 package az.testup.service;
 
+import az.testup.exception.ServiceUnavailableException;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -120,13 +121,16 @@ public class KapitalBankService {
             log.error("Kapital Bank /order failed: status={} body={} sentDescription={} sentAmount={}",
                     e.getStatusCode(), e.getResponseBodyAsString(),
                     safeDescription, orderBody.get("amount"));
-            throw new RuntimeException("Ödəniş provayderi xətası: " + e.getResponseBodyAsString(), e);
+            throw new ServiceUnavailableException(
+                    "Ödəniş sistemi ilə əlaqə qurulmadı. Bir az sonra yenidən cəhd edin.", e);
         }
 
         JsonNode json = response.getBody();
         if (json == null || !json.has("order")) {
             String msg = json != null ? json.path("errorDescription").asText("Unknown error") : "No response";
-            throw new RuntimeException("Kapital Bank error: " + msg);
+            log.error("Kapital Bank /order returned unexpected body: {}", msg);
+            throw new ServiceUnavailableException(
+                    "Ödəniş sistemində xəta baş verdi. Bir az sonra yenidən cəhd edin.");
         }
 
         JsonNode order = json.path("order");
@@ -135,7 +139,9 @@ public class KapitalBankService {
         String pwd = order.path("password").asText();
 
         if (orderId.isBlank()) {
-            throw new RuntimeException("Kapital Bank returned empty orderId. Response: " + json);
+            log.error("Kapital Bank returned empty orderId. Response: {}", json);
+            throw new ServiceUnavailableException(
+                    "Ödəniş sistemində xəta baş verdi. Bir az sonra yenidən cəhd edin.");
         }
 
         log.info("Kapital Bank order created: id={}", orderId);

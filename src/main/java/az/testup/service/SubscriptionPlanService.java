@@ -7,6 +7,8 @@ import az.testup.dto.response.SubscriptionPlanResponse;
 import az.testup.entity.SubscriptionPlan;
 import az.testup.entity.SubscriptionPlanPrice;
 import az.testup.enums.AuditAction;
+import az.testup.exception.BadRequestException;
+import az.testup.exception.ResourceNotFoundException;
 import az.testup.repository.SubscriptionPlanPriceRepository;
 import az.testup.repository.SubscriptionPlanRepository;
 import lombok.RequiredArgsConstructor;
@@ -58,14 +60,14 @@ public class SubscriptionPlanService {
 
     public SubscriptionPlanResponse getPlanById(Long id) {
         SubscriptionPlan plan = subscriptionPlanRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Subscription plan not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Abunəlik planı tapılmadı"));
         return toResponse(plan, subscriptionPlanPriceRepository.findByPlanId(id));
     }
 
     @Transactional
     public SubscriptionPlanResponse createPlan(SubscriptionPlanRequest request) {
         if (subscriptionPlanRepository.findByName(request.getName()).isPresent()) {
-            throw new RuntimeException("Plan with name '" + request.getName() + "' already exists");
+            throw new BadRequestException("\"" + request.getName() + "\" adlı plan artıq mövcuddur");
         }
         SubscriptionPlan plan = toEntity(request);
         SubscriptionPlan savedPlan = subscriptionPlanRepository.save(plan);
@@ -78,7 +80,7 @@ public class SubscriptionPlanService {
     @Transactional
     public SubscriptionPlanResponse updatePlan(Long id, SubscriptionPlanRequest request) {
         SubscriptionPlan plan = subscriptionPlanRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Subscription plan not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Abunəlik planı tapılmadı"));
 
         updateEntity(request, plan);
         SubscriptionPlan updatedPlan = subscriptionPlanRepository.save(plan);
@@ -102,7 +104,7 @@ public class SubscriptionPlanService {
     @Transactional
     public void deletePlan(Long id) {
         SubscriptionPlan plan = subscriptionPlanRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Subscription plan not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Abunəlik planı tapılmadı"));
         String name = plan.getName();
         subscriptionPlanPriceRepository.deleteByPlanId(id); // FK ON DELETE CASCADE is the backstop
         subscriptionPlanRepository.deleteById(id);

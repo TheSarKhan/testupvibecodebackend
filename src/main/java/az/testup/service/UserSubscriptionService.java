@@ -6,6 +6,7 @@ import az.testup.entity.SubscriptionPlan;
 import az.testup.entity.SubscriptionUsage;
 import az.testup.entity.User;
 import az.testup.entity.UserSubscription;
+import az.testup.exception.ResourceNotFoundException;
 import az.testup.mapper.UserSubscriptionMapper;
 import az.testup.repository.ExamRepository;
 import az.testup.repository.SubscriptionPlanRepository;
@@ -60,10 +61,10 @@ public class UserSubscriptionService {
     @Transactional
     public UserSubscriptionResponse assignSubscription(AssignSubscriptionRequest request) {
         User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found: " + request.getUserId()));
+                .orElseThrow(() -> new ResourceNotFoundException("İstifadəçi tapılmadı"));
 
         SubscriptionPlan newPlan = subscriptionPlanRepository.findById(request.getPlanId())
-                .orElseThrow(() -> new RuntimeException("Plan not found: " + request.getPlanId()));
+                .orElseThrow(() -> new ResourceNotFoundException("Abunəlik planı tapılmadı"));
 
         int months = request.getDurationMonths() != null ? request.getDurationMonths() : 1;
         long durationDays = request.getDurationDays() != null && request.getDurationDays() > 0
@@ -127,7 +128,7 @@ public class UserSubscriptionService {
     @Transactional
     public void cancelSubscription(Long subscriptionId) {
         UserSubscription sub = userSubscriptionRepository.findById(subscriptionId)
-                .orElseThrow(() -> new RuntimeException("Subscription not found: " + subscriptionId));
+                .orElseThrow(() -> new ResourceNotFoundException("Abunəlik tapılmadı"));
         sub.setActive(false);
         userSubscriptionRepository.save(sub);
     }

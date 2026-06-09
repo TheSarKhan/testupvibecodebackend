@@ -2,6 +2,8 @@ package az.testup.service;
 
 import az.testup.dto.response.BankOptionResponse;
 import az.testup.dto.response.BankQuestionResponse;
+import az.testup.exception.ServiceUnavailableException;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -11,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 public class BankExcelExportService {
 
@@ -88,7 +91,8 @@ public class BankExcelExportService {
             wb.write(out);
             return out.toByteArray();
         } catch (Exception e) {
-            throw new RuntimeException("Excel ixracı uğursuz oldu: " + e.getMessage(), e);
+            log.error("Question bank Excel export failed", e);
+            throw new ServiceUnavailableException("Excel faylı yaradıla bilmədi. Yenidən cəhd edin.", e);
         }
     }
 

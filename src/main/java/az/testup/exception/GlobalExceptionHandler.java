@@ -51,6 +51,30 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
     }
 
+    // Without this handler the catch-all handleGeneral(Exception) wins over the
+    // class's @ResponseStatus(FORBIDDEN), so limit errors surfaced as a generic
+    // 500 and the plan-limit message never reached the user.
+    @ExceptionHandler(SubscriptionLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleSubscriptionLimit(SubscriptionLimitExceededException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<Map<String, Object>> handleServiceUnavailable(ServiceUnavailableException ex) {
+        log.error("Service unavailable: {}", ex.getMessage(), ex);
+        return buildResponse(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage());
+    }
+
+    // Services use IllegalArgument/IllegalState for caller-fixable conditions;
+    // their messages are written to be user-safe. Anything with no message
+    // still falls back to a readable default rather than null.
+    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
+    public ResponseEntity<Map<String, Object>> handleIllegal(RuntimeException ex) {
+        String message = ex.getMessage();
+        return buildResponse(HttpStatus.BAD_REQUEST,
+                message != null && !message.isBlank() ? message : "Sorğu yerinə yetirilə bilmədi");
+    }
+
     // ──────────────────────────── Spring Security ──────────────────────────────
 
     @ExceptionHandler(AccessDeniedException.class)
@@ -69,18 +93,22 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
         String message = ex.getBindingResult().getFieldErrors().stream()
                 .map(err -> err.getDefaultMessage())
-                .findFirst()
-                .orElse("Daxil edilən məlumatlar yanlışdır");
-        return buildResponse(HttpStatus.BAD_REQUEST, message);
+                .filter(m -> m != null && !m.isBlank())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining("; "));
+        return buildResponse(HttpStatus.BAD_REQUEST,
+                message.isBlank() ? "Daxil edilən məlumatlar yanlışdır" : message);
     }
 
     @ExceptionHandler(ConstraintViolationException.class)
     public ResponseEntity<Map<String, Object>> handleConstraintViolation(ConstraintViolationException ex) {
         String message = ex.getConstraintViolations().stream()
                 .map(v -> v.getMessage())
-                .findFirst()
-                .orElse("Məlumat doğrulama xətası");
-        return buildResponse(HttpStatus.BAD_REQUEST, message);
+                .filter(m -> m != null && !m.isBlank())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining("; "));
+        return buildResponse(HttpStatus.BAD_REQUEST,
+                message.isBlank() ? "Məlumat doğrulama xətası" : message);
     }
 
     // ──────────────────────────── HTTP / request ───────────────────────────────
@@ -128,10 +156,16 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
-        log.error("Unhandled exception: {}", ex.getMessage(), ex);
+        // The message stays generic on purpose (no stack traces / SQL / paths to
+        // the user), but carries a short correlation ID so support can find the
+        // matching log line and audit entry.
+        String errorId = java.util.UUID.randomUUID().toString().substring(0, 8);
+        log.error("Unhandled exception [{}]: {}", errorId, ex.getMessage(), ex);
+        String detail = trimMessage(ex.getMessage());
         auditLogService.logCurrent(AuditAction.SYSTEM_ERROR, "EXCEPTION",
-                ex.getClass().getSimpleName(), trimMessage(ex.getMessage()));
-        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Daxili server xətası baş verdi");
+                ex.getClass().getSimpleName(), "[" + errorId + "]" + (detail == null ? "" : " " + detail));
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR,
+                "Gözlənilməz xəta baş verdi. Problem davam edərsə dəstəyə müraciət edin (kod: " + errorId + ")");
     }
 
     private String trimMessage(String msg) {

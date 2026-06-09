@@ -7,6 +7,8 @@ import az.testup.dto.request.GenerateExamRequest;
 import az.testup.dto.request.GenerateQuestionsRequest;
 import az.testup.enums.Difficulty;
 import az.testup.enums.QuestionType;
+import az.testup.exception.BadRequestException;
+import az.testup.exception.ServiceUnavailableException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -78,7 +80,8 @@ public class GeminiService {
 
     public List<BankQuestionRequest> generateQuestions(GenerateQuestionsRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Gemini API açarı konfiqurasiya edilməyib. .env-də GEMINI_API_KEY təyin edin.");
+            log.error("Gemini API key is not configured (GEMINI_API_KEY missing)");
+            throw new ServiceUnavailableException("AI xidməti hazırda konfiqurasiya edilməyib. Administratorla əlaqə saxlayın.");
         }
 
         String prompt = buildPrompt(req);
@@ -625,7 +628,8 @@ public class GeminiService {
             // Safety filter tripped before generation → promptFeedback.blockReason.
             JsonNode block = root.at("/promptFeedback/blockReason");
             if (!block.isMissingNode() && !block.isNull() && !block.asText().isBlank()) {
-                throw new RuntimeException("Gemini sorğunu rədd etdi (blok: " + block.asText() + ")");
+                log.warn("Gemini blocked the prompt: blockReason={}", block.asText());
+                throw new BadRequestException("AI bu sorğunu təhlükəsizlik filtri səbəbindən rədd etdi. Mövzunu və ya mətni dəyişib yenidən cəhd edin.");
             }
 
             JsonNode candidate = root.at("/candidates/0");
@@ -643,15 +647,16 @@ public class GeminiService {
             }
             if (sb.length() == 0) {
                 String finish = candidate.at("/finishReason").asText("");
-                throw new RuntimeException("Gemini boş cavab qaytardı"
-                        + (finish.isBlank() ? "" : " (finishReason: " + finish + ")")
-                        + ". Çətinlik/sual sayını azaldın və ya yenidən cəhd edin.");
+                log.warn("Gemini returned an empty answer (finishReason={})", finish);
+                throw new ServiceUnavailableException(
+                        "AI boş cavab qaytardı. Çətinliyi və ya sual sayını azaldıb yenidən cəhd edin.");
             }
             return sb.toString();
         } catch (RuntimeException re) {
             throw re;
         } catch (Exception e) {
-            throw new RuntimeException("Gemini cavabı parse edilə bilmədi: " + e.getMessage());
+            log.error("Failed to parse Gemini response: {}", e.getMessage(), e);
+            throw new ServiceUnavailableException("AI cavabı emal edilə bilmədi. Bir az sonra yenidən cəhd edin.");
         }
     }
 
@@ -675,8 +680,8 @@ public class GeminiService {
         for (int round = 1; round <= 2; round++) {
             for (String model : models) {
                 if (System.currentTimeMillis() >= deadline) {
-                    throw last != null ? last
-                            : new RuntimeException("Gemini sorğusu vaxt limitini keçdi");
+                    throw new ServiceUnavailableException(
+                            "AI sorğusu vaxt limitini keçdi. Bir az sonra yenidən cəhd edin.", last);
                 }
                 try {
                     ResponseEntity<String> r = rest.postForEntity(geminiUrl(model), entity, String.class);
@@ -688,7 +693,12 @@ public class GeminiService {
                 } catch (org.springframework.web.client.HttpStatusCodeException e) {
                     boolean retryable = e.getStatusCode().is5xxServerError()
                             || e.getStatusCode().value() == 429;
-                    if (!retryable) throw e; // 400/401/403/404 — won't self-heal
+                    if (!retryable) { // 400/401/403/404 — won't self-heal by switching model
+                        log.error("Gemini [{}] rejected the request: status={} body={}",
+                                model, e.getStatusCode(), e.getResponseBodyAsString());
+                        throw new ServiceUnavailableException(
+                                "AI sorğusu uğursuz oldu. Bir az sonra yenidən cəhd edin.", e);
+                    }
                     last = e;
                     log.warn("Gemini [{}] round {}: {}", model, round, e.getStatusCode());
                 } catch (org.springframework.web.client.ResourceAccessException e) {
@@ -707,8 +717,9 @@ public class GeminiService {
                 break;
             }
         }
-        throw last != null ? last
-                : new RuntimeException("Gemini sorğusu uğursuz oldu (bütün modellər əlçatmaz)");
+        log.error("Gemini request failed across all models", last);
+        throw new ServiceUnavailableException(
+                "AI xidməti hazırda əlçatmazdır. Bir az sonra yenidən cəhd edin.", last);
     }
 
     /**
@@ -849,7 +860,8 @@ public class GeminiService {
                 int start = cleaned.indexOf('[');
                 int end   = cleaned.lastIndexOf(']');
                 if (start < 0 || end < 0) {
-                    throw new RuntimeException("Cavabda JSON massivi tapılmadı. Cavab: " + raw.substring(0, Math.min(300, raw.length())));
+                    log.error("Gemini response has no JSON array. Raw: {}", raw.substring(0, Math.min(300, raw.length())));
+                    throw new ServiceUnavailableException("AI cavabı düzgün formatda gəlmədi. Yenidən cəhd edin.");
                 }
                 arrayJson = cleaned.substring(start, end + 1);
             }
@@ -859,7 +871,9 @@ public class GeminiService {
             int start = cleaned.indexOf('[');
             int end   = cleaned.lastIndexOf(']');
             if (start < 0 || end < 0) {
-                throw new RuntimeException("JSON parse xətası. Cavab: " + raw.substring(0, Math.min(300, raw.length())));
+                log.error("Gemini response JSON parse failed: {}. Raw: {}",
+                        e.getMessage(), raw.substring(0, Math.min(300, raw.length())));
+                throw new ServiceUnavailableException("AI cavabı düzgün formatda gəlmədi. Yenidən cəhd edin.");
             }
             arrayJson = cleaned.substring(start, end + 1);
         }
@@ -966,13 +980,16 @@ public class GeminiService {
             }
             return result;
         } catch (Exception e) {
-            throw new RuntimeException("Suallar parse edilə bilmədi: " + e.getMessage() + ". Raw: " + raw.substring(0, Math.min(300, raw.length())));
+            log.error("Failed to parse generated questions: {}. Raw: {}",
+                    e.getMessage(), raw.substring(0, Math.min(300, raw.length())));
+            throw new ServiceUnavailableException("AI-dən gələn suallar emal edilə bilmədi. Yenidən cəhd edin.");
         }
     }
 
     public List<BankQuestionRequest> generateExam(GenerateExamRequest req) {
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException("Gemini API açarı konfiqurasiya edilməyib. .env-də GEMINI_API_KEY təyin edin.");
+            log.error("Gemini API key is not configured (GEMINI_API_KEY missing)");
+            throw new ServiceUnavailableException("AI xidməti hazırda konfiqurasiya edilməyib. Administratorla əlaqə saxlayın.");
         }
         List<BankQuestionRequest> all = new ArrayList<>();
         if (req.getTypeCounts() == null || req.getTypeCounts().isEmpty()) return all;
