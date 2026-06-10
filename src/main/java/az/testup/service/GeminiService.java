@@ -100,6 +100,7 @@ public class GeminiService {
             retryReq.setInstructions(req.getInstructions());
             retryReq.setGradeLevel(req.getGradeLevel());
             retryReq.setLanguage(req.getLanguage());
+            retryReq.setSeedQuestion(req.getSeedQuestion());
             retryReq.setCount(requested - filtered.size());
             try {
                 String retryRaw = callGemini(buildPrompt(retryReq), retryReq);
@@ -563,6 +564,13 @@ public class GeminiService {
               req.getInstructions().trim().replace("\"", "'") + "\"\n"
             : "";
 
+        // Optional seed question — produce SIMILAR variations, never copies.
+        String seedLine = (req.getSeedQuestion() != null && !req.getSeedQuestion().isBlank())
+            ? "TOXUM SUAL: Aşağıdakı suala BƏNZƏR (eyni konsept, eyni üslub, eyni səviyyə) variasiyalar yarat — " +
+              "lakin onu və ya rəqəmlərini/cavabını KOPYALAMA, hər sual müstəqil yenilik olsun. Toxum: \"" +
+              req.getSeedQuestion().trim().replace("\"", "'") + "\"\n"
+            : "";
+
         return ("FƏNN: " + req.getSubjectName() + "\n" +
                 topicLine + "\n" +
                 "ÇƏTİNLİK SƏVİYYƏSİ: " + diffRubric + "\n" +
@@ -571,6 +579,7 @@ public class GeminiService {
                 langLine +
                 gradeLine +
                 instructionsLine +
+                seedLine +
                 "SUAL SAYI: DƏQİQ " + req.getCount() + " sual.\n" +
                 latexNote +
                 hardChallengeGate + "\n\n" +
@@ -1289,6 +1298,88 @@ public class GeminiService {
             }
         }
         return sb.length() == 0 ? null : sb.toString();
+    }
+
+    // ── BUG-22: per-question refinement ──────────────────────────────────────
+
+    /**
+     * Replaces ONE generated question according to the requested action,
+     * reusing the full single-question generation pipeline (schema, parse,
+     * LaTeX filtering) so the result has exactly the same shape the teacher
+     * already has in the preview list.
+     */
+    public BankQuestionRequest refineQuestion(az.testup.dto.request.RefineQuestionRequest req) {
+        if (req.getQuestion() == null || req.getQuestion().getContent() == null
+                || req.getQuestion().getContent().isBlank()) {
+            throw new BadRequestException("Dəyişdiriləcək sual göndərilməyib");
+        }
+        BankQuestionRequest original = req.getQuestion();
+        String action = req.getAction() == null ? "REGENERATE" : req.getAction().trim().toUpperCase();
+        if (!java.util.Set.of("REGENERATE", "EASIER", "HARDER", "REWORD").contains(action)) {
+            throw new BadRequestException("Naməlum əməliyyat: " + req.getAction());
+        }
+
+        String qType = original.getQuestionType() != null ? original.getQuestionType().name() : "MCQ";
+        String baseDiff = original.getDifficulty() != null ? original.getDifficulty().name() : "MEDIUM";
+        String targetDiff = switch (action) {
+            case "EASIER" -> switch (baseDiff) { case "HARD" -> "MEDIUM"; default -> "EASY"; };
+            case "HARDER" -> switch (baseDiff) { case "EASY" -> "MEDIUM"; default -> "HARD"; };
+            default -> baseDiff;
+        };
+
+        String directive = switch (action) {
+            case "EASIER" -> "ASANLAŞDIRMA TAPŞIRIĞI: Aşağıdakı sualın yoxladığı KONSEPTİ saxla, lakin onun bir pillə " +
+                    "ASAN versiyasını yarat — addım sayını azalt, ədədləri/konteksti sadələşdir, dolaylı ifadələri birbaşalaşdır. " +
+                    "ORİJİNAL SUAL → " + describeQuestionForPrompt(original);
+            case "HARDER" -> "ÇƏTİNLƏŞDİRMƏ TAPŞIRIĞI: Aşağıdakı sualın yoxladığı KONSEPTİ saxla, lakin onun bir pillə " +
+                    "ÇƏTİN versiyasını yarat — əlavə addım və ya ikinci anlayış əlavə et, distraktorları daha incə qur. " +
+                    "ORİJİNAL SUAL → " + describeQuestionForPrompt(original);
+            case "REWORD" -> "YENİDƏN İFADƏ TAPŞIRIĞI: Aşağıdakı sualın MƏZMUNUNU, DÜZGÜN CAVABINI və variantların " +
+                    "düzgünlük statusunu DƏYİŞMƏ — yalnız ifadəni təzələ: stem-i daha aydın və səlis yaz, variantların " +
+                    "mənasını saxlayaraq sözlərini cilala. Yeni fakt, yeni rəqəm, yeni mövzu ƏLAVƏ ETMƏ. " +
+                    "ORİJİNAL SUAL → " + describeQuestionForPrompt(original);
+            default -> "YENİDƏN YARATMA TAPŞIRIĞI: Aşağıdakı sual müəllimi qane etmədi. Eyni mövzu, tip və çətinlikdə " +
+                    "TAMAMİLƏ FƏRQLİ yeni sual yarat — orijinalın alt-mövzusunu, rəqəmlərini və ifadəsini təkrarlama. " +
+                    "ORİJİNAL SUAL → " + describeQuestionForPrompt(original);
+        };
+        String combined = (req.getInstructions() != null && !req.getInstructions().isBlank())
+                ? directive + " | ƏLAVƏ TƏLİMAT: " + req.getInstructions().trim()
+                : directive;
+
+        GenerateQuestionsRequest qReq = new GenerateQuestionsRequest();
+        qReq.setSubjectId(req.getSubjectId() != null ? req.getSubjectId() : original.getSubjectId());
+        qReq.setSubjectName(req.getSubjectName());
+        qReq.setTopicName(req.getTopicName());
+        qReq.setDifficulty(targetDiff);
+        qReq.setQuestionType(qType);
+        qReq.setCount(1);
+        qReq.setInstructions(combined);
+
+        List<BankQuestionRequest> out = generateQuestions(qReq);
+        if (out.isEmpty()) {
+            throw new ServiceUnavailableException("AI yeni variant qaytara bilmədi. Yenidən cəhd edin.");
+        }
+        BankQuestionRequest refined = out.get(0);
+        refined.setOrderIndex(original.getOrderIndex());
+        return refined;
+    }
+
+    /** Compact, prompt-friendly description of an existing question (stem, options with correctness, answer). */
+    private String describeQuestionForPrompt(BankQuestionRequest q) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Sual: \"").append(q.getContent() == null ? "" : q.getContent().replace("\"", "'")).append("\"");
+        if (q.getOptions() != null && !q.getOptions().isEmpty()) {
+            sb.append(" Variantlar: ");
+            for (BankOptionRequest o : q.getOptions()) {
+                if (o.getContent() == null || o.getContent().isBlank()) continue;
+                sb.append("[").append(Boolean.TRUE.equals(o.getIsCorrect()) ? "DÜZGÜN" : "səhv").append(": ")
+                  .append(o.getContent().replace("\"", "'")).append("] ");
+            }
+        }
+        if (q.getCorrectAnswer() != null && !q.getCorrectAnswer().isBlank()) {
+            sb.append(" Düzgün cavab: \"").append(q.getCorrectAnswer().replace("\"", "'")).append("\"");
+        }
+        return sb.toString();
     }
 
     private QuestionType mapQuestionType(String type) {

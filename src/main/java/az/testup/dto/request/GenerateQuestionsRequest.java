@@ -15,4 +15,7 @@ public class GenerateQuestionsRequest {
     private String instructions; // free-form teacher guidance
     private String gradeLevel;   // e.g. "7-ci sinif", "Universitet"
     private String language;     // AZ / EN / RU — null = implicit (subject-driven)
+
+    // ── BUG-22: optional seed — generate variations similar to this question ──
+    private String seedQuestion;
 }

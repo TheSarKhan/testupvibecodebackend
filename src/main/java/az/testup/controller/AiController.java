@@ -78,6 +78,30 @@ public class AiController {
         }
     }
 
+    /**
+     * POST /api/ai/refine-question (BUG-22)
+     * Polishes ONE already-generated question: REGENERATE | EASIER | HARDER |
+     * REWORD. Counts as 1 AI question against the monthly limit. Errors flow
+     * through the global handler so the teacher sees a readable 400/403/503
+     * message instead of a generic 500.
+     */
+    @PostMapping("/refine-question")
+    public ResponseEntity<?> refineQuestion(
+            @RequestBody az.testup.dto.request.RefineQuestionRequest req,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        User user = getUser(userDetails);
+        subscriptionValidatorService.validateAiQuestions(user.getId(), 1);
+
+        BankQuestionRequest refined = geminiService.refineQuestion(req);
+
+        subscriptionValidatorService.recordAiQuestions(user.getId(), 1);
+        auditLogService.log(AuditAction.AI_QUESTIONS_GENERATED, user.getEmail(), user.getFullName(),
+                "AI", "Sual cilalama",
+                "Əməliyyat: " + req.getAction() + ", Fənn: " + req.getSubjectName()
+                        + (req.getTopicName() != null ? ", Mövzu: " + req.getTopicName() : ""));
+        return ResponseEntity.ok(refined);
+    }
+
     @PostMapping("/generate-exam")
     public ResponseEntity<?> generateExam(
             @RequestBody GenerateExamRequest req,
