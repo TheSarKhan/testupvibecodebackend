@@ -35,13 +35,46 @@ public class SubscriptionValidatorService {
                 .orElseThrow(() -> new SubscriptionLimitExceededException("Aktiv abunəlik planı tapılmadı. Zəhmət olmasa bir plan əldə edin."));
     }
 
+    /** Length of one usage cycle. Limits reset this many days after the cycle anchor. */
+    public static final int USAGE_PERIOD_DAYS = 30;
+
+    /**
+     * Key of the usage period the subscription is in RIGHT NOW (BUG-24).
+     * Periods are rolling {@link #USAGE_PERIOD_DAYS}-day windows counted from
+     * the subscription's usageAnchor (falls back to startDate), so limits
+     * reset on the subscriber's own cycle — not on the 1st of the calendar
+     * month. Renewals re-anchor the cycle, which both starts a new period and
+     * zeroes the counters (a fresh row is lazily created on first use).
+     */
+    public static String currentPeriodKey(UserSubscription subscription) {
+        LocalDateTime anchor = subscription.getUsageAnchor() != null
+                ? subscription.getUsageAnchor()
+                : subscription.getStartDate();
+        if (anchor == null) return YearMonth.now().toString(); // defensive legacy fallback
+        long days = java.time.Duration.between(anchor, LocalDateTime.now()).toDays();
+        if (days < 0) days = 0;
+        return anchor.plusDays((days / USAGE_PERIOD_DAYS) * USAGE_PERIOD_DAYS)
+                .toLocalDate().toString(); // e.g. "2026-06-28"
+    }
+
+    /** Moment the CURRENT usage period ends and limits refresh (next cycle start). */
+    public static LocalDateTime nextUsageResetAt(UserSubscription subscription) {
+        LocalDateTime anchor = subscription.getUsageAnchor() != null
+                ? subscription.getUsageAnchor()
+                : subscription.getStartDate();
+        if (anchor == null) return null;
+        long days = java.time.Duration.between(anchor, LocalDateTime.now()).toDays();
+        if (days < 0) days = 0;
+        return anchor.plusDays(((days / USAGE_PERIOD_DAYS) + 1) * USAGE_PERIOD_DAYS);
+    }
+
     private SubscriptionUsage getCurrentUsage(UserSubscription userSubscription) {
-        String currentMonthYear = YearMonth.now().toString(); // e.g. "2026-03"
-        return subscriptionUsageRepository.findByUserSubscriptionIdAndMonthYear(userSubscription.getId(), currentMonthYear)
+        String periodKey = currentPeriodKey(userSubscription);
+        return subscriptionUsageRepository.findByUserSubscriptionIdAndMonthYear(userSubscription.getId(), periodKey)
                 .orElseGet(() -> {
                     SubscriptionUsage newUsage = SubscriptionUsage.builder()
                             .userSubscription(userSubscription)
-                            .monthYear(currentMonthYear)
+                            .monthYear(periodKey)
                             .usedMonthlyExams(0)
                             .usedSavedExams(0)
                             .usedAiQuestions(0)
@@ -85,8 +118,8 @@ public class SubscriptionValidatorService {
     public void recordMonthlyExamDeleted(Long userId) {
         if (isAdmin(userId)) return;
         userSubscriptionRepository.findActiveSubscriptionByUserIdAndDate(userId, LocalDateTime.now()).ifPresent(subscription -> {
-            String currentMonthYear = YearMonth.now().toString();
-            subscriptionUsageRepository.findByUserSubscriptionIdAndMonthYear(subscription.getId(), currentMonthYear).ifPresent(usage -> {
+            String periodKey = currentPeriodKey(subscription);
+            subscriptionUsageRepository.findByUserSubscriptionIdAndMonthYear(subscription.getId(), periodKey).ifPresent(usage -> {
                 usage.setUsedMonthlyExams(Math.max(0, usage.getUsedMonthlyExams() - 1));
                 subscriptionUsageRepository.save(usage);
             });

@@ -46,14 +46,17 @@ public class UserSubscriptionService {
                 .findActiveSubscriptionByUserIdAndDate(userId, LocalDateTime.now());
         return sub.map(entity -> {
             UserSubscriptionResponse response = userSubscriptionMapper.toResponse(entity);
-            String currentMonthYear = YearMonth.now().toString();
+            // BUG-24: usage is keyed by the subscription's own 30-day period,
+            // not the calendar month.
+            String periodKey = SubscriptionValidatorService.currentPeriodKey(entity);
             int usage = subscriptionUsageRepository
-                    .findByUserSubscriptionIdAndMonthYear(entity.getId(), currentMonthYear)
+                    .findByUserSubscriptionIdAndMonthYear(entity.getId(), periodKey)
                     .map(SubscriptionUsage::getUsedMonthlyExams)
                     .orElse(0);
             response.setUsedMonthlyExams(usage);
             long totalExams = examRepository.countByTeacherId(entity.getUser().getId());
             response.setTotalExamsCount(totalExams);
+            response.setUsageResetsAt(SubscriptionValidatorService.nextUsageResetAt(entity));
             return response;
         }).orElse(null);
     }
@@ -90,6 +93,10 @@ public class UserSubscriptionService {
             if (request.getDurationMonths() != null && request.getDurationMonths() > 0) {
                 current.setDurationMonths(request.getDurationMonths());
             }
+            // BUG-24: a paid renewal starts a fresh usage cycle IMMEDIATELY —
+            // re-anchoring changes the current period key, so the counters
+            // restart at zero instead of waiting for the 1st of next month.
+            current.setUsageAnchor(now);
             return userSubscriptionMapper.toResponse(userSubscriptionRepository.save(current));
         }
 
@@ -121,6 +128,7 @@ public class UserSubscriptionService {
                 .transactionId(txId)
                 .amountPaid(amountPaid)
                 .durationMonths(durationMonths)
+                .usageAnchor(start) // BUG-24: usage cycle starts with the subscription
                 .build();
         return userSubscriptionMapper.toResponse(userSubscriptionRepository.save(sub));
     }

@@ -52,4 +52,14 @@ public class UserSubscription {
      */
     @Column(name = "duration_months")
     private Integer durationMonths;
+
+    /**
+     * Start of the usage-period cycle (BUG-24). Monthly limits reset every 30
+     * days counted from THIS timestamp, not from the 1st of the calendar
+     * month. Initially equals startDate; a renewal/extension re-anchors it to
+     * the renewal moment so the user immediately gets a fresh full limit.
+     * Nullable for safety — code falls back to startDate.
+     */
+    @Column(name = "usage_anchor")
+    private LocalDateTime usageAnchor;
 }

@@ -20,9 +20,11 @@ public class SubscriptionUsage {
     @JoinColumn(name = "user_subscription_id", nullable = false)
     private UserSubscription userSubscription;
 
-    // To track which month this usage corresponds to (e.g. "2026-03")
-    @Column(nullable = false, length = 7)
-    private String monthYear; 
+    // Usage-period key (BUG-24): the start date of the subscription's own
+    // 30-day cycle this row belongs to, e.g. "2026-06-28". Legacy rows carry
+    // the old calendar-month form "2026-03"; both sort correctly for cleanup.
+    @Column(nullable = false, length = 10)
+    private String monthYear;
 
     @Builder.Default
     @Column(nullable = false)

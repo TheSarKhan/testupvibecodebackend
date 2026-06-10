@@ -18,6 +18,8 @@ public class UserSubscriptionResponse {
     private double amountPaid;
     private int usedMonthlyExams;
     private long totalExamsCount;
+    /** When the current 30-day usage period ends and monthly limits refresh (BUG-24). */
+    private LocalDateTime usageResetsAt;
 }
 
 

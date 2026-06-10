@@ -131,38 +131,20 @@ public class SubscriptionScheduler {
     }
 
     /**
-     * Runs at 00:00 on the 1st of every month.
-     * Creates fresh SubscriptionUsage records for all active subscriptions.
+     * Runs at 00:00 on the 1st of every month — housekeeping only.
+     *
+     * BUG-24: usage no longer resets on the calendar month. Each subscription
+     * carries its own 30-day cycle (usage_anchor) and the validator lazily
+     * creates the current period's row on first use, so pre-creating
+     * calendar-month rows here would be dead data. What remains is pruning
+     * old usage rows. Keys sort correctly for the cutoff in both formats
+     * (legacy "2026-03" and period "2026-03-15").
      */
     @Scheduled(cron = "0 0 0 1 * *")
     @Transactional
     public void resetMonthlyUsage() {
-        String currentMonthYear = YearMonth.now().toString();
-        List<UserSubscription> activeSubscriptions = userSubscriptionRepository.findAllActiveSubscriptions();
-
-        log.info("Monthly usage reset: resetting counters for {} active subscription(s) for month {}",
-                activeSubscriptions.size(), currentMonthYear);
-
-        for (UserSubscription subscription : activeSubscriptions) {
-            boolean exists = subscriptionUsageRepository
-                    .findByUserSubscriptionIdAndMonthYear(subscription.getId(), currentMonthYear)
-                    .isPresent();
-            if (!exists) {
-                subscriptionUsageRepository.save(
-                        SubscriptionUsage.builder()
-                                .userSubscription(subscription)
-                                .monthYear(currentMonthYear)
-                                .usedMonthlyExams(0)
-                                .usedSavedExams(0)
-                                .usedAiQuestions(0)
-                                .build()
-                );
-            }
-        }
-
         String cutoff = YearMonth.now().minusMonths(3).toString();
         subscriptionUsageRepository.deleteByMonthYearBefore(cutoff);
-
-        log.info("Monthly usage reset: completed for month {}", currentMonthYear);
+        log.info("Usage housekeeping: pruned usage rows older than {}", cutoff);
     }
 }
