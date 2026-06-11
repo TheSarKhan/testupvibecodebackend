@@ -50,9 +50,17 @@ public class DepotService {
         return savedExamRepository.findByStudentIdOrderBySavedAtDesc(student.getId()).stream()
                 // Hide exams that were deleted or closed (CANCELLED) by the
                 // owner/admin — they shouldn't linger in "Saxlananlar".
+                // PAID exams are site-marketplace exams (price is admin-set),
+                // so when the admin pulls one off the site (sitePublished=false)
+                // it disappears here too: the student couldn't buy/enter it
+                // anymore, the bookmark would be a dead end. Free/teacher exams
+                // are never site-published and stay untouched.
                 .filter(s -> {
                     Exam e = s.getExam();
-                    return e != null && !e.isDeleted() && e.getStatus() != ExamStatus.CANCELLED;
+                    if (e == null || e.isDeleted() || e.getStatus() == ExamStatus.CANCELLED) return false;
+                    boolean isPaid = e.getPrice() != null
+                            && e.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0;
+                    return !isPaid || e.isSitePublished();
                 })
                 .map(s -> mapToResponse(s))
                 .collect(Collectors.toList());

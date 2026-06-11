@@ -176,8 +176,13 @@ public class ExamController {
         List<Map<String, Object>> result = orders.stream()
             .filter(order -> {
                 Exam ex = order.getExam();
-                // Skip deleted / closed (CANCELLED) exams so they drop out of "Alınanlar".
+                // Skip deleted / closed (CANCELLED) / site-unpublished exams so
+                // they drop out of "Alınanlar". Purchases only exist for site
+                // marketplace exams (price is admin-set), so when the admin
+                // pulls one off the site ("Saytdan çıxar") it must disappear
+                // here too.
                 return ex != null && !ex.isDeleted() && ex.getStatus() != ExamStatus.CANCELLED
+                        && ex.isSitePublished()
                         && examService.hasUnusedPurchase(ex, user);
             })
             .collect(Collectors.toMap(

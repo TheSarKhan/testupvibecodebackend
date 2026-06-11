@@ -335,8 +335,9 @@ public class ExamService {
                 .map(PaymentOrder::getExam)
                 .filter(Objects::nonNull)
                 .distinct()
-                // Drop deleted / closed (CANCELLED) exams from "Alınanlar".
-                .filter(e -> !e.isDeleted() && e.getStatus() != ExamStatus.CANCELLED)
+                // Drop deleted / closed (CANCELLED) / site-unpublished exams
+                // from "Alınanlar" (purchases only exist for site exams).
+                .filter(e -> !e.isDeleted() && e.getStatus() != ExamStatus.CANCELLED && e.isSitePublished())
                 .filter(e -> hasUnusedPurchase(e, user))
                 .map(Exam::getShareLink)
                 .collect(Collectors.toList());
