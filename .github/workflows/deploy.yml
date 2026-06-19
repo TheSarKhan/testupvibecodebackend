@@ -19,7 +19,12 @@ jobs:
           script: |
             set -e
             cd /root/testupBack
-            git pull origin main 2>&1
+            # fetch + hard reset instead of `git pull`: a pull aborts if the
+            # server working tree has local changes, breaking the deploy. The
+            # deploy target is never hand-edited, so forcing it to match main is
+            # safe and keeps deploys from getting stuck.
+            git fetch origin main 2>&1
+            git reset --hard origin/main 2>&1
             systemctl restart startup 2>&1
             systemctl status startup --no-pager 2>&1
             journalctl -u startup -n 30 --no-pager 2>&1
