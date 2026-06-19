@@ -734,20 +734,26 @@ public class CollaborativeExamService {
         if (!exam.isCollaborative()) {
             throw new BadRequestException("Bu birgə imtahan deyil");
         }
-        // Don't auto-publish a half-reviewed exam — every collaborator must be APPROVED
-        // before students see the exam. (Admin can still publish even with zero
-        // collaborators if they want to use it as their own; we only block on partial
-        // SUBMITTED / REJECTED state.)
+        // Publish on the strength of what has been ACCEPTED, not on every collaborator
+        // being fully APPROVED. Only a SUBMITTED collaborator blocks — those questions are
+        // still in the review queue and the admin hasn't decided on them yet, so we surface
+        // who to review. A REJECTED collaborator no longer blocks: their approved questions
+        // are already promoted into the parent exam and the rejected ones are simply left
+        // out, so the exam can go live with the accepted subset while the teacher keeps
+        // fixing the rest (their later re-approvals flow into the published exam). (BUG:
+        // birgə imtahan — bütün müəllimlərin təsdiqi tələb olunurdu.)
         List<ExamCollaborator> collabs = collaboratorRepository.findByCollaborativeExamId(examId);
         for (ExamCollaborator c : collabs) {
             if (c.getStatus() == CollaboratorStatus.SUBMITTED) {
                 throw new BadRequestException(
                         c.getTeacher().getFullName() + " müəllimin sualları hələ yoxlanmayıb");
             }
-            if (c.getStatus() == CollaboratorStatus.REJECTED) {
-                throw new BadRequestException(
-                        c.getTeacher().getFullName() + " müəllimin sualları rədd edilib — düzəltməyi gözləyir");
-            }
+        }
+
+        // The parent exam holds exactly the promoted (approved) questions, so an empty
+        // parent means nothing has been accepted yet — there is nothing to show students.
+        if (exam.getQuestions() == null || exam.getQuestions().isEmpty()) {
+            throw new BadRequestException("Yayımlamaq üçün ən azı bir təsdiqlənmiş sual olmalıdır");
         }
 
         exam.setStatus(ExamStatus.PUBLISHED);
