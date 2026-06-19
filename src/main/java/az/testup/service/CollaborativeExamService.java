@@ -762,6 +762,43 @@ public class CollaborativeExamService {
         return toExamResponse(saved, collabs);
     }
 
+    /**
+     * Delete a collaborative exam (admin-only). Soft-deletes the parent exam so it leaves
+     * the admin list and the student catalog (mirrors ExamService.deleteExam's setDeleted
+     * flag), then tears down the per-teacher scaffolding: every collaborator's draft exam is
+     * soft-deleted too (so it disappears from that teacher's exam list) and the collaborator
+     * rows are removed — otherwise teachers would keep seeing ghost "my-assignments" pointing
+     * at a deleted exam.
+     */
+    @Transactional
+    public void deleteCollaborativeExam(Long examId) {
+        Exam exam = examRepository.findById(examId)
+                .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
+        if (!exam.isCollaborative()) {
+            throw new BadRequestException("Bu birgə imtahan deyil");
+        }
+
+        String examTitle = exam.getTitle();
+        List<ExamCollaborator> collabs = collaboratorRepository.findByCollaborativeExamId(examId);
+        for (ExamCollaborator c : collabs) {
+            Exam draft = c.getDraftExam();
+            // Break the FK from collaborator → draft before removing the row, then soft-delete
+            // the draft so the section teacher's own exam list no longer surfaces it.
+            c.setDraftExam(null);
+            if (draft != null) {
+                draft.setDeleted(true);
+                examRepository.save(draft);
+            }
+        }
+        collaboratorRepository.deleteAll(collabs);
+
+        exam.setDeleted(true);
+        examRepository.save(exam);
+
+        auditLogService.logCurrent(AuditAction.EXAM_DELETED, "COLLABORATIVE_EXAM", examTitle,
+                "Birgə imtahan silindi (müəllim sayı: " + collabs.size() + ")");
+    }
+
     /** Unpublish: hide from the public catalog and roll back to DRAFT so the admin can edit. */
     @Transactional
     public CollaborativeExamResponse unpublishCollaborativeExam(Long examId) {

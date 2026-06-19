@@ -67,7 +67,9 @@ public class SubmissionController {
         try {
             submissionService.saveAnswer(id, request, student);
         } catch (ObjectOptimisticLockingFailureException ignored) {
-            // submitExam ran concurrently and deleted the answer row — auto-save is irrelevant
+            // submitExam ran concurrently and deleted the answer row — the
+            // atomic upsert may briefly race a concurrent submit; auto-save is
+            // irrelevant once the exam is being finalised, so swallow it.
         }
         return ResponseEntity.ok().build();
     }

@@ -28,11 +28,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -63,13 +59,6 @@ public class SubmissionService {
     private final AuditLogService auditLogService;
     private final ExamAccessCodeRepository examAccessCodeRepository;
     private final ExamCollaboratorRepository examCollaboratorRepository;
-
-    // Self-reference so saveAnswer can call insertNewAnswerInNewTx through the
-    // Spring proxy (REQUIRES_NEW only applies across a proxy boundary). @Lazy
-    // breaks the construction-time self-dependency cycle.
-    @Lazy
-    @Autowired
-    private SubmissionService self;
 
     /**
      * For a collaborative exam, returns the section teacher's subjects if {@code user} is a
@@ -180,11 +169,24 @@ public class SubmissionService {
             throw new BadRequestException("Bu imtahan artıq təhvil verilib");
         }
 
-        // Clear existing answers to avoid duplicates
+        // Wipe any existing answers (in-progress auto-saves) up front, in their
+        // own flush, so the re-insert below can never collide with a leftover row
+        // on uq_answers_submission_question. Bulk DELETE + clear keeps the
+        // in-memory collection and the DB in sync.
+        answerRepository.deleteBySubmissionId(submission.getId());
         submission.getAnswers().clear();
         submissionRepository.saveAndFlush(submission);
 
+        // Dedupe by questionId: a payload that lists the same question twice
+        // (e.g. a question reachable both standalone and via a passage) would
+        // otherwise insert two rows for one (submission, question) and trip the
+        // unique constraint → 409. Keep the last occurrence.
+        java.util.Map<Long, AnswerRequest> byQuestion = new java.util.LinkedHashMap<>();
         for (AnswerRequest answerReq : request.getAnswers()) {
+            if (answerReq.getQuestionId() != null) byQuestion.put(answerReq.getQuestionId(), answerReq);
+        }
+
+        for (AnswerRequest answerReq : byQuestion.values()) {
             Question question = questionRepository.findById(answerReq.getQuestionId())
                     .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı: " + answerReq.getQuestionId()));
 
@@ -217,60 +219,25 @@ public class SubmissionService {
             throw new BadRequestException("İmtahan artıq bitib");
         }
 
-        // DB lookup beats the in-memory `submission.getAnswers()` walk: two
-        // concurrent save requests would each see an empty snapshot of the
-        // collection and both INSERT a fresh row. The unique constraint
-        // added in V23 still backstops this.
-        Optional<Answer> existing = answerRepository
-                .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId());
-
-        if (existing.isPresent()) {
-            Answer answer = existing.get();
-            updateAnswerData(answer, request);
-            answerRepository.save(answer);
-            return;
-        }
-
-        // No row yet — create it in an isolated (REQUIRES_NEW) transaction. If a
-        // concurrent request wins the race, the unique constraint trips there
-        // and only that inner transaction rolls back; this session stays clean.
-        // Previously the failing INSERT happened in THIS transaction, leaving a
-        // transient null-id Answer behind, and the recovery query's auto-flush
-        // blew up with "null id in Answer entry / don't flush after an
-        // exception" (Hibernate AssertionFailure) → 500.
-        try {
-            self.insertNewAnswerInNewTx(submission.getId(), request);
-        } catch (DataIntegrityViolationException dup) {
-            // Lost the race — the winning row now exists; update it so the
-            // student's content still lands instead of bubbling a 500.
-            Answer winner = answerRepository
-                    .findBySubmissionIdAndQuestionId(submission.getId(), request.getQuestionId())
-                    .orElseThrow(() -> dup);
-            updateAnswerData(winner, request);
-            answerRepository.save(winner);
-        }
-    }
-
-    /**
-     * Insert a brand-new Answer in its own transaction so a unique-constraint
-     * violation (concurrent save of the same question) rolls back only here and
-     * never poisons the caller's persistence context. saveAndFlush forces the
-     * constraint to be checked inside this transaction so the caller can catch
-     * the violation and recover. Must be invoked through the Spring proxy
-     * (see {@code self}) for REQUIRES_NEW to take effect.
-     */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void insertNewAnswerInNewTx(Long submissionId, AnswerRequest request) {
-        Submission submission = submissionRepository.findById(submissionId)
-                .orElseThrow(() -> new ResourceNotFoundException("Cəhd tapılmadı"));
         Question question = questionRepository.findById(request.getQuestionId())
                 .orElseThrow(() -> new ResourceNotFoundException("Sual tapılmadı"));
-        Answer answer = Answer.builder()
-                .submission(submission)
-                .question(question)
-                .build();
-        updateAnswerData(answer, request);
-        answerRepository.saveAndFlush(answer);
+
+        // Atomic INSERT … ON CONFLICT DO UPDATE on (submission, question). This
+        // replaces the old find-or-(insert-in-new-tx)-and-recover dance, which
+        // depended on isolation level + the Spring proxy and still surfaced 500s
+        // when a failing INSERT poisoned the Hibernate session under concurrent
+        // auto-saves of the same question. We build the per-type column values on
+        // a throwaway Answer, then hand them to a single guarded statement.
+        Answer staged = Answer.builder().question(question).build();
+        updateAnswerData(staged, request);
+        answerRepository.upsertAnswer(
+                submission.getId(),
+                question.getId(),
+                staged.getAnswerText(),
+                staged.getSelectedOptionId(),
+                staged.getMatchingAnswerJson(),
+                staged.getSelectedOptionIdsJson(),
+                staged.getAnswerImage());
     }
 
     /** Grades all answers (creating blank entries for unanswered questions) and snapshots each question. */

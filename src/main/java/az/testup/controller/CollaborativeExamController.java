@@ -121,6 +121,12 @@ public class CollaborativeExamController {
         return ResponseEntity.ok(collaborativeExamService.unpublishCollaborativeExam(id));
     }
 
+    @DeleteMapping("/api/admin/collaborative-exams/{id}")
+    public ResponseEntity<Void> deleteCollaborativeExam(@PathVariable Long id) {
+        collaborativeExamService.deleteCollaborativeExam(id);
+        return ResponseEntity.noContent().build();
+    }
+
     // ─── Teacher endpoints ────────────────────────────────────────────────────
 
     @GetMapping("/api/collaborative-exams/my-assignments")

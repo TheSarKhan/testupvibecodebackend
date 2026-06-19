@@ -158,6 +158,10 @@ public class ExamService {
         // every section that defines ranges.
         applyTemplatePointGroups(exam, true);
 
+        if (exam.getStatus() == ExamStatus.PUBLISHED) {
+            validateForPublish(exam);
+        }
+
         Exam savedExam = examRepository.save(exam);
 
         // Record usage
@@ -508,6 +512,10 @@ public class ExamService {
         // teacher's per-question points (#XXX).
         applyTemplatePointGroups(exam, false);
 
+        if (exam.getStatus() == ExamStatus.PUBLISHED) {
+            validateForPublish(exam);
+        }
+
         Exam savedExam = examRepository.save(exam);
         auditLogService.log(AuditAction.EXAM_UPDATED, teacher.getEmail(), teacher.getFullName(), "EXAM", savedExam.getTitle(), "Status: " + savedExam.getStatus());
         return mapToResponse(savedExam);
@@ -776,6 +784,9 @@ public class ExamService {
             throw new BadRequestException("Qaralama imtahanını birbaşa aça bilməzsiniz. Əvvəlcə yayımlayın.");
         }
         ExamStatus newStatus = exam.getStatus() == ExamStatus.PUBLISHED ? ExamStatus.CANCELLED : ExamStatus.PUBLISHED;
+        if (newStatus == ExamStatus.PUBLISHED) {
+            validateForPublish(exam);
+        }
         exam.setStatus(newStatus);
         Exam saved = examRepository.save(exam);
         auditLogService.log(AuditAction.EXAM_STATUS_CHANGED, teacher.getEmail(), teacher.getFullName(), "EXAM", saved.getTitle(), "Yeni status: " + newStatus);
@@ -966,6 +977,77 @@ public class ExamService {
             Question q = qs.get(i);
             if (q.getOrderIndex() == null || q.getOrderIndex() != i) q.setOrderIndex(i);
         }
+    }
+
+    /**
+     * Enforce that an exam carries complete question content before it can be
+     * PUBLISHED. The bean-validation @NotBlank on QuestionRequest/OptionRequest
+     * is intentionally not wired (nested lists are not @Valid) because draft
+     * saves legitimately hold half-finished questions — so the publish gate
+     * lives here instead. Drafts skip this entirely.
+     *
+     * A question is considered complete when it has either text or an image,
+     * and its type-specific answer is present:
+     *  • MCQ / TRUE_FALSE / MULTI_SELECT — ≥2 filled options and ≥1 marked correct
+     *  • OPEN_AUTO                       — a reference correct answer
+     *  • FILL_IN_THE_BLANK               — at least one non-empty blank answer
+     *  • MATCHING                        — at least one fully-paired connection
+     *  • OPEN_MANUAL                     — content only (graded by hand)
+     */
+    private void validateForPublish(Exam exam) {
+        List<Question> questions = exam.getQuestions();
+        if (questions == null || questions.isEmpty()) {
+            throw new BadRequestException("İmtahanı yayımlamaq üçün ən azı bir sual əlavə edilməlidir");
+        }
+        int n = 0;
+        for (Question q : questions) {
+            n++;
+            String label = "Sual " + n;
+            if (isBlank(q.getContent()) && isBlank(q.getAttachedImage())) {
+                throw new BadRequestException(label + ": sual mətni və ya şəkli daxil edilməlidir");
+            }
+            az.testup.enums.QuestionType type = q.getQuestionType();
+            if (type == az.testup.enums.QuestionType.MCQ
+                    || type == az.testup.enums.QuestionType.TRUE_FALSE
+                    || type == az.testup.enums.QuestionType.MULTI_SELECT) {
+                List<Option> opts = q.getOptions();
+                if (opts == null || opts.size() < 2) {
+                    throw new BadRequestException(label + ": ən azı iki cavab variantı olmalıdır");
+                }
+                boolean anyCorrect = false;
+                for (Option o : opts) {
+                    if (isBlank(o.getContent()) && isBlank(o.getAttachedImage())) {
+                        throw new BadRequestException(label + ": bütün cavab variantları doldurulmalıdır");
+                    }
+                    if (Boolean.TRUE.equals(o.getIsCorrect())) anyCorrect = true;
+                }
+                if (!anyCorrect) {
+                    throw new BadRequestException(label + ": düzgün cavab variantı seçilməlidir");
+                }
+            } else if (type == az.testup.enums.QuestionType.OPEN_AUTO) {
+                if (isBlank(q.getCorrectAnswer())) {
+                    throw new BadRequestException(label + ": düzgün cavab daxil edilməlidir");
+                }
+            } else if (type == az.testup.enums.QuestionType.FILL_IN_THE_BLANK) {
+                // correctAnswer is a JSON array of blank answers, e.g. ["x","y"].
+                // Strip the structural characters; anything left means a real answer.
+                String stripped = q.getCorrectAnswer() == null ? ""
+                        : q.getCorrectAnswer().replaceAll("[\\[\\]\",\\s]", "");
+                if (stripped.isEmpty()) {
+                    throw new BadRequestException(label + ": boşluqların düzgün cavabları daxil edilməlidir");
+                }
+            } else if (type == az.testup.enums.QuestionType.MATCHING) {
+                boolean hasPair = q.getMatchingPairs() != null && q.getMatchingPairs().stream()
+                        .anyMatch(p -> !isBlank(p.getLeftItem()) && !isBlank(p.getRightItem()));
+                if (!hasPair) {
+                    throw new BadRequestException(label + ": ən azı bir uyğunlaşdırma əlaqəsi qurulmalıdır");
+                }
+            }
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
     }
 
     /**
