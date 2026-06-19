@@ -9,4 +9,7 @@ public interface BankSubjectRepository extends JpaRepository<BankSubject, Long> 
     List<BankSubject> findByOwnerIdOrderByCreatedAtDesc(Long ownerId);
     List<BankSubject> findByIsGlobalTrueOrderByCreatedAtDesc();
     boolean existsByNameAndOwnerId(String name, Long ownerId);
+
+    // Owned-content guard for user deletion.
+    long countByOwnerId(Long ownerId);
 }

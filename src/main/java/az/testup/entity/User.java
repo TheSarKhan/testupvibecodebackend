@@ -45,6 +45,14 @@ public class User {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    // Soft-delete marker. Set when an account that authored content (exams,
+    // templates, banks) is "deleted": the row is kept (so student results on
+    // the teacher's exams survive) but anonymized, disabled, and hidden from
+    // the admin list. Content-free accounts are hard-deleted instead.
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean deleted = false;
+
     @Column(updatable = false)
     private LocalDateTime createdAt;
 

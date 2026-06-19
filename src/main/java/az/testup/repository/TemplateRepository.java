@@ -9,4 +9,7 @@ import java.util.Optional;
 public interface TemplateRepository extends JpaRepository<Template, Long> {
     List<Template> findAllByOrderByCreatedAtDesc();
     Optional<Template> findByTitle(String title);
+
+    // Owned-content guard for user deletion.
+    long countByCreatedById(Long userId);
 }

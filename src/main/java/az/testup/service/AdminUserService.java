@@ -9,9 +9,16 @@ import az.testup.enums.AuditAction;
 import az.testup.enums.Role;
 import az.testup.exception.BadRequestException;
 import az.testup.exception.ResourceNotFoundException;
+import az.testup.repository.BankSubjectRepository;
+import az.testup.repository.BankTopicRepository;
+import az.testup.repository.ExamCollaboratorRepository;
 import az.testup.repository.ExamPurchaseRepository;
 import az.testup.repository.ExamRepository;
+import az.testup.repository.NotificationRepository;
+import az.testup.repository.PaymentOrderRepository;
 import az.testup.repository.StudentSavedExamRepository;
+import az.testup.repository.SubmissionRepository;
+import az.testup.repository.TemplateRepository;
 import az.testup.repository.UserRepository;
 import az.testup.repository.UserSubscriptionRepository;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +40,13 @@ public class AdminUserService {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final ExamPurchaseRepository examPurchaseRepository;
     private final StudentSavedExamRepository studentSavedExamRepository;
+    private final SubmissionRepository submissionRepository;
+    private final NotificationRepository notificationRepository;
+    private final PaymentOrderRepository paymentOrderRepository;
+    private final ExamCollaboratorRepository examCollaboratorRepository;
+    private final TemplateRepository templateRepository;
+    private final BankSubjectRepository bankSubjectRepository;
+    private final BankTopicRepository bankTopicRepository;
     private final AuditLogService auditLogService;
 
     public Page<AdminUserResponse> getUsers(String search, Role role, Pageable pageable) {
@@ -70,12 +84,11 @@ public class AdminUserService {
 
     @Transactional
     public void deleteUser(Long userId) {
-        if (!userRepository.existsById(userId)) {
-            throw new ResourceNotFoundException("İstifadəçi tapılmadı");
-        }
-        auditLogService.log(AuditAction.USER_DELETED, "admin", "Admin", "USER", userId.toString(), null);
-        userSubscriptionRepository.deleteByUserId(userId);
-        userRepository.deleteById(userId);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("İstifadəçi tapılmadı"));
+        String email = user.getEmail();
+        removeOrAnonymize(user);
+        auditLogService.log(AuditAction.USER_DELETED, "admin", "Admin", "USER", email, null);
     }
 
     @Transactional
@@ -83,15 +96,73 @@ public class AdminUserService {
         if (userIds == null || userIds.isEmpty()) return 0;
         int count = 0;
         for (Long id : userIds) {
-            if (userRepository.existsById(id)) {
-                userSubscriptionRepository.deleteByUserId(id);
-                userRepository.deleteById(id);
-                count++;
-            }
+            User user = userRepository.findById(id).orElse(null);
+            if (user == null) continue;
+            removeOrAnonymize(user);
+            count++;
         }
         auditLogService.logCurrent(AuditAction.USER_DELETED, "USER", "BULK",
                 "Bulk delete: " + count + " istifadəçi silindi");
         return count;
+    }
+
+    /**
+     * Deletes a user, choosing the right strategy by whether they AUTHORED content:
+     *
+     * - No authored content → hard delete. The row is removed after clearing the user's
+     *   own consumer data (submissions, purchases, saved exams, notifications, payment
+     *   orders, collaborator invitations, subscriptions). The previous version only
+     *   cleared subscriptions, so any user who had ever submitted / bought / saved an
+     *   exam failed with the opaque 409 "Verilənlər bazası xətası".
+     *
+     * - Authored content (exams, templates, question banks) → SOFT delete. We must keep
+     *   the row, because hard-deleting it would force a cascade that wipes every student's
+     *   submission (their result) on the teacher's exams. Instead the account is
+     *   anonymized + disabled and flagged deleted, so it disappears from the admin list
+     *   and can't log in, while the exams and all student results stay fully intact in the
+     *   students' own accounts.
+     */
+    private void removeOrAnonymize(User user) {
+        Long userId = user.getId();
+        boolean authoredContent =
+                examRepository.countByTeacherId(userId)
+              + templateRepository.countByCreatedById(userId)
+              + bankSubjectRepository.countByOwnerId(userId)
+              + bankTopicRepository.countByOwnerId(userId) > 0;
+
+        if (authoredContent) {
+            user.setDeleted(true);
+            user.setEnabled(false);
+            user.setFullName("Silinmiş istifadəçi");
+            // Free the original email (so the person can re-register) and guarantee the
+            // unique constraint can't collide; userId makes it unique.
+            user.setEmail("deleted_" + userId + "@silinmis.local");
+            user.setGoogleSub(null);
+            user.setPassword(null);
+            user.setPhoneNumber(null);
+            user.setProfilePicture(null);
+            userRepository.save(user);
+            return;
+        }
+
+        purgeConsumerData(userId);
+        userRepository.delete(user);
+    }
+
+    /**
+     * Clears a user's own consumer-side data so their row can be hard-deleted without
+     * tripping a foreign-key constraint. Uses load + deleteAll (not a bulk JPQL delete)
+     * so JPA cascades fire — e.g. Submission → answers (orphanRemoval), which a bulk
+     * delete would orphan.
+     */
+    private void purgeConsumerData(Long userId) {
+        submissionRepository.deleteAll(submissionRepository.findByStudentId(userId));
+        examPurchaseRepository.deleteAll(examPurchaseRepository.findByUserId(userId));
+        studentSavedExamRepository.deleteAll(studentSavedExamRepository.findByStudentIdOrderBySavedAtDesc(userId));
+        notificationRepository.deleteAll(notificationRepository.findByUserIdOrderByCreatedAtDesc(userId));
+        paymentOrderRepository.deleteAll(paymentOrderRepository.findByUserId(userId));
+        examCollaboratorRepository.deleteAll(examCollaboratorRepository.findByTeacherId(userId));
+        userSubscriptionRepository.deleteByUserId(userId);
     }
 
     @Transactional

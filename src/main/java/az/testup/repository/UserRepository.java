@@ -23,7 +23,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query(value = "SELECT TO_CHAR(created_at, 'YYYY-MM') as month, COUNT(*) as count FROM users WHERE created_at >= :since GROUP BY month ORDER BY month", nativeQuery = true)
     List<Object[]> countRegistrationsByMonth(@Param("since") LocalDateTime since);
 
-    @Query("SELECT u FROM User u WHERE " +
+    @Query("SELECT u FROM User u WHERE u.deleted = false AND " +
            "(:role IS NULL OR u.role = :role) AND " +
            "(:search IS NULL OR LOWER(u.fullName) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')) OR LOWER(u.email) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')))")
     Page<User> searchUsers(@Param("search") String search, @Param("role") Role role, Pageable pageable);

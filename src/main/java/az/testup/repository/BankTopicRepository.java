@@ -11,4 +11,7 @@ public interface BankTopicRepository extends JpaRepository<BankTopic, Long> {
     List<BankTopic> findBySubjectIdAndOwnerIdOrderByLastUsedAtDesc(Long subjectId, Long ownerId);
 
     Optional<BankTopic> findBySubjectIdAndOwnerIdAndName(Long subjectId, Long ownerId, String name);
+
+    // Owned-content guard for user deletion.
+    long countByOwnerId(Long ownerId);
 }

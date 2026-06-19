@@ -41,6 +41,9 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long
 
     long countByUserIdAndExamIdAndStatus(Long userId, Long examId, String status);
 
+    // All of a user's payment orders — used to purge their data on account deletion.
+    List<PaymentOrder> findByUserId(Long userId);
+
     @Query("SELECT o FROM PaymentOrder o JOIN FETCH o.exam e WHERE o.user.id = :userId AND o.exam IS NOT NULL AND o.status = :status AND e.deleted = false")
     List<PaymentOrder> findPaidExamOrders(@Param("userId") Long userId, @Param("status") String status);
 
