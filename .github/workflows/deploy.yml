@@ -29,8 +29,15 @@ jobs:
             systemctl status startup --no-pager 2>&1
             journalctl -u startup -n 30 --no-pager 2>&1
 
+      # Notifications are best-effort: continue-on-error so a Telegram hiccup
+      # (e.g. a commit message that breaks markdown parsing) can never turn an
+      # otherwise-successful deploy red. The SSH step above is the source of truth.
+      # We send the commit SHA, not the raw commit message — arbitrary commit
+      # text can contain backticks / `_` / `<...>` that make Telegram's markdown
+      # parser return 400 and fail the step.
       - name: Notify Telegram (Success)
         if: success()
+        continue-on-error: true
         uses: appleboy/telegram-action@v1.0.0
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -42,11 +49,12 @@ jobs:
             📦 *Repo:* ${{ github.repository }}
             🌿 *Branch:* ${{ github.ref_name }}
             👤 *By:* ${{ github.actor }}
-            💬 *Commit:* ${{ github.event.head_commit.message }}
+            💬 *Commit:* ${{ github.sha }}
             🔗 [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
       - name: Notify Telegram (Failure)
         if: failure()
+        continue-on-error: true
         uses: appleboy/telegram-action@v1.0.0
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -58,5 +66,5 @@ jobs:
             📦 *Repo:* ${{ github.repository }}
             🌿 *Branch:* ${{ github.ref_name }}
             👤 *By:* ${{ github.actor }}
-            💬 *Commit:* ${{ github.event.head_commit.message }}
+            💬 *Commit:* ${{ github.sha }}
             🔗 [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
