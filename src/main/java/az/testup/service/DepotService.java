@@ -57,7 +57,11 @@ public class DepotService {
                 // are never site-published and stay untouched.
                 .filter(s -> {
                     Exam e = s.getExam();
-                    if (e == null || e.isDeleted() || e.getStatus() == ExamStatus.CANCELLED) return false;
+                    if (e == null || e.isDeleted()) return false;
+                    // Only keep exams a student can still actually open. A closed
+                    // exam — CANCELLED, or moved to a terminal COMPLETED/ARCHIVED
+                    // status — shouldn't linger in "Saxlananlar" as a dead bookmark.
+                    if (e.getStatus() != ExamStatus.PUBLISHED && e.getStatus() != ExamStatus.ACTIVE) return false;
                     boolean isPaid = e.getPrice() != null
                             && e.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0;
                     return !isPaid || e.isSitePublished();

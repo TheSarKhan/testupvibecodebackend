@@ -78,7 +78,18 @@ public class SubmissionService {
         Exam exam = examRepository.findByShareLinkAndDeletedFalse(shareLink)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
-        if (exam.getStatus() == ExamStatus.CANCELLED || exam.getStatus() == ExamStatus.DRAFT) {
+        // Only a currently-runnable exam may be started. Previously this only
+        // blocked CANCELLED/DRAFT, so an exam the admin closed in another way —
+        // pulled off the site ("Saytdan çıxar" → sitePublished=false) or moved
+        // to a terminal status (COMPLETED/ARCHIVED) — could still be launched
+        // from a saved/purchased card even though it's no longer active.
+        boolean runnable = exam.getStatus() == ExamStatus.PUBLISHED
+                || exam.getStatus() == ExamStatus.ACTIVE;
+        // Paid exams are site-marketplace exams; once unpublished they're closed.
+        // Free/teacher exams are never site-published, so don't gate them on it.
+        boolean isPaid = exam.getPrice() != null
+                && exam.getPrice().compareTo(java.math.BigDecimal.ZERO) > 0;
+        if (!runnable || (isPaid && !exam.isSitePublished())) {
             throw new BadRequestException("Bu imtahan hazırda bağlıdır. Müəllimlə əlaqə saxlayın.");
         }
 
