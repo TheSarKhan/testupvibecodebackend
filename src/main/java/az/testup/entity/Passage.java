@@ -48,4 +48,12 @@ public class Passage {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;
+
+    /**
+     * Birgə imtahan: draft passage-in köçürüldüyü parent-imtahan passage id-si.
+     * Tək-tək təsdiqdə (approveQuestion) dublikat passage yaranmaması üçün — eyni
+     * draft passage-ə aid sonrakı suallar bu id ilə həmin parent passage-i tapır.
+     */
+    @Column(name = "parent_copy_id")
+    private Long parentCopyId;
 }

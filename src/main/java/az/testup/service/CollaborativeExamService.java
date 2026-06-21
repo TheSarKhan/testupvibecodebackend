@@ -636,10 +636,18 @@ public class CollaborativeExamService {
         if (draftPassageId != null && passageMap.containsKey(draftPassageId)) {
             return passageMap.get(draftPassageId);
         }
+        Passage parentPassage = null;
+        // Davamlı dedup (COL-1): bu draft passage əvvəl parent-ə köçürülübsə (tək-tək
+        // təsdiqdə fərqli passageMap-larla belə), həmin parent passage-i təkrar istifadə et.
+        if (draftPassage.getParentCopyId() != null) {
+            parentPassage = passageRepository.findById(draftPassage.getParentCopyId())
+                    .filter(p -> p.getExam() != null && p.getExam().getId() != null
+                            && p.getExam().getId().equals(parentExam.getId()))
+                    .orElse(null);
+        }
         // Re-approval: reuse the passage already attached to the existing parent question
         // (when it belongs to this parent exam) instead of creating a duplicate.
-        Passage parentPassage = null;
-        if (existingTarget != null && existingTarget.getPassage() != null
+        if (parentPassage == null && existingTarget != null && existingTarget.getPassage() != null
                 && existingTarget.getPassage().getExam() != null
                 && existingTarget.getPassage().getExam().getId() != null
                 && existingTarget.getPassage().getExam().getId().equals(parentExam.getId())) {
@@ -660,6 +668,13 @@ public class CollaborativeExamService {
         parentPassage.setSubjectGroup(draftPassage.getSubjectGroup());
         passageRepository.save(parentPassage);
         if (draftPassageId != null) passageMap.put(draftPassageId, parentPassage);
+        // Draft passage-də parent id-ni yadda saxla ki, sonrakı tək-tək təsdiqlər
+        // (yeni passageMap ilə) həmin parent passage-i tapıb dublikat yaratmasın.
+        if (parentPassage.getId() != null
+                && !parentPassage.getId().equals(draftPassage.getParentCopyId())) {
+            draftPassage.setParentCopyId(parentPassage.getId());
+            passageRepository.save(draftPassage);
+        }
         return parentPassage;
     }
 
