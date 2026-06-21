@@ -16,4 +16,8 @@ public class AuthResponse {
     private String fullName;
     private String email;
     private boolean giftPlanAssigned;
+    // When true, the caller must confirm an emailed OTP before tokens are issued.
+    // accessToken/refreshToken are null in this case and the client should route
+    // to the verification screen carrying `email`.
+    private boolean emailVerificationRequired;
 }

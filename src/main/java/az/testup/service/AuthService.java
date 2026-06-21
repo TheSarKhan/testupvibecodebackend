@@ -30,7 +30,13 @@ import java.util.concurrent.TimeUnit;
 public class AuthService {
 
     private static final String RESET_OTP_PREFIX = "pwd_reset:";
+    private static final String VERIFY_OTP_PREFIX = "email_verify:";
+    private static final String VERIFY_THROTTLE_PREFIX = "email_verify_cooldown:";
+    private static final String EMAIL_CHANGE_PENDING_PREFIX = "email_change_pending:";
+    private static final String EMAIL_CHANGE_OTP_PREFIX = "email_change_otp:";
+    private static final String EMAIL_CHANGE_THROTTLE_PREFIX = "email_change_cooldown:";
     private static final long OTP_TTL_MINUTES = 15;
+    private static final long RESEND_COOLDOWN_SECONDS = 60;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -59,6 +65,9 @@ public class AuthService {
                 .password(passwordEncoder.encode(request.getPassword()))
                 .phoneNumber(request.getPhoneNumber())
                 .role(role)
+                // Public registration is unverified until the emailed OTP is
+                // confirmed; login stays blocked until then.
+                .emailVerified(false)
                 .build();
 
         user = userRepository.save(user);
@@ -92,19 +101,100 @@ public class AuthService {
             }
         }
 
+        auditLogService.log(AuditAction.USER_REGISTERED, user.getEmail(), user.getFullName(), "AUTH", user.getEmail(), null);
+
+        // No tokens yet — the account is created but unverified. Send the OTP and
+        // tell the client to route to the verification screen. Tokens are issued
+        // by verifyEmail() once the code is confirmed.
+        sendVerificationOtp(user);
+
+        return AuthResponse.builder()
+                .role(user.getRole().name())
+                .fullName(user.getFullName())
+                .email(user.getEmail())
+                .giftPlanAssigned(giftPlanAssigned)
+                .emailVerificationRequired(true)
+                .build();
+    }
+
+    /**
+     * Generates a 6-digit verification OTP, stores it in Redis for 15 minutes,
+     * and emails it to the user. Respects a short resend cooldown so a button
+     * masher (or a register→login bounce) can't fan out a burst of mails.
+     */
+    private void sendVerificationOtp(User user) {
+        String email = user.getEmail();
+        String otp = String.format("%06d", new Random().nextInt(1_000_000));
+        redisTemplate.opsForValue().set(VERIFY_OTP_PREFIX + email, otp, OTP_TTL_MINUTES, TimeUnit.MINUTES);
+        redisTemplate.opsForValue().set(VERIFY_THROTTLE_PREFIX + email, "1", RESEND_COOLDOWN_SECONDS, TimeUnit.SECONDS);
+
+        String body = "testup.az hesabınızı təsdiqləmək üçün aşağıdakı kodu daxil edin:"
+                + "<div style='font-size:36px;font-weight:bold;letter-spacing:10px;text-align:center;"
+                + "color:#4f46e5;padding:24px 0;'>" + otp + "</div>"
+                + "Bu kod <strong>" + OTP_TTL_MINUTES + " dəqiqə</strong> ərzində etibarlıdır.<br><br>"
+                + "Əgər bu qeydiyyatı siz etməmisinizsə, bu mesajı nəzərə almayın.";
+        emailService.sendGmail(email, user.getFullName(),
+                "E-poçt Təsdiqi — testup.az",
+                emailService.buildHtmlRaw("E-poçt Təsdiq Kodu", body),
+                null);
+
+        auditLogService.log(AuditAction.EMAIL_VERIFICATION_SENT, user.getEmail(), user.getFullName(),
+                "AUTH", user.getEmail(), "Təsdiq kodu göndərildi");
+    }
+
+    /**
+     * Confirms the email-verification OTP. On success marks the account verified,
+     * clears the code, and issues tokens (auto-login) so the user lands signed in.
+     */
+    public AuthResponse verifyEmail(String email, String otp) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BadRequestException("İstifadəçi tapılmadı"));
+        if (user.isEmailVerified()) {
+            // Already verified (e.g. double-submit) — just log them in.
+            return issueTokens(user);
+        }
+        String stored = redisTemplate.opsForValue().get(VERIFY_OTP_PREFIX + email);
+        if (stored == null) {
+            throw new BadRequestException("Kodun müddəti bitib və ya etibarsızdır");
+        }
+        if (!stored.equals(otp)) {
+            throw new BadRequestException("Kod yanlışdır");
+        }
+        user.setEmailVerified(true);
+        userRepository.save(user);
+        redisTemplate.delete(VERIFY_OTP_PREFIX + email);
+        redisTemplate.delete(VERIFY_THROTTLE_PREFIX + email);
+        auditLogService.log(AuditAction.EMAIL_VERIFIED, user.getEmail(), user.getFullName(),
+                "AUTH", user.getEmail(), "E-poçt təsdiqləndi");
+        return issueTokens(user);
+    }
+
+    /**
+     * Re-sends the verification OTP for an unverified account. Silent for unknown
+     * or already-verified emails (no account enumeration). Throttled so resends
+     * can't be spammed.
+     */
+    public void resendVerification(String email) {
+        Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isEmpty() || userOpt.get().isEmailVerified()) {
+            return;
+        }
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(VERIFY_THROTTLE_PREFIX + email))) {
+            throw new BadRequestException("Yeni kod istəmədən əvvəl bir az gözləyin");
+        }
+        sendVerificationOtp(userOpt.get());
+    }
+
+    private AuthResponse issueTokens(User user) {
         String accessToken = jwtTokenProvider.generateAccessToken(
                 user.getId(), user.getEmail(), user.getRole().name(), user.getFullName());
         String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
-
-        auditLogService.log(AuditAction.USER_REGISTERED, user.getEmail(), user.getFullName(), "AUTH", user.getEmail(), null);
-
         return AuthResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .role(user.getRole().name())
                 .fullName(user.getFullName())
                 .email(user.getEmail())
-                .giftPlanAssigned(giftPlanAssigned)
                 .build();
     }
 
@@ -124,19 +214,25 @@ public class AuthService {
             throw new UnauthorizedException("Hesabınız deaktiv edilmişdir. Administratorla əlaqə saxlayın.");
         }
 
-        String accessToken = jwtTokenProvider.generateAccessToken(
-                user.getId(), user.getEmail(), user.getRole().name(), user.getFullName());
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
+        // Email must be confirmed before login. Send a fresh code (cooldown-aware:
+        // sendVerificationOtp resets the throttle, so a verify-screen "resend" will
+        // be gated, but logging in right after registering still gets a code) and
+        // tell the client to route to the verification screen instead of issuing
+        // tokens. Credentials are already proven valid at this point.
+        if (!user.isEmailVerified()) {
+            if (!Boolean.TRUE.equals(redisTemplate.hasKey(VERIFY_THROTTLE_PREFIX + user.getEmail()))) {
+                sendVerificationOtp(user);
+            }
+            return AuthResponse.builder()
+                    .fullName(user.getFullName())
+                    .email(user.getEmail())
+                    .emailVerificationRequired(true)
+                    .build();
+        }
 
         auditLogService.log(AuditAction.USER_LOGIN, user.getEmail(), user.getFullName(), "AUTH", user.getEmail(), null);
 
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .role(user.getRole().name())
-                .fullName(user.getFullName())
-                .email(user.getEmail())
-                .build();
+        return issueTokens(user);
     }
 
     public void changePassword(User user, ChangePasswordRequest request) {
@@ -208,6 +304,82 @@ public class AuthService {
         redisTemplate.delete(RESET_OTP_PREFIX + email);
         auditLogService.log(AuditAction.PASSWORD_RESET_COMPLETED, user.getEmail(), user.getFullName(),
                 "AUTH", user.getEmail(), "OTP ilə yeniləndi");
+    }
+
+    /**
+     * Step 1 of changing the signed-in user's email: validate the new address,
+     * stash it as pending in Redis keyed by user id, and send a confirmation OTP
+     * to the NEW address (proving the user controls it). The account's email is
+     * NOT touched until confirmEmailChange() succeeds.
+     */
+    public void requestEmailChange(User user, String newEmailRaw) {
+        if (user.getPassword() == null) {
+            throw new BadRequestException("Google hesabının e-poçtu dəyişdirilə bilməz");
+        }
+        if (newEmailRaw == null || newEmailRaw.isBlank()) {
+            throw new BadRequestException("Yeni e-poçt boş ola bilməz");
+        }
+        String newEmail = newEmailRaw.trim().toLowerCase();
+        if (newEmail.equals(user.getEmail().toLowerCase())) {
+            throw new BadRequestException("Yeni e-poçt cari e-poçtla eynidir");
+        }
+        if (userRepository.existsByEmail(newEmail)) {
+            throw new BadRequestException("Bu e-poçt artıq istifadə olunur");
+        }
+        String throttleKey = EMAIL_CHANGE_THROTTLE_PREFIX + user.getId();
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(throttleKey))) {
+            throw new BadRequestException("Yeni kod istəmədən əvvəl bir az gözləyin");
+        }
+
+        String otp = String.format("%06d", new Random().nextInt(1_000_000));
+        redisTemplate.opsForValue().set(EMAIL_CHANGE_PENDING_PREFIX + user.getId(), newEmail, OTP_TTL_MINUTES, TimeUnit.MINUTES);
+        redisTemplate.opsForValue().set(EMAIL_CHANGE_OTP_PREFIX + user.getId(), otp, OTP_TTL_MINUTES, TimeUnit.MINUTES);
+        redisTemplate.opsForValue().set(throttleKey, "1", RESEND_COOLDOWN_SECONDS, TimeUnit.SECONDS);
+
+        String body = "testup.az hesabınızın e-poçt ünvanını bu ünvana dəyişmək üçün aşağıdakı kodu daxil edin:"
+                + "<div style='font-size:36px;font-weight:bold;letter-spacing:10px;text-align:center;"
+                + "color:#4f46e5;padding:24px 0;'>" + otp + "</div>"
+                + "Bu kod <strong>" + OTP_TTL_MINUTES + " dəqiqə</strong> ərzində etibarlıdır.<br><br>"
+                + "Əgər bu dəyişikliyi siz istəməmisinizsə, bu mesajı nəzərə almayın.";
+        emailService.sendGmail(newEmail, user.getFullName(),
+                "E-poçt Dəyişikliyi Təsdiqi — testup.az",
+                emailService.buildHtmlRaw("E-poçt Dəyişikliyi Kodu", body),
+                null);
+
+        auditLogService.log(AuditAction.EMAIL_CHANGE_REQUESTED, user.getEmail(), user.getFullName(),
+                "AUTH", user.getEmail(), "Yeni ünvan: " + newEmail);
+    }
+
+    /**
+     * Step 2: confirm the OTP and apply the pending email. Issues fresh tokens
+     * because the email is baked into the JWT claims, so the old tokens carry a
+     * stale address.
+     */
+    public AuthResponse confirmEmailChange(User user, String otp) {
+        String pendingKey = EMAIL_CHANGE_PENDING_PREFIX + user.getId();
+        String otpKey = EMAIL_CHANGE_OTP_PREFIX + user.getId();
+        String pendingEmail = redisTemplate.opsForValue().get(pendingKey);
+        String stored = redisTemplate.opsForValue().get(otpKey);
+        if (pendingEmail == null || stored == null) {
+            throw new BadRequestException("Kodun müddəti bitib və ya etibarsızdır");
+        }
+        if (!stored.equals(otp)) {
+            throw new BadRequestException("Kod yanlışdır");
+        }
+        // Re-check uniqueness in case someone else claimed the address in the window.
+        if (userRepository.existsByEmail(pendingEmail)) {
+            throw new BadRequestException("Bu e-poçt artıq istifadə olunur");
+        }
+        String oldEmail = user.getEmail();
+        user.setEmail(pendingEmail);
+        user.setEmailVerified(true);
+        userRepository.save(user);
+        redisTemplate.delete(pendingKey);
+        redisTemplate.delete(otpKey);
+        redisTemplate.delete(EMAIL_CHANGE_THROTTLE_PREFIX + user.getId());
+        auditLogService.log(AuditAction.EMAIL_CHANGED, user.getEmail(), user.getFullName(),
+                "AUTH", user.getEmail(), "Köhnə ünvan: " + oldEmail);
+        return issueTokens(user);
     }
 
     public AuthResponse refreshToken(String refreshToken) {

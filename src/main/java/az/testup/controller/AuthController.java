@@ -98,4 +98,46 @@ public class AuthController {
         authService.changePassword(user, request);
         return ResponseEntity.ok().build();
     }
+
+    // ── Email verification (registration) ──
+
+    public record VerifyEmailRequest(@NotBlank String email, @NotBlank String otp) {}
+    public record ResendVerificationRequest(@NotBlank String email) {}
+
+    @PostMapping("/verify-email")
+    public ResponseEntity<AuthResponse> verifyEmail(@Valid @RequestBody VerifyEmailRequest req) {
+        return ResponseEntity.ok(authService.verifyEmail(req.email(), req.otp()));
+    }
+
+    @PostMapping("/resend-verification")
+    public ResponseEntity<Map<String, String>> resendVerification(@Valid @RequestBody ResendVerificationRequest req) {
+        authService.resendVerification(req.email());
+        return ResponseEntity.ok(Map.of("message", "Təsdiq kodu göndərildi"));
+    }
+
+    // ── Email change (authenticated) ──
+
+    public record ChangeEmailRequest(@NotBlank String newEmail) {}
+    public record ConfirmEmailChangeRequest(@NotBlank String otp) {}
+
+    @PostMapping("/change-email/request")
+    public ResponseEntity<Map<String, String>> requestEmailChange(
+            @Valid @RequestBody ChangeEmailRequest req,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) throw new UnauthorizedException("İstifadəçi tapılmadı");
+        User user = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new UnauthorizedException("İstifadəçi tapılmadı"));
+        authService.requestEmailChange(user, req.newEmail());
+        return ResponseEntity.ok(Map.of("message", "Təsdiq kodu yeni e-poçt ünvanına göndərildi"));
+    }
+
+    @PostMapping("/change-email/confirm")
+    public ResponseEntity<AuthResponse> confirmEmailChange(
+            @Valid @RequestBody ConfirmEmailChangeRequest req,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        if (userDetails == null) throw new UnauthorizedException("İstifadəçi tapılmadı");
+        User user = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new UnauthorizedException("İstifadəçi tapılmadı"));
+        return ResponseEntity.ok(authService.confirmEmailChange(user, req.otp()));
+    }
 }

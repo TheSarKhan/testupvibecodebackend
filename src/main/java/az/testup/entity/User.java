@@ -45,6 +45,15 @@ public class User {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    // True once the user has confirmed the OTP sent to their email. Defaults to
+    // true so every internally-created account (seeded admins, Google-OAuth users
+    // whose address the provider already verified) is usable immediately; only
+    // the public email/password registration flow sets this false and flips it
+    // back to true after the verification code is confirmed.
+    @Builder.Default
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified = true;
+
     // Soft-delete marker. Set when an account that authored content (exams,
     // templates, banks) is "deleted": the row is kept (so student results on
     // the teacher's exams survive) but anonymized, disabled, and hidden from
