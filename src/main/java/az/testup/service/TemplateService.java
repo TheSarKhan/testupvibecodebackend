@@ -282,6 +282,32 @@ public class TemplateService {
         if (!sectionRepository.existsById(sectionId)) {
             throw new ResourceNotFoundException("Fənn bölməsi tapılmadı");
         }
+
+        // Kaskad: bu bölməyə bağlı imtahanları sil (soft-delete) və bütün FK
+        // istinadlarını boşalt ki, bölmənin özü silinə bilsin (əks halda DB FK
+        // pozuntusu → 409 "Verilənlər bazası xətası" verir).
+
+        // 1) Birbaşa template_section_id ilə bağlı imtahanlar
+        List<az.testup.entity.Exam> direct = examRepository.findByTemplateSection_Id(sectionId);
+        for (var exam : direct) {
+            exam.setDeleted(true);
+            exam.setTemplateSection(null);
+        }
+        examRepository.saveAll(direct);
+
+        // 2) Çoxlu-bölmə join (exam_template_sections) ilə bağlı imtahanlar
+        List<Long> joinExamIds = examRepository.findExamIdsByTemplateSectionLink(sectionId);
+        if (!joinExamIds.isEmpty()) {
+            List<az.testup.entity.Exam> joinExams = examRepository.findAllById(joinExamIds);
+            for (var exam : joinExams) exam.setDeleted(true);
+            examRepository.saveAll(joinExams);
+        }
+
+        // 3) Qalan FK istinadlarını native sil (join cədvəli + collaborator section ref-ləri)
+        examRepository.deleteExamTemplateSectionLinks(sectionId);
+        examRepository.deleteCollaboratorSectionLinks(sectionId);
+
+        // 4) Bölməni sil (typeCounts cascade/orphanRemoval ilə avtomatik silinir)
         sectionRepository.deleteById(sectionId);
     }
 

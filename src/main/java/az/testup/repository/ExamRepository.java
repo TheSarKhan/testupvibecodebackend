@@ -7,6 +7,7 @@ import az.testup.enums.Role;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -14,6 +15,22 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ExamRepository extends JpaRepository<Exam, Long> {
+    // ─── Şablon bölməsi kaskad silmə üçün ───────────────────────────────────
+    /** Birbaşa template_section_id FK ilə bu bölməyə bağlı imtahanlar. */
+    List<Exam> findByTemplateSection_Id(Long sectionId);
+
+    /** Çoxlu-bölmə join (exam_template_sections) vasitəsilə bağlı imtahan ID-ləri. */
+    @Query(value = "SELECT exam_id FROM exam_template_sections WHERE section_id = :sid", nativeQuery = true)
+    List<Long> findExamIdsByTemplateSectionLink(@Param("sid") Long sectionId);
+
+    @Modifying
+    @Query(value = "DELETE FROM exam_template_sections WHERE section_id = :sid", nativeQuery = true)
+    void deleteExamTemplateSectionLinks(@Param("sid") Long sectionId);
+
+    @Modifying
+    @Query(value = "DELETE FROM exam_collaborator_section_ids WHERE template_section_id = :sid", nativeQuery = true)
+    void deleteCollaboratorSectionLinks(@Param("sid") Long sectionId);
+
     List<Exam> findByTeacherAndDeletedFalse(User teacher);
     List<Exam> findByTeacherAndCollaborativeParentIdIsNullAndDeletedFalse(User teacher);
     List<Exam> findByStatusAndDeletedFalse(ExamStatus status);
