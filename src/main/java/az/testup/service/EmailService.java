@@ -85,7 +85,12 @@ public class EmailService {
 
             Map<String, Object> emailPayload = new HashMap<>();
             emailPayload.put("subject", subject);
-            emailPayload.put("html", htmlBody);
+            // SendPulse's /smtp/emails API requires the HTML body to be Base64-
+            // encoded — sending raw HTML makes the API reject the request, so the
+            // mail silently never went out. Encode as UTF-8 so Azerbaijani
+            // characters (ə, ı, ş, ...) survive.
+            emailPayload.put("html", Base64.getEncoder().encodeToString(
+                    htmlBody.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
             emailPayload.put("from", fromMap);
             emailPayload.put("to", List.of(toMap));
 
@@ -101,12 +106,19 @@ public class EmailService {
             headers.set("Authorization", "Bearer " + token);
             headers.setContentType(MediaType.APPLICATION_JSON);
 
-            restTemplate.exchange(
+            ResponseEntity<Map> response = restTemplate.exchange(
                     "https://api.sendpulse.com/smtp/emails",
                     HttpMethod.POST,
                     new HttpEntity<>(body, headers),
                     Map.class
             );
+            // SendPulse returns HTTP 200 even on a rejected send, with
+            // {"result": false, "message": "..."} in the body — so a raw 2xx
+            // doesn't mean delivered. Surface the failure instead of swallowing it.
+            Map<?, ?> respBody = response.getBody();
+            if (respBody != null && Boolean.FALSE.equals(respBody.get("result"))) {
+                log.error("SendPulse {} ünvanına göndərmədi: {}", to, respBody);
+            }
         } catch (Exception e) {
             log.error("SendPulse göndərmə xətası [{}]: {}", to, e.getMessage());
         }
