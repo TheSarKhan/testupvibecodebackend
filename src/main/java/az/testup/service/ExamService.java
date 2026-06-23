@@ -364,8 +364,6 @@ public class ExamService {
 
     @Transactional
     public ExamResponse updateExam(Long id, ExamRequest request, User teacher) {
-        subscriptionValidatorService.validateExamEditing(teacher.getId());
-
         Exam exam = examRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
 
@@ -380,6 +378,17 @@ public class ExamService {
             // accepted the owner, so admin-panel edits of teacher-owned exams
             // and collab-draft saves by the assigned collaborator both 403'd.
             throw new UnauthorizedException("Bu imtahanı redaktə etmək icazəniz yoxdur");
+        }
+
+        // Subscription gating applies only to a teacher editing their OWN
+        // standalone exam. A collaborative draft (collaborativeParentId != null)
+        // is the admin's exam that invited teachers fill in — gating a
+        // contributor on their personal "exam editing" plan made every bank-pick
+        // autosave 403 ("Aktiv abunəlik planı tapılmadı" / "İmtahan redaktəsi
+        // ... mövcud deyil"), so the question never saved and couldn't be sent to
+        // the admin. Admins bypass the check internally regardless.
+        if (exam.getCollaborativeParentId() == null) {
+            subscriptionValidatorService.validateExamEditing(teacher.getId());
         }
 
         // Collab drafts must respect template-section question count caps. Frontend hides
