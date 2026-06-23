@@ -1531,6 +1531,17 @@ public class DataSeeder implements CommandLineRunner {
         entityManager.createNativeQuery("DELETE FROM exam_access_codes WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM exam_tags WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM exam_template_sections WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        // Marketplace/payment rows were missing from the cascade, which crashed
+        // the app at startup whenever a sample exam had been purchased (FK
+        // violation: exam_purchases.exam_id / payment_orders.exam_id → exams.id).
+        entityManager.createNativeQuery("DELETE FROM exam_purchases WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM payment_orders WHERE exam_id = :eid").setParameter("eid", examId).executeUpdate();
+        // Collaborative links reference this exam as either the admin-owned parent
+        // (collaborative_exam_id) or a teacher's draft workspace (draft_exam_id);
+        // clear the collaborator rows and their element-collection tables first.
+        entityManager.createNativeQuery("DELETE FROM exam_collaborator_subjects WHERE collaborator_id IN (SELECT id FROM exam_collaborators WHERE collaborative_exam_id = :eid OR draft_exam_id = :eid)").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_collaborator_section_ids WHERE collaborator_id IN (SELECT id FROM exam_collaborators WHERE collaborative_exam_id = :eid OR draft_exam_id = :eid)").setParameter("eid", examId).executeUpdate();
+        entityManager.createNativeQuery("DELETE FROM exam_collaborators WHERE collaborative_exam_id = :eid OR draft_exam_id = :eid").setParameter("eid", examId).executeUpdate();
         entityManager.createNativeQuery("DELETE FROM exams WHERE id = :eid").setParameter("eid", examId).executeUpdate();
     }
 
