@@ -1239,6 +1239,8 @@ public class ExamService {
                 .id(p.getId())
                 .leftItem(p.getLeftItem())
                 .rightItem(p.getRightItem())
+                .attachedImageLeft(p.getAttachedImageLeft())
+                .attachedImageRight(p.getAttachedImageRight())
                 .orderIndex(p.getOrderIndex())
                 .build();
     }
