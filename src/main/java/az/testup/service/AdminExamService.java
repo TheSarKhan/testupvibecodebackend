@@ -71,14 +71,16 @@ public class AdminExamService {
     public void deleteExam(Long examId) {
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() -> new ResourceNotFoundException("İmtahan tapılmadı"));
-        long submittedCount = submissionRepository.countByExamIdAndSubmittedAtIsNotNull(examId);
-        if (submittedCount > 0) {
-            throw new BadRequestException(
-                    submittedCount + " tələbənin nəticəsi olan imtahanı silmək olmaz. Əvvəlcə nəticələri export edin.");
-        }
+        // Soft-delete, mirroring the teacher delete path (ExamService): the exam
+        // is hidden everywhere via the global isDeleted() filters (catalog, depot,
+        // purchased list, start guard), while student results and purchase/payment
+        // history stay intact. A hard DELETE here used to fail anyway — exams is
+        // still referenced by exam_purchases / payment_orders / questions / etc.
+        // (FK violation) — and would have destroyed paid students' access and
+        // their results. Soft-delete is reversible and FK-safe.
+        exam.setDeleted(true);
+        examRepository.save(exam);
         auditLogService.log(AuditAction.EXAM_DELETED, "admin", "Admin", "EXAM", exam.getTitle(), null);
-        submissionRepository.deleteByExamId(examId);
-        examRepository.deleteById(examId);
     }
 
     public AdminExamResponse toResponse(Exam exam) {
