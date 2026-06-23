@@ -410,6 +410,112 @@ public class BankService {
         return mapQuestion(saved);
     }
 
+    // ─── Admin: import a teacher's bank into the site (global) bank ───────────
+
+    /** Admin-only: list every bank subject owned by a given teacher. */
+    @Transactional(readOnly = true)
+    public List<BankSubjectResponse> getSubjectsByOwner(Long ownerId) {
+        return subjectRepository.findByOwnerIdOrderByCreatedAtDesc(ownerId)
+                .stream().map(this::mapSubject).collect(Collectors.toList());
+    }
+
+    /**
+     * Admin-only: questions of any subject, WITHOUT the owner/global guard that
+     * {@link #getQuestions} enforces — an admin must be able to preview a
+     * teacher's private subject before importing it.
+     */
+    @Transactional(readOnly = true)
+    public List<BankQuestionResponse> getSubjectQuestionsForAdmin(Long subjectId) {
+        subjectRepository.findById(subjectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Fənn tapılmadı"));
+        return questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(subjectId)
+                .stream().map(this::mapQuestion).collect(Collectors.toList());
+    }
+
+    /**
+     * Admin-only: deep-copy questions from a teacher's subject into the site's
+     * central (global) bank. Destination is either an existing admin/global
+     * subject (targetSubjectId) or a new global subject created on the fly
+     * (targetSubjectName, falling back to the source subject's name). When
+     * questionIds is null/empty every question in the source subject is copied;
+     * otherwise only the selected ones (still restricted to the source subject).
+     * Each copy is independent — options, matching pairs and tags are cloned,
+     * never re-attached to the teacher's originals.
+     */
+    @Transactional
+    public Map<String, Object> importFromTeacher(User admin, Long sourceSubjectId, Long targetSubjectId,
+                                                 String targetSubjectName, List<Long> questionIds) {
+        BankSubject source = subjectRepository.findById(sourceSubjectId)
+                .orElseThrow(() -> new ResourceNotFoundException("Mənbə fənn tapılmadı"));
+
+        BankSubject target;
+        if (targetSubjectId != null) {
+            target = subjectRepository.findById(targetSubjectId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Hədəf fənn tapılmadı"));
+        } else {
+            String name = (targetSubjectName != null && !targetSubjectName.isBlank())
+                    ? targetSubjectName.trim() : source.getName();
+            target = subjectRepository.save(BankSubject.builder()
+                    .name(name).owner(admin).isGlobal(true).build());
+        }
+
+        List<BankQuestion> sources;
+        if (questionIds != null && !questionIds.isEmpty()) {
+            sources = questionRepository.findAllById(questionIds).stream()
+                    .filter(q -> q.getSubject() != null && q.getSubject().getId().equals(sourceSubjectId))
+                    .collect(Collectors.toList());
+        } else {
+            sources = questionRepository.findBySubjectIdOrderByOrderIndexAscCreatedAtAsc(sourceSubjectId);
+        }
+
+        int nextOrder = (int) questionRepository.countBySubjectId(target.getId());
+        int imported = 0;
+        for (BankQuestion src : sources) {
+            BankQuestion copy = BankQuestion.builder()
+                    .content(src.getContent())
+                    .attachedImage(src.getAttachedImage())
+                    .questionType(src.getQuestionType())
+                    .points(src.getPoints())
+                    .orderIndex(nextOrder++)
+                    .correctAnswer(src.getCorrectAnswer())
+                    .topic(src.getTopic())
+                    .difficulty(src.getDifficulty())
+                    .gradeLevel(src.getGradeLevel())
+                    .tags(src.getTags() == null ? new HashSet<>() : new HashSet<>(src.getTags()))
+                    .subject(target)
+                    .build();
+            if (src.getOptions() != null) {
+                for (BankOption o : src.getOptions()) {
+                    copy.getOptions().add(BankOption.builder()
+                            .content(o.getContent()).isCorrect(o.getIsCorrect())
+                            .orderIndex(o.getOrderIndex()).attachedImage(o.getAttachedImage())
+                            .question(copy).build());
+                }
+            }
+            if (src.getMatchingPairs() != null) {
+                for (BankMatchingPair mp : src.getMatchingPairs()) {
+                    copy.getMatchingPairs().add(BankMatchingPair.builder()
+                            .leftItem(mp.getLeftItem()).rightItem(mp.getRightItem())
+                            .attachedImageLeft(mp.getAttachedImageLeft())
+                            .attachedImageRight(mp.getAttachedImageRight())
+                            .orderIndex(mp.getOrderIndex()).question(copy).build());
+                }
+            }
+            questionRepository.save(copy);
+            imported++;
+        }
+
+        auditLogService.log(AuditAction.BANK_QUESTION_CREATED, admin.getEmail(), admin.getFullName(),
+                "BANK_QUESTION", "IMPORT", "Müəllim bankından idxal: " + imported
+                        + " sual → fənn '" + target.getName() + "' (mənbə fənn ID:" + sourceSubjectId + ")");
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("imported", imported);
+        result.put("targetSubjectId", target.getId());
+        result.put("targetSubjectName", target.getName());
+        return result;
+    }
+
     @Transactional
     public void reorder(Long subjectId, User user, List<Long> orderedIds) {
         BankSubject subject = subjectRepository.findById(subjectId)
