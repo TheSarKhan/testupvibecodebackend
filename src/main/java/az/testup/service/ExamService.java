@@ -626,8 +626,15 @@ public class ExamService {
 
             for (OptionRequest oReq : req.getOptions()) {
                 if (oReq.getId() != null) {
+                    // Null-guard o.getId(): once a request option carries an id
+                    // that matches no existing option (e.g. a bank-picked option
+                    // whose bank id leaked through), it's added as a NEW option
+                    // with a null id. A later iteration then streamed over that
+                    // freshly-added option and called o.getId().equals(...) on a
+                    // null id → NPE → 500. This is the "bazadan sual seçimi"
+                    // autosave crash in template mode (the bank replace path).
                     Option existingOpt = question.getOptions().stream()
-                            .filter(o -> o.getId().equals(oReq.getId()))
+                            .filter(o -> o.getId() != null && o.getId().equals(oReq.getId()))
                             .findFirst().orElse(null);
                     if (existingOpt != null) {
                         existingOpt.setContent(oReq.getContent());
@@ -656,8 +663,11 @@ public class ExamService {
 
             for (MatchingPairRequest pReq : req.getMatchingPairs()) {
                 if (pReq.getId() != null) {
+                    // Same null-guard as the options loop above: a newly-added
+                    // pair has a null id, so an unguarded p.getId().equals(...)
+                    // NPEs once two request pairs carry unmatched ids.
                     MatchingPair existingPair = question.getMatchingPairs().stream()
-                            .filter(p -> p.getId().equals(pReq.getId()))
+                            .filter(p -> p.getId() != null && p.getId().equals(pReq.getId()))
                             .findFirst().orElse(null);
                     if (existingPair != null) {
                         existingPair.setLeftItem(pReq.getLeftItem());
