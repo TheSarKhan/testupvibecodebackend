@@ -892,6 +892,11 @@ public class PdfService {
 
     /** Scale an image down (never up) to fit within maxWidth × maxHeight, keeping aspect ratio. */
     private void scaleToBox(Image img, float maxWidth, float maxHeight) {
+        // Composite PdfPCells stretch an added Image to the FULL cell width
+        // (Image.widthPercentage defaults to 100), silently overriding any
+        // scalePercent/scaleAbsolute — that's how small option pictures blew
+        // up to page width. 0 = render at the image's own (scaled) size.
+        img.setWidthPercentage(0f);
         float w = img.getPlainWidth();
         float h = img.getPlainHeight();
         if (w <= 0 || h <= 0) return;
