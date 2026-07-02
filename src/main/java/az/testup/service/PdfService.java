@@ -845,7 +845,7 @@ public class PdfService {
 
         if (imageUrl != null && !imageUrl.trim().isEmpty()) {
             try {
-                Image img = loadImage(imageUrl, PageSize.A4.getWidth() - 120);
+                Image img = loadImage(imageUrl, OPT_IMG_MAX_WIDTH, OPT_IMG_MAX_HEIGHT);
                 if (img != null) cell.addElement(img);
             } catch (Exception e) {
                 log.warn("Could not embed option image in PDF", e);
@@ -885,6 +885,11 @@ public class PdfService {
     private static final float IMG_MAX_WIDTH = 240f;   // pt (~8.5 cm)
     private static final float IMG_MAX_HEIGHT = 240f;  // pt (~8.5 cm)
 
+    // Option images get a much tighter box than the question body — at the
+    // full IMG_MAX size a 4-option image question spanned more than a page.
+    private static final float OPT_IMG_MAX_WIDTH = 150f;  // pt (~5.3 cm)
+    private static final float OPT_IMG_MAX_HEIGHT = 100f; // pt (~3.5 cm)
+
     /** Scale an image down (never up) to fit within maxWidth × maxHeight, keeping aspect ratio. */
     private void scaleToBox(Image img, float maxWidth, float maxHeight) {
         float w = img.getPlainWidth();
@@ -894,8 +899,8 @@ public class PdfService {
         if (scale < 1f) img.scalePercent(scale * 100f);
     }
 
-    /** Load (base64 data-URL or remote URL) + scale an image to fit maxWidth. */
-    private Image loadImage(String imageUrl, float maxWidth) throws Exception {
+    /** Load (base64 data-URL or remote URL) + scale an image into the given box. */
+    private Image loadImage(String imageUrl, float maxWidth, float maxHeight) throws Exception {
         if (imageUrl == null || imageUrl.isBlank()) return null;
         Image img;
         if (imageUrl.startsWith("data:image")) {
@@ -904,8 +909,8 @@ public class PdfService {
         } else {
             img = Image.getInstance(imageUrl);
         }
-        // Bound to the standard box (respecting any tighter caller width).
-        scaleToBox(img, Math.min(maxWidth, IMG_MAX_WIDTH), IMG_MAX_HEIGHT);
+        // Bound to the standard box (respecting any tighter caller box).
+        scaleToBox(img, Math.min(maxWidth, IMG_MAX_WIDTH), Math.min(maxHeight, IMG_MAX_HEIGHT));
         return img;
     }
 
