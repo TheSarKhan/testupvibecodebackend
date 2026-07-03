@@ -962,40 +962,20 @@ public class ExamService {
     }
 
     /**
-     * Regroup the exam's questions so a question sits at the end of its own
-     * subject section rather than at the very end of the whole exam.
-     *
-     * A question added through the editor carries the highest orderIndex (exam
-     * end). The standard create/update flow used that value verbatim and never
-     * regrouped by subject, so in a multi-subject exam the new question landed
-     * after every other subject instead of after its own (BUG-253). This mirrors
-     * the collaborative flow's resortParentQuestionsBySubject: stable sort by the
-     * subject's position in exam.subjects, ties broken by the current orderIndex
-     * (so each subject's internal order is preserved and a max-orderIndex new
-     * question falls to its subject's tail), then renumber sequentially.
+     * Regroup the exam so every subject sits in one contiguous orderIndex block
+     * (a new question lands at its own subject's tail, not the exam's end —
+     * BUG-253). Delegates to {@link az.testup.util.SubjectRegrouper}, which
+     * renumbers questions AND passages in the single merged orderIndex space
+     * the session view and PdfService render, and ranks subjectGroup == null
+     * as the main section (subjects[0]) per the editor's convention. The
+     * original question-only, null-ranks-last version pushed the main
+     * subject's questions to the exam's tail and left passages at stale
+     * positions inside other subjects' blocks on every save.
      *
      * Single-subject / ungrouped exams have nothing to regroup and are skipped.
      */
     private void resortQuestionsBySubject(Exam exam) {
-        List<String> subjectOrder = exam.getSubjects() != null
-                ? exam.getSubjects() : java.util.Collections.emptyList();
-        if (subjectOrder.size() <= 1) return;
-
-        java.util.function.ToIntFunction<Question> subjectRank = q -> {
-            String s = q.getSubjectGroup();
-            if (s == null) return Integer.MAX_VALUE;
-            int idx = subjectOrder.indexOf(s);
-            return idx < 0 ? Integer.MAX_VALUE - 1 : idx;
-        };
-
-        List<Question> qs = new ArrayList<>(exam.getQuestions());
-        qs.sort(java.util.Comparator
-                .comparingInt(subjectRank)
-                .thenComparingInt(q -> q.getOrderIndex() == null ? Integer.MAX_VALUE : q.getOrderIndex()));
-        for (int i = 0; i < qs.size(); i++) {
-            Question q = qs.get(i);
-            if (q.getOrderIndex() == null || q.getOrderIndex() != i) q.setOrderIndex(i);
-        }
+        az.testup.util.SubjectRegrouper.regroup(exam);
     }
 
     /**

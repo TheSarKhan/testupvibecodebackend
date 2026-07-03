@@ -314,6 +314,21 @@ public class PdfService {
             // document so they fill the page.
             java.util.List<Element> qElements = new java.util.ArrayList<>();
 
+            // Image first: the picture is part of the question, so it leads and
+            // the stem text sits beneath it. Image-only questions show just the
+            // number under the picture. (Already bounded to the standard box.)
+            if (hasImage) {
+                try {
+                    Image img = loadAndScaleImage(q.getAttachedImage());
+                    if (img != null) {
+                        img.setSpacingAfter(4f);
+                        qElements.add(img);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not embed question image", e);
+                }
+            }
+
             // Stem: number + question text (just the number for image-only
             // questions, where the picture IS the question).
             if (contentBlank && hasImage) {
@@ -322,18 +337,8 @@ public class PdfService {
                 Paragraph qPara = new Paragraph();
                 qPara.add(new Chunk((i + 1) + ". ", qFont));
                 addRichText(qPara, q.getContent(), qFont);
-                qPara.setSpacingAfter(hasImage ? 4f : 5f);
+                qPara.setSpacingAfter(5f);
                 qElements.add(qPara);
-            }
-
-            // Optional question image (already bounded to the standard box).
-            if (hasImage) {
-                try {
-                    Image img = loadAndScaleImage(q.getAttachedImage());
-                    if (img != null) qElements.add(img);
-                } catch (Exception e) {
-                    log.warn("Could not embed question image", e);
-                }
             }
 
             // Question Type Specifics
@@ -740,6 +745,18 @@ public class PdfService {
                     // Scale down to actual size (dividing by renderScale)
                     float displayWidth = icon.getIconWidth() / renderScale;
                     float displayHeight = icon.getIconHeight() / renderScale;
+
+                    // A long formula renders to a bitmap wider than the printable
+                    // page. Added as an inline Chunk, iText neither wraps nor
+                    // shrinks an over-wide image — it runs off the right margin
+                    // and the tail of the formula is clipped. Bound the display
+                    // width to the content area, scaling height in proportion so
+                    // the whole formula stays on the page (smaller, but complete).
+                    if (displayWidth > MAX_FORMULA_WIDTH) {
+                        float shrink = MAX_FORMULA_WIDTH / displayWidth;
+                        displayWidth *= shrink;
+                        displayHeight *= shrink;
+                    }
                     iTextImage.scaleAbsolute(displayWidth, displayHeight);
 
                     float yOffset = -displayHeight * 0.2f;
@@ -889,6 +906,12 @@ public class PdfService {
     // full IMG_MAX size a 4-option image question spanned more than a page.
     private static final float OPT_IMG_MAX_WIDTH = 150f;  // pt (~5.3 cm)
     private static final float OPT_IMG_MAX_HEIGHT = 100f; // pt (~3.5 cm)
+
+    // Widest a rendered LaTeX bitmap may be before it's scaled down to fit:
+    // the A4 content width (page minus the 50pt left+right margins). Keeps
+    // long formulas on the page instead of overflowing the margin and being
+    // clipped.
+    private static final float MAX_FORMULA_WIDTH = PageSize.A4.getWidth() - 100f;
 
     /** Scale an image down (never up) to fit within maxWidth × maxHeight, keeping aspect ratio. */
     private void scaleToBox(Image img, float maxWidth, float maxHeight) {

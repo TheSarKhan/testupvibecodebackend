@@ -523,20 +523,12 @@ public class CollaborativeExamService {
      */
     private void resortParentQuestionsBySubject(Exam parent) {
         if (parent.getStatus() != ExamStatus.DRAFT) return;
-        final List<String> subjectOrder = parent.getSubjects() != null
-                ? parent.getSubjects() : java.util.Collections.emptyList();
-        List<Question> qs = new ArrayList<>(parent.getQuestions());
-        qs.sort(java.util.Comparator.comparingInt(q -> {
-            String s = q.getSubjectGroup();
-            if (s == null) return Integer.MAX_VALUE;
-            int idx = subjectOrder.indexOf(s);
-            return idx < 0 ? Integer.MAX_VALUE - 1 : idx;
-        }));
-        for (int i = 0; i < qs.size(); i++) {
-            Question q = qs.get(i);
-            Integer cur = q.getOrderIndex();
-            if (cur == null || cur != i) q.setOrderIndex(i);
-        }
+        // SubjectRegrouper renumbers questions AND passages in one merged
+        // orderIndex space — essential here because promoted parent passages
+        // copy the DRAFT exam's orderIndex (resolveParentPassage) while parent
+        // questions are numbered by parent size: two unrelated spaces until
+        // this regroup reconciles them.
+        az.testup.util.SubjectRegrouper.regroup(parent);
     }
 
     /**
