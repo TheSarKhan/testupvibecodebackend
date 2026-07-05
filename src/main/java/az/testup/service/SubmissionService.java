@@ -426,33 +426,47 @@ public class SubmissionService {
                         objectMapper.getTypeFactory().constructCollectionType(List.class, MatchingPairAnswerRequest.class)
                     );
                     List<MatchingPair> allPairs = question.getMatchingPairs();
-                    // Linked pairs = both sides non-empty; these are the expected correct connections
+                    // Linked pairs = both sides non-empty (text OR image); each is a correct connection
                     List<MatchingPair> linkedPairs = allPairs.stream()
-                        .filter(p -> p.getLeftItem() != null && !p.getLeftItem().isBlank()
-                                  && p.getRightItem() != null && !p.getRightItem().isBlank())
+                        .filter(p -> matchingSideKey(p.getLeftItem(), p.getAttachedImageLeft()) != null
+                                  && matchingSideKey(p.getRightItem(), p.getAttachedImageRight()) != null)
                         .collect(Collectors.toList());
                     if (!linkedPairs.isEmpty()) {
-                        // ID-based grading: a student answer is correct when leftItemId == rightItemId
-                        // and that pair is a linked pair. This is independent of text content,
-                        // so teacher edits to pair text do not affect past submission grades.
-                        java.util.Set<Long> linkedPairIds = linkedPairs.stream()
-                            .map(MatchingPair::getId)
-                            .collect(Collectors.toSet());
-                        java.util.Set<Long> counted = new java.util.HashSet<>();
+                        // Content-based grading. The student UI dedupes the chips by
+                        // content and submits CANONICAL pair ids (the first row whose
+                        // side matches the chip), so when one left item links to several
+                        // rights (1→a stored in row X, 1→b in row Y) the submitted
+                        // leftItemId/rightItemId point at DIFFERENT rows. The old
+                        // leftItemId==rightItemId check only worked for plain 1-1 sets —
+                        // multi-links were always graded wrong. Compare the CONNECTION
+                        // (left side content ↔ right side content) instead.
+                        java.util.Map<Long, MatchingPair> pairById = new java.util.HashMap<>();
+                        for (MatchingPair p : allPairs) pairById.put(p.getId(), p);
+                        java.util.Set<String> expectedConnections = new java.util.HashSet<>();
+                        for (MatchingPair p : linkedPairs) {
+                            expectedConnections.add(matchingSideKey(p.getLeftItem(), p.getAttachedImageLeft())
+                                    + ">>" + matchingSideKey(p.getRightItem(), p.getAttachedImageRight()));
+                        }
+                        java.util.Set<String> counted = new java.util.HashSet<>();
                         for (MatchingPairAnswerRequest req : studentPairs) {
                             if (req.getLeftItemId() == null || req.getRightItemId() == null) continue;
-                            if (req.getLeftItemId().equals(req.getRightItemId())
-                                    && linkedPairIds.contains(req.getLeftItemId())) {
-                                counted.add(req.getLeftItemId());
-                            }
+                            MatchingPair lp = pairById.get(req.getLeftItemId());
+                            MatchingPair rp = pairById.get(req.getRightItemId());
+                            if (lp == null || rp == null) continue;
+                            String lKey = matchingSideKey(lp.getLeftItem(), lp.getAttachedImageLeft());
+                            String rKey = matchingSideKey(rp.getRightItem(), rp.getAttachedImageRight());
+                            if (lKey == null || rKey == null) continue;
+                            String connection = lKey + ">>" + rKey;
+                            if (expectedConnections.contains(connection)) counted.add(connection);
                         }
                         long correctCount = counted.size();
+                        int totalConnections = expectedConnections.size();
                         if (isTemplateExam) {
-                            answer.setScore(correctCount == linkedPairs.size() ? question.getPoints() : 0.0);
+                            answer.setScore(correctCount == totalConnections ? question.getPoints() : 0.0);
                         } else {
-                            double score = (correctCount == linkedPairs.size())
+                            double score = (correctCount == totalConnections)
                                 ? question.getPoints()
-                                : correctCount * (question.getPoints() / linkedPairs.size());
+                                : correctCount * (question.getPoints() / totalConnections);
                             answer.setScore(Math.min(question.getPoints(), score));
                         }
                     } else {
@@ -466,6 +480,18 @@ public class SubmissionService {
             }
             answer.setIsGraded(true);
         }
+    }
+
+    /**
+     * Canonical content key for one side of a matching pair (text + image),
+     * mirroring the student UI's chip dedup key. Null when the side is
+     * empty (a distractor slot).
+     */
+    private static String matchingSideKey(String text, String image) {
+        String t = text == null ? "" : text.trim();
+        String i = image == null ? "" : image;
+        if (t.isEmpty() && i.isEmpty()) return null;
+        return t + "|" + i;
     }
 
     /**
