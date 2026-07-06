@@ -18,5 +18,9 @@ public class MatchingPairResponse {
     // collaborative review screen. Carry them through.
     private String attachedImageLeft;
     private String attachedImageRight;
+    // Stable per-node identity — lets the editor keep distinct items that share
+    // text/image (and image-only items) from collapsing into one node.
+    private String leftVisualId;
+    private String rightVisualId;
     private Integer orderIndex;
 }

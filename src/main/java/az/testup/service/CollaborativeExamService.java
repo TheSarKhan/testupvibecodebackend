@@ -598,6 +598,8 @@ public class CollaborativeExamService {
                     .rightItem(pair.getRightItem())
                     .attachedImageLeft(pair.getAttachedImageLeft())
                     .attachedImageRight(pair.getAttachedImageRight())
+                    .leftVisualId(pair.getLeftVisualId())
+                    .rightVisualId(pair.getRightVisualId())
                     .orderIndex(pair.getOrderIndex())
                     .question(target)
                     .build());

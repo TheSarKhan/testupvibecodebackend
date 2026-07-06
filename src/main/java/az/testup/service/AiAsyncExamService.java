@@ -156,6 +156,8 @@ public class AiAsyncExamService {
                         .rightItem(mp.getRightItem())
                         .attachedImageLeft(mp.getAttachedImageLeft())
                         .attachedImageRight(mp.getAttachedImageRight())
+                        .leftVisualId(mp.getLeftVisualId())
+                        .rightVisualId(mp.getRightVisualId())
                         .orderIndex(mp.getOrderIndex())
                         .build());
             }

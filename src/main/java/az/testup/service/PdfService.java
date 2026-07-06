@@ -83,6 +83,26 @@ public class PdfService {
         java.util.regex.Pattern.DOTALL | java.util.regex.Pattern.CASE_INSENSITIVE
     );
 
+    // \bigm/\Bigm/\biggm/\Biggm (the amsmath "medium spacing" delimiter-sizing
+    // commands, e.g. "f(x)\bigm|_{x=3}") are valid LaTeX that the frontend's
+    // KaTeX editor renders fine, but JLaTeXMath 1.0.7 (used for the PDF) has no
+    // definition for the "m" variants — only \big/\Big/\bigg/\Bigg. Parsing
+    // throws, and the WHOLE surrounding formula (however long) falls back to
+    // raw "$$...$$" source text in the PDF. Longest-alternative-first so
+    // "Biggm" isn't cut short by an earlier match on "Big".
+    private static final java.util.regex.Pattern UNSUPPORTED_BIG_M_PATTERN = java.util.regex.Pattern.compile(
+        "\\\\(Bigg|bigg|Big|big)m(?![A-Za-z])"
+    );
+
+    /**
+     * Rewrite LaTeX constructs that JLaTeXMath can't parse into the closest
+     * equivalent it supports, so one obscure command doesn't blank out an
+     * otherwise-valid formula in the PDF.
+     */
+    private String sanitizeLatex(String latex) {
+        return UNSUPPORTED_BIG_M_PATTERN.matcher(latex).replaceAll("\\\\$1");
+    }
+
     public byte[] generateExamPdf(Exam exam) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Document document = new Document(PageSize.A4, 50, 50, 50, 50);
@@ -717,7 +737,7 @@ public class PdfService {
 
             if (!latex.isEmpty()) {
                 try {
-                    TeXFormula formula = new TeXFormula(latex);
+                    TeXFormula formula = new TeXFormula(sanitizeLatex(latex));
                     int style = isDisplay ? TeXConstants.STYLE_DISPLAY : TeXConstants.STYLE_TEXT;
 
                     // Render at 3x size for better quality, then scale down

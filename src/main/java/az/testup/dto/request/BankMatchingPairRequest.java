@@ -9,5 +9,7 @@ public class BankMatchingPairRequest {
     private String rightItem;
     private String attachedImageLeft;
     private String attachedImageRight;
+    private String leftVisualId;
+    private String rightVisualId;
     private Integer orderIndex;
 }

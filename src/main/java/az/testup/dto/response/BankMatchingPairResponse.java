@@ -6,5 +6,7 @@ public record BankMatchingPairResponse(
         String rightItem,
         String attachedImageLeft,
         String attachedImageRight,
+        String leftVisualId,
+        String rightVisualId,
         Integer orderIndex
 ) {}

@@ -28,6 +28,13 @@ public class BankMatchingPair {
     @Column(name = "attached_image_right", columnDefinition = "TEXT")
     private String attachedImageRight;
 
+    // Stable per-node identity — see MatchingPair. Nullable for legacy rows.
+    @Column(name = "left_visual_id", length = 64)
+    private String leftVisualId;
+
+    @Column(name = "right_visual_id", length = 64)
+    private String rightVisualId;
+
     private Integer orderIndex;
 
     @ManyToOne(fetch = FetchType.LAZY)

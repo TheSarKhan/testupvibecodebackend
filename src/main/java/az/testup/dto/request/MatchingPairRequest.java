@@ -20,6 +20,12 @@ public class MatchingPairRequest {
 
     private String attachedImageRight;
 
+    // Stable per-node identity from the editor; preserves distinct items that
+    // share content and keeps image-only items from collapsing.
+    private String leftVisualId;
+
+    private String rightVisualId;
+
     private Integer orderIndex;
 
 }

@@ -447,7 +447,14 @@ public class SubmissionService {
                             expectedConnections.add(matchingSideKey(p.getLeftItem(), p.getAttachedImageLeft())
                                     + ">>" + matchingSideKey(p.getRightItem(), p.getAttachedImageRight()));
                         }
+                        // Split the student's connections into correct (in the
+                        // expected set) and wrong (extra links that aren't). A
+                        // wrong link MUST cost the student — otherwise a student
+                        // who makes every correct match and then adds bogus extra
+                        // links still scored full marks (the wrong links were
+                        // silently ignored).
                         java.util.Set<String> counted = new java.util.HashSet<>();
+                        java.util.Set<String> wrong = new java.util.HashSet<>();
                         for (MatchingPairAnswerRequest req : studentPairs) {
                             if (req.getLeftItemId() == null || req.getRightItemId() == null) continue;
                             MatchingPair lp = pairById.get(req.getLeftItemId());
@@ -458,16 +465,25 @@ public class SubmissionService {
                             if (lKey == null || rKey == null) continue;
                             String connection = lKey + ">>" + rKey;
                             if (expectedConnections.contains(connection)) counted.add(connection);
+                            else wrong.add(connection);
                         }
                         long correctCount = counted.size();
+                        long wrongCount = wrong.size();
                         int totalConnections = expectedConnections.size();
+                        // Full marks only for an EXACT answer: every expected link
+                        // made and no extra wrong ones.
+                        boolean exact = correctCount == totalConnections && wrongCount == 0;
                         if (isTemplateExam) {
-                            answer.setScore(correctCount == totalConnections ? question.getPoints() : 0.0);
+                            answer.setScore(exact ? question.getPoints() : 0.0);
+                        } else if (exact) {
+                            answer.setScore(question.getPoints());
                         } else {
-                            double score = (correctCount == totalConnections)
-                                ? question.getPoints()
-                                : correctCount * (question.getPoints() / totalConnections);
-                            answer.setScore(Math.min(question.getPoints(), score));
+                            // Partial credit, but each wrong link cancels a correct
+                            // one so padding a perfect answer with extras can't keep
+                            // full marks (floored at 0).
+                            double per = question.getPoints() / totalConnections;
+                            double net = Math.max(0, correctCount - wrongCount);
+                            answer.setScore(Math.min(question.getPoints(), net * per));
                         }
                     } else {
                         answer.setScore(0.0);
@@ -1464,6 +1480,8 @@ public class SubmissionService {
                         .attachedImageLeft(m.getAttachedImageLeft())
                         .rightItem(m.getRightItem())
                         .attachedImageRight(m.getAttachedImageRight())
+                        .leftVisualId(m.getLeftVisualId())
+                        .rightVisualId(m.getRightVisualId())
                         .build()
                 ).collect(Collectors.toList()))
                 .build();
@@ -1675,6 +1693,8 @@ public class SubmissionService {
                             .attachedImageLeft(m.getAttachedImageLeft())
                             .rightItem(m.getRightItem())
                             .attachedImageRight(m.getAttachedImageRight())
+                            .leftVisualId(m.getLeftVisualId())
+                            .rightVisualId(m.getRightVisualId())
                             .build()
                     ).collect(Collectors.toList()))
                     .build();
@@ -1708,6 +1728,8 @@ public class SubmissionService {
                         .attachedImageLeft(m.getAttachedImageLeft())
                         .rightItem(m.getRightItem())
                         .attachedImageRight(m.getAttachedImageRight())
+                        .leftVisualId(m.getLeftVisualId())
+                        .rightVisualId(m.getRightVisualId())
                         .build()
                 ).collect(Collectors.toList()));
     }

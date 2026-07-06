@@ -30,6 +30,18 @@ public class MatchingPair {
     @Column(columnDefinition = "TEXT")
     private String attachedImageRight;
 
+    /**
+     * Stable per-node identity supplied by the editor. Many rows can share the
+     * same leftVisualId (one left node linked to several rights), while two
+     * distinct nodes with identical text/image stay separate. Nullable: legacy
+     * rows fall back to content-based grouping on the frontend.
+     */
+    @Column(name = "left_visual_id", length = 64)
+    private String leftVisualId;
+
+    @Column(name = "right_visual_id", length = 64)
+    private String rightVisualId;
+
     /** Display order */
     private Integer orderIndex;
 

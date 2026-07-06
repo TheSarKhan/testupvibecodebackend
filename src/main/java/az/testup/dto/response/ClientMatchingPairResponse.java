@@ -15,4 +15,8 @@ public class ClientMatchingPairResponse {
     private String attachedImageLeft;
     private String rightItem;
     private String attachedImageRight;
+    // Stable per-node identity so the exam/review screens dedupe by node, not
+    // by content — distinct items with the same text/image stay separate.
+    private String leftVisualId;
+    private String rightVisualId;
 }

@@ -4,7 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "answers")
+// One Answer per (submission, question). The upsert in SubmissionService relies
+// on this unique constraint via ON CONFLICT; it was historically added only in
+// migration V23, so a Hibernate-built schema (ddl-auto) lacked it and the
+// upsert failed. Declaring it here keeps entity and DB schema in sync.
+@Table(name = "answers", uniqueConstraints = @UniqueConstraint(
+        name = "uq_answers_submission_question",
+        columnNames = {"submission_id", "question_id"}))
 @Getter
 @Setter
 @NoArgsConstructor

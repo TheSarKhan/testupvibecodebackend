@@ -401,6 +401,8 @@ public class BankService {
                         .leftItem(mp.getLeftItem()).rightItem(mp.getRightItem())
                         .attachedImageLeft(mp.getAttachedImageLeft())
                         .attachedImageRight(mp.getAttachedImageRight())
+                        .leftVisualId(mp.getLeftVisualId())
+                        .rightVisualId(mp.getRightVisualId())
                         .orderIndex(mp.getOrderIndex()).question(copy).build());
             }
         }
@@ -498,6 +500,8 @@ public class BankService {
                             .leftItem(mp.getLeftItem()).rightItem(mp.getRightItem())
                             .attachedImageLeft(mp.getAttachedImageLeft())
                             .attachedImageRight(mp.getAttachedImageRight())
+                            .leftVisualId(mp.getLeftVisualId())
+                            .rightVisualId(mp.getRightVisualId())
                             .orderIndex(mp.getOrderIndex()).question(copy).build());
                 }
             }
@@ -634,6 +638,8 @@ public class BankService {
                     .rightItem(mp.getRightItem())
                     .attachedImageLeft(mp.getAttachedImageLeft())
                     .attachedImageRight(mp.getAttachedImageRight())
+                    .leftVisualId(mp.getLeftVisualId())
+                    .rightVisualId(mp.getRightVisualId())
                     .orderIndex(mp.getOrderIndex())
                     .question(q)
                     .build());
@@ -690,6 +696,7 @@ public class BankService {
                 .map(mp -> new BankMatchingPairResponse(
                         mp.getId(), mp.getLeftItem(), mp.getRightItem(),
                         mp.getAttachedImageLeft(), mp.getAttachedImageRight(),
+                        mp.getLeftVisualId(), mp.getRightVisualId(),
                         mp.getOrderIndex()))
                 .collect(Collectors.toList());
         return new BankQuestionResponse(

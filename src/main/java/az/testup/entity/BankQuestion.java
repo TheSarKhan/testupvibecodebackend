@@ -63,10 +63,12 @@ public class BankQuestion {
     private BankSubject subject;
 
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("orderIndex ASC")
     @Builder.Default
     private List<BankOption> options = new ArrayList<>();
 
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("orderIndex ASC")
     @Builder.Default
     private List<BankMatchingPair> matchingPairs = new ArrayList<>();
 

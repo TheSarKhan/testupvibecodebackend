@@ -13,13 +13,17 @@ spring:
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: validate
+      # Prod default: validate. Local .env can override to `update` so Hibernate
+      # builds the schema on an empty DB (used together with FLYWAY_ENABLED=false).
+      ddl-auto: ${DDL_AUTO:validate}
     show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   flyway:
-    enabled: true
+    # Prod default: on. Local .env can set FLYWAY_ENABLED=false to skip migrations
+    # on a fresh DB (schema then comes from Hibernate ddl-auto=update instead).
+    enabled: ${FLYWAY_ENABLED:true}
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 14

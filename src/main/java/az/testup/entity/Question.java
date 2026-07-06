@@ -83,11 +83,13 @@ public class Question {
 
     /** Options for MCQ / True-False questions */
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("orderIndex ASC")
     @Builder.Default
     private List<Option> options = new ArrayList<>();
 
     /** Matching pairs for MATCHING type questions */
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("orderIndex ASC")
     @Builder.Default
     private List<MatchingPair> matchingPairs = new ArrayList<>();
 }

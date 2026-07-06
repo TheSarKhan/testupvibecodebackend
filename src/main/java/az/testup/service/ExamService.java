@@ -674,6 +674,8 @@ public class ExamService {
                         existingPair.setRightItem(pReq.getRightItem());
                         existingPair.setAttachedImageLeft(pReq.getAttachedImageLeft());
                         existingPair.setAttachedImageRight(pReq.getAttachedImageRight());
+                        existingPair.setLeftVisualId(pReq.getLeftVisualId());
+                        existingPair.setRightVisualId(pReq.getRightVisualId());
                         existingPair.setOrderIndex(pReq.getOrderIndex());
                     } else {
                         question.getMatchingPairs().add(mapToPair(pReq, question));
@@ -754,6 +756,8 @@ public class ExamService {
                 .rightItem(pReq.getRightItem())
                 .attachedImageLeft(pReq.getAttachedImageLeft())
                 .attachedImageRight(pReq.getAttachedImageRight())
+                .leftVisualId(pReq.getLeftVisualId())
+                .rightVisualId(pReq.getRightVisualId())
                 .orderIndex(pReq.getOrderIndex())
                 .question(question)
                 .build();
@@ -890,6 +894,8 @@ public class ExamService {
                         .rightItem(mp.getRightItem())
                         .attachedImageLeft(mp.getAttachedImageLeft())
                         .attachedImageRight(mp.getAttachedImageRight())
+                        .leftVisualId(mp.getLeftVisualId())
+                        .rightVisualId(mp.getRightVisualId())
                         .orderIndex(mp.getOrderIndex())
                         .question(clonedQ)
                         .build());
@@ -1036,8 +1042,11 @@ public class ExamService {
                     throw new BadRequestException(label + ": boşluqların düzgün cavabları daxil edilməlidir");
                 }
             } else if (type == az.testup.enums.QuestionType.MATCHING) {
+                // A side counts as filled with either text or an image — a matching
+                // item that only has an image (no text) is still a valid connection.
                 boolean hasPair = q.getMatchingPairs() != null && q.getMatchingPairs().stream()
-                        .anyMatch(p -> !isBlank(p.getLeftItem()) && !isBlank(p.getRightItem()));
+                        .anyMatch(p -> (!isBlank(p.getLeftItem()) || !isBlank(p.getAttachedImageLeft()))
+                                && (!isBlank(p.getRightItem()) || !isBlank(p.getAttachedImageRight())));
                 if (!hasPair) {
                     throw new BadRequestException(label + ": ən azı bir uyğunlaşdırma əlaqəsi qurulmalıdır");
                 }
@@ -1231,6 +1240,8 @@ public class ExamService {
                 .rightItem(p.getRightItem())
                 .attachedImageLeft(p.getAttachedImageLeft())
                 .attachedImageRight(p.getAttachedImageRight())
+                .leftVisualId(p.getLeftVisualId())
+                .rightVisualId(p.getRightVisualId())
                 .orderIndex(p.getOrderIndex())
                 .build();
     }
