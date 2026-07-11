@@ -1633,6 +1633,25 @@ public class SubmissionService {
             }
         }
 
+        // Passage groups (TEXT / LISTENING) with their content, ordered by their
+        // position in the exam. The review UI groups the flat passage questions
+        // (linked via passageId) under the matching passage's content.
+        List<ClientPassageResponse> reviewPassages = exam.getPassages() == null ? new ArrayList<>() :
+                exam.getPassages().stream()
+                        .sorted(java.util.Comparator.comparing(p -> p.getOrderIndex() != null ? p.getOrderIndex() : 0))
+                        .map(p -> ClientPassageResponse.builder()
+                                .id(p.getId())
+                                .passageType(p.getPassageType())
+                                .title(p.getTitle())
+                                .textContent(p.getTextContent())
+                                .attachedImage(p.getAttachedImage())
+                                .audioContent(p.getAudioContent())
+                                .listenLimit(p.getListenLimit())
+                                .orderIndex(p.getOrderIndex())
+                                .subjectGroup(p.getSubjectGroup())
+                                .build())
+                        .collect(Collectors.toList());
+
         // Test taker identity — registered student or guest. The frontend review
         // header (and statistics preview) needs at least a display name; we
         // surface email too for teacher context.
@@ -1660,6 +1679,7 @@ public class SubmissionService {
                 .ungradedCount(ungradedCount)
                 .rating(submission.getRating())
                 .questions(reviewQuestions)
+                .passages(reviewPassages)
                 .templateScorePercent(submission.getTemplateScorePercent())
                 .templateTotalScore(reviewTotalScore)
                 .templateTotalMaxScore(reviewTotalMaxScore)

@@ -33,6 +33,12 @@ public class SubmissionReviewResponse {
     private Integer ungradedCount;
     private Integer rating;
     private List<QuestionReviewResponse> questions;
+    /**
+     * Passage groups (TEXT / LISTENING) with their content. Questions in the
+     * flat `questions` list reference these by `passageId`; the review UI groups
+     * passage questions under the matching passage's content.
+     */
+    private List<ClientPassageResponse> passages;
     private Double templateScorePercent;
     private Double templateTotalScore;
     private Double templateTotalMaxScore;
