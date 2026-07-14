@@ -3,11 +3,16 @@ package az.testup.entity;
 import az.testup.enums.Role;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "users")
+// Class-level batching: when many lazy User references need loading at once
+// (e.g. student.getFullName() across a page of submissions), Hibernate loads
+// them in IN-batches of up to 200 instead of one SELECT per user (N+1).
+@BatchSize(size = 200)
 @Getter
 @Setter
 @NoArgsConstructor

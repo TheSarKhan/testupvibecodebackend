@@ -22,12 +22,12 @@ public class Submission {
     private Long id;
 
     /** Registered user (null if guest) */
-    // BatchSize: the teacher results / statistics pages map many submissions at
-    // once and read student.getFullName() per row. Without batching that's one
-    // SELECT per submission (N+1); batching loads up to 200 students per query.
+    // Student loading is batched via a class-level @BatchSize on the User entity
+    // (Hibernate 6 forbids @BatchSize on a @ManyToOne field). The teacher results
+    // / statistics pages read student.getFullName() per submission, so batching
+    // turns that N+1 into a handful of IN-queries.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "student_id")
-    @BatchSize(size = 200)
     private User student;
 
     /** Guest name (used when not logged in) */
