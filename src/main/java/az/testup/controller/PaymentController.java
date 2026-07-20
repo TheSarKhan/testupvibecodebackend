@@ -46,6 +46,36 @@ public class PaymentController {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
 
+    // ═════════════════════════════════════════════════════════════════════
+    // TEMPORARY — real Kapital Bank checkout is switched OFF. Every purchase
+    // (subscription plan renewal/upgrade AND single-exam purchase) redirects
+    // the buyer to WhatsApp instead of the bank's hosted payment page, so the
+    // teacher/student arranges payment manually with the admin over chat.
+    //
+    // No KapitalBank order is created and no PaymentOrder row is persisted
+    // for these manual-redirect purchases — there is nothing for the bank to
+    // confirm, so /verify and the KB /callback are never involved for them.
+    //
+    // TO REVERT (bring back real online payment): flip
+    // PAYMENTS_MANUAL_REDIRECT_ENABLED to false. That alone restores the
+    // original kapitalBankService.createOrder(...) flow in both
+    // initiatePayment() and initiateExamPayment() below — no other changes
+    // needed.
+    //
+    // Added 2026-07-21 per admin request.
+    // ═════════════════════════════════════════════════════════════════════
+    private static final boolean PAYMENTS_MANUAL_REDIRECT_ENABLED = true;
+    private static final String MANUAL_PAYMENT_WHATSAPP_NUMBER = "994555723023";
+
+    /** Builds a wa.me deep link pre-filled with who's buying what, for how much. */
+    private String buildManualPaymentWhatsAppUrl(User user, String itemDescription, double amount) {
+        String text = "Salam, \"" + itemDescription + "\" üçün ödəniş etmək istəyirəm ("
+                + String.format("%.2f", amount) + " AZN). İstifadəçi: " + user.getFullName()
+                + " (" + user.getEmail() + ")";
+        String encoded = java.net.URLEncoder.encode(text, java.nio.charset.StandardCharsets.UTF_8);
+        return "https://wa.me/" + MANUAL_PAYMENT_WHATSAPP_NUMBER + "?text=" + encoded;
+    }
+
     @Value("${app.base-url}")
     private String appBaseUrl;
 
@@ -219,6 +249,20 @@ public class PaymentController {
 
         // Paid: charge only the difference, duration from total value
         String description = plan.getName() + " — " + months + " ay";
+
+        // TEMPORARY manual-payment redirect — see PAYMENTS_MANUAL_REDIRECT_ENABLED
+        // above. Skips the real Kapital Bank order entirely.
+        if (PAYMENTS_MANUAL_REDIRECT_ENABLED) {
+            return ResponseEntity.ok(Map.of(
+                    "orderType", "SUBSCRIPTION",
+                    "paymentUrl", buildManualPaymentWhatsAppUrl(user, description, chargeAmount),
+                    "manualPayment", true,
+                    "amount", chargeAmount,
+                    "durationDays", durationDays,
+                    "months", months
+            ));
+        }
+
         KapitalBankService.CreateInvoiceResult result = kapitalBankService.createOrder(chargeAmount, description);
 
         if (body.containsKey("storedId") && body.get("storedId") != null) {
@@ -511,6 +555,20 @@ public class PaymentController {
 
         double amount = exam.getPrice().doubleValue();
         String description = exam.getTitle() + " — imtahan";
+
+        // TEMPORARY manual-payment redirect — see PAYMENTS_MANUAL_REDIRECT_ENABLED
+        // above. Skips the real Kapital Bank order entirely.
+        if (PAYMENTS_MANUAL_REDIRECT_ENABLED) {
+            return ResponseEntity.ok(Map.of(
+                    "orderType", "EXAM",
+                    "examShareLink", exam.getShareLink(),
+                    "examTitle", exam.getTitle() != null ? exam.getTitle() : "",
+                    "paymentUrl", buildManualPaymentWhatsAppUrl(user, description, amount),
+                    "manualPayment", true,
+                    "amount", amount
+            ));
+        }
+
         KapitalBankService.CreateInvoiceResult result = kapitalBankService.createOrder(amount, description);
 
         if (body.containsKey("storedId") && body.get("storedId") != null) {
