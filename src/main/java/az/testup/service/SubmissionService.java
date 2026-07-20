@@ -1541,11 +1541,17 @@ public class SubmissionService {
                     if (studentAnswer != null && studentAnswer.getQuestionSnapshot() != null) {
                         try {
                             QuestionSnapshot snapshot = objectMapper.readValue(studentAnswer.getQuestionSnapshot(), QuestionSnapshot.class);
+                            // Content comes from the snapshot (what the student saw),
+                            // but the ordering key must be the LIVE orderIndex: the
+                            // passages in this same response carry live indexes, and
+                            // the review UI merges questions and passages in one
+                            // orderIndex space. A stale snapshot index (exam edited
+                            // or renumbered after submission) scrambled that merge.
                             qBuilder.content(snapshot.getContent())
                                     .attachedImage(snapshot.getAttachedImage())
                                     .questionType(snapshot.getQuestionType())
                                     .points(snapshot.getPoints())
-                                    .orderIndex(snapshot.getOrderIndex())
+                                    .orderIndex(q.getOrderIndex())
                                     .correctAnswer(snapshot.getCorrectAnswer())
                                     .options(snapshot.getOptions().stream().map(o ->
                                         OptionReviewResponse.builder()
