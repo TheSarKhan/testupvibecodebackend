@@ -133,9 +133,10 @@ public class DataSeeder implements CommandLineRunner {
         // hər fənn max 100 bal. Struktur bundan sonra admin paneldən idarə olunur.
         // Yeni mühitdə (və ya strukturu spesifikasiyaya qaytarmaq üçün) bu sətri aç:
         // seedDimTemplate();
-        // DİM Blok — qəbul imtahanının II mərhələsi (6 ixtisas qrupu × 3 fənn).
-        // Şablon son formasını alandan sonra bu da comment-ə alınır.
-        seedDimBlokTemplate();
+        // DİM Blok da canlı DB-də hazırdır — 6 ixtisas qrupu × 3 fənn, hər fənn
+        // 30 tapşırıq (22 qapalı + 5 açıq kod + 3 açıq yazılı), qrup üzrə 400 bal.
+        // Struktur bundan sonra admin paneldən idarə olunur; yeni mühitdə aç:
+        // seedDimBlokTemplate();
         // 'Olimpiada' və 'DİM Buraxılış' həqiqi şablonlardır və aşağıdakı cleanup
         // onları qoruyur; digər nümunə şablon/imtahanlar silinir.
         cleanupNonOlimpiadaSamples();
