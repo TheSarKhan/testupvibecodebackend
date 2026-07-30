@@ -29,6 +29,15 @@ public class TemplateSectionTypeCount {
     @Column(name = "passage_type")
     private String passageType;
 
+    /**
+     * Distinguishes several passages of the SAME type inside one section: rows
+     * sharing (passageType, passageGroup) build one passage. Null means "the
+     * single passage of this type" — the behaviour before this field existed.
+     * Example: DİM Azərbaycan dili has two reading texts, groups 0 and 1.
+     */
+    @Column(name = "passage_group")
+    private Integer passageGroup;
+
     @Column(nullable = false)
     private Integer count;
 

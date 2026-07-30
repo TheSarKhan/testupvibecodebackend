@@ -643,8 +643,12 @@ public class DataSeeder implements CommandLineRunner {
         log.info("Olimpiada şablonu uğurla yaradıldı");
     }
 
-    /** One tapşırıq-group row in the canonical DİM spec. */
-    private record DimTypeCount(QuestionType type, int count, String passageType) {}
+    /**
+     * One tapşırıq-group row in the canonical DİM spec. {@code passageGroup}
+     * separates several passages of the same type (null = standalone or the only
+     * passage of that type).
+     */
+    private record DimTypeCount(QuestionType type, int count, String passageType, Integer passageGroup) {}
 
     /** One subject section of the canonical DİM Buraxılış spec. */
     private record DimSectionSpec(String subjectName, int questionCount, String formula,
@@ -659,23 +663,28 @@ public class DataSeeder implements CommandLineRunner {
             // 30 tapşırıq: 16 müstəqil qapalı + dinləmə mətni (3 qapalı + 3 açıq)
             // + oxu mətni (4 qapalı + 4 açıq). qapalı=23, açıq=7 → 2·7+23=37.
             new DimSectionSpec("İngilis dili", 30, "(100.0/37.0)*(2*l+a)", List.of(
-                    new DimTypeCount(QuestionType.MCQ, 16, null),
-                    new DimTypeCount(QuestionType.MCQ, 3, "LISTENING"),
-                    new DimTypeCount(QuestionType.OPEN_MANUAL, 3, "LISTENING"),
-                    new DimTypeCount(QuestionType.MCQ, 4, "TEXT"),
-                    new DimTypeCount(QuestionType.OPEN_MANUAL, 4, "TEXT"))),
-            // 30 tapşırıq: 10 dil qaydası (qapalı) + oxu mətni (10 qapalı + 10 açıq).
-            // Rəsmi cədvəldə 2 ayrı mətn var; model mətnləri tipə görə qruplaşdırdığı
-            // üçün onlar tək oxu blokunda birləşir — bal eynidir. qapalı=20, açıq=10.
+                    new DimTypeCount(QuestionType.MCQ, 16, null, null),
+                    // Dinləyib-anlama mətni: 3 qapalı + 3 açıq
+                    new DimTypeCount(QuestionType.MCQ, 3, "LISTENING", 0),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 3, "LISTENING", 0),
+                    // Oxuyub-anlama mətni: 4 qapalı + 4 açıq
+                    new DimTypeCount(QuestionType.MCQ, 4, "TEXT", 0),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 4, "TEXT", 0))),
+            // 30 tapşırıq: 10 dil qaydası (qapalı) + oxuyub-anlamaya dair İKİ mətn,
+            // hərəsinə 10 tapşırıq (5 qapalı + 5 açıq). qapalı=20, açıq=10.
             new DimSectionSpec("Azərbaycan dili", 30, "(5.0/2.0)*(2*l+a)", List.of(
-                    new DimTypeCount(QuestionType.MCQ, 10, null),
-                    new DimTypeCount(QuestionType.MCQ, 10, "TEXT"),
-                    new DimTypeCount(QuestionType.OPEN_MANUAL, 10, "TEXT"))),
+                    new DimTypeCount(QuestionType.MCQ, 10, null, null),
+                    // 1-ci mətn
+                    new DimTypeCount(QuestionType.MCQ, 5, "TEXT", 0),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 5, "TEXT", 0),
+                    // 2-ci mətn
+                    new DimTypeCount(QuestionType.MCQ, 5, "TEXT", 1),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 5, "TEXT", 1))),
             // 25 tapşırıq: 13 qapalı + 5 kodlaşdırılmış açıq + 7 həlli yazılan açıq.
             new DimSectionSpec("Riyaziyyat", 25, "(25.0/8.0)*(2*l+f+a)", List.of(
-                    new DimTypeCount(QuestionType.MCQ, 13, null),
-                    new DimTypeCount(QuestionType.OPEN_AUTO, 5, null),
-                    new DimTypeCount(QuestionType.OPEN_MANUAL, 7, null))));
+                    new DimTypeCount(QuestionType.MCQ, 13, null, null),
+                    new DimTypeCount(QuestionType.OPEN_AUTO, 5, null, null),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 7, null, null))));
 
     private void seedDimTemplate() {
         Template template = templateRepository.findByTitle("DİM Buraxılış")
@@ -774,7 +783,7 @@ public class DataSeeder implements CommandLineRunner {
         List<DimTypeCount> rows = spec.typeCounts();
         for (int i = 0; i < rows.size(); i++) {
             DimTypeCount row = rows.get(i);
-            addTypeCount(section, row.type(), row.count(), i, row.passageType());
+            addTypeCount(section, row.type(), row.count(), i, row.passageType(), row.passageGroup());
         }
     }
 
@@ -934,12 +943,17 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     private void addTypeCount(TemplateSection section, QuestionType type, int count, int order, String passageType) {
+        addTypeCount(section, type, count, order, passageType, null);
+    }
+    private void addTypeCount(TemplateSection section, QuestionType type, int count, int order,
+                              String passageType, Integer passageGroup) {
         TemplateSectionTypeCount tc = TemplateSectionTypeCount.builder()
                 .section(section)
                 .questionType(type)
                 .count(count)
                 .orderIndex(order)
                 .passageType(passageType)
+                .passageGroup(passageGroup)
                 .build();
         // Persist the child row directly — it owns the FK (TemplateSection maps
         // typeCounts with mappedBy = "section").

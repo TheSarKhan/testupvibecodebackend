@@ -5,5 +5,7 @@ public record TemplateSectionTypeCountResponse(
         String questionType,
         Integer count,
         Integer orderIndex,
-        String passageType
+        String passageType,
+        /** Rows sharing (passageType, passageGroup) form one passage. Null = single passage of that type. */
+        Integer passageGroup
 ) {}

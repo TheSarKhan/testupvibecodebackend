@@ -191,6 +191,7 @@ public class TemplateService {
                                     .section(secCopy)
                                     .questionType(srcTc.getQuestionType())
                                     .passageType(srcTc.getPassageType())
+                                    .passageGroup(srcTc.getPassageGroup())
                                     .count(srcTc.getCount())
                                     .orderIndex(srcTc.getOrderIndex())
                                     .build()
@@ -286,6 +287,7 @@ public class TemplateService {
                         .section(section)
                         .questionType(QuestionType.valueOf(tc.questionType()))
                         .passageType(tc.passageType())
+                        .passageGroup(tc.passageGroup())
                         .count(tc.count())
                         .orderIndex(j)
                         .build());
@@ -361,6 +363,7 @@ public class TemplateService {
                         .section(section)
                         .questionType(QuestionType.valueOf(tc.questionType()))
                         .passageType(tc.passageType())
+                        .passageGroup(tc.passageGroup())
                         .count(tc.count())
                         .orderIndex(j)
                         .build());
@@ -390,7 +393,7 @@ public class TemplateService {
 
     private TemplateSectionResponse mapSection(TemplateSection s, String templateTitle, String subtitleName) {
         List<TemplateSectionTypeCountResponse> typeCounts = s.getTypeCounts().stream()
-                .map(tc -> new TemplateSectionTypeCountResponse(tc.getId(), tc.getQuestionType().name(), tc.getCount(), tc.getOrderIndex(), tc.getPassageType()))
+                .map(tc -> new TemplateSectionTypeCountResponse(tc.getId(), tc.getQuestionType().name(), tc.getCount(), tc.getOrderIndex(), tc.getPassageType(), tc.getPassageGroup()))
                 .collect(Collectors.toList());
         int total = typeCounts.stream().mapToInt(TemplateSectionTypeCountResponse::count).sum();
         return new TemplateSectionResponse(
