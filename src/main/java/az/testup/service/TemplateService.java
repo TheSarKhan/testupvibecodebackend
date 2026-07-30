@@ -43,6 +43,17 @@ public class TemplateService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Teacher-facing listing: only templates flagged visible. The admin listing
+     * uses {@link #getAllTemplates()} and still sees hidden templates.
+     */
+    public List<TemplateResponse> getVisibleTemplates() {
+        return templateRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(Template::isVisible)
+                .map(this::mapTemplate)
+                .collect(Collectors.toList());
+    }
+
     public org.springframework.data.domain.Page<TemplateResponse> getAllTemplates(
             org.springframework.data.domain.Pageable pageable) {
         return getAllTemplates(null, pageable);
@@ -96,6 +107,7 @@ public class TemplateService {
 
     public List<TemplateResponse> getTemplatesByType(TemplateType type) {
         return templateRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(Template::isVisible)
                 .filter(t -> type == (t.getTemplateType() != null ? t.getTemplateType() : TemplateType.STANDARD))
                 .map(this::mapTemplate)
                 .collect(Collectors.toList());
@@ -123,6 +135,15 @@ public class TemplateService {
         if (request.templateType() != null) {
             try { template.setTemplateType(TemplateType.valueOf(request.templateType())); } catch (IllegalArgumentException ignored) {}
         }
+        return mapTemplate(templateRepository.save(template));
+    }
+
+    /** Flips the template's visible flag and returns the updated view. */
+    @Transactional
+    public TemplateResponse toggleVisibility(Long id) {
+        Template template = templateRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Şablon tapılmadı"));
+        template.setVisible(!template.isVisible());
         return mapTemplate(templateRepository.save(template));
     }
 
@@ -356,7 +377,8 @@ public class TemplateService {
                 t.getSubtitles() != null ? t.getSubtitles().size() : 0,
                 examCount,
                 t.getCreatedAt(),
-                t.getTemplateType() != null ? t.getTemplateType().name() : TemplateType.STANDARD.name());
+                t.getTemplateType() != null ? t.getTemplateType().name() : TemplateType.STANDARD.name(),
+                t.isVisible());
     }
 
     private TemplateSubtitleResponse mapSubtitle(TemplateSubtitle s) {

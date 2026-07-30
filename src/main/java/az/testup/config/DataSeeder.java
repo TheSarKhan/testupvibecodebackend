@@ -122,9 +122,11 @@ public class DataSeeder implements CommandLineRunner {
         seedTags();
         seedOlimpiyadaTemplate();
         seedSampleOlimpiyadaExam();
-        // For now only the "Olimpiada" template/exam is seeded. Other sample
-        // templates and exams are intentionally disabled and any previously
-        // seeded ones are removed below.
+        seedDimTemplate();
+        // The "Olimpiada" and "DİM Buraxılış" templates are seeded above. Other
+        // sample templates and sample exams are intentionally disabled and any
+        // previously seeded ones are removed below (the two real templates are
+        // preserved).
         cleanupNonOlimpiadaSamples();
     }
 
@@ -639,6 +641,10 @@ public class DataSeeder implements CommandLineRunner {
         Template template = templateRepository.findByTitle("DİM Buraxılış").orElse(null);
 
         if (template != null) {
+            // Already seeded. Keep it idempotent: just make sure each section has
+            // its 100-bal cap. Structure and formulas are authored here on first
+            // creation and afterwards edited from the admin panel — we never
+            // restructure an existing template on restart.
             final Template finalTemplate = template;
             new TransactionTemplate(transactionManager).execute(status -> {
                 List<TemplateSection> sections = entityManager.createQuery(
@@ -647,23 +653,14 @@ public class DataSeeder implements CommandLineRunner {
                         .setParameter("t", finalTemplate)
                         .getResultList();
                 for (TemplateSection sec : sections) {
-                    // Patch maxScore
                     if (sec.getMaxScore() == null) {
                         sec.setMaxScore(100.0);
                         sectionRepository.save(sec);
                     }
-                    // Patch İngilis dili: add TEXT/LISTENING passage type counts if missing
-                    if ("İngilis dili".equals(sec.getSubjectName())) {
-                        boolean hasText = sec.getTypeCounts().stream().anyMatch(tc -> "TEXT".equals(tc.getPassageType()));
-                        boolean hasListening = sec.getTypeCounts().stream().anyMatch(tc -> "LISTENING".equals(tc.getPassageType()));
-                        int nextOrder = sec.getTypeCounts().stream().mapToInt(TemplateSectionTypeCount::getOrderIndex).max().orElse(-1) + 1;
-                        if (!hasText) addTypeCount(sec, QuestionType.MCQ, 5, nextOrder++, "TEXT");
-                        if (!hasListening) addTypeCount(sec, QuestionType.MCQ, 3, nextOrder, "LISTENING");
-                    }
                 }
                 return null;
             });
-            log.debug("DİM Buraxılış şablonu yoxlanıldı/yeniləndi");
+            log.debug("DİM Buraxılış şablonu yoxlanıldı");
             return;
         }
 
@@ -675,7 +672,12 @@ public class DataSeeder implements CommandLineRunner {
                 .orderIndex(0)
                 .build());
 
-        // İngilis dili: 15 adi MCQ + Mətn (5 MCQ) + Dinləmə (3 MCQ) + OPEN_MANUAL=7  |  Max = 100 bal
+        // ── İngilis dili — 30 tapşırıq | Max 100 bal ────────────────────────
+        // Nisbi bal: (100/37)·(2·n_açıq_yazılı + n_qapalı).  qapalı=23, açıq=7 → 2·7+23=37.
+        //   • 16 müstəqil qapalı tapşırıq
+        //   • Dinləyib-anlama mətni: 3 qapalı + 3 açıq (yazılı)
+        //   • Oxuyub-anlama mətni:   4 qapalı + 4 açıq (yazılı)
+        // qapalı → MCQ (dəyişən a), açıq yazılı → OPEN_MANUAL (dəyişən l).
         TemplateSection ingilis = TemplateSection.builder()
                 .subtitle(subtitle)
                 .subjectName("İngilis dili")
@@ -685,12 +687,18 @@ public class DataSeeder implements CommandLineRunner {
                 .orderIndex(0)
                 .build();
         ingilis = sectionRepository.save(ingilis);
-        addTypeCount(ingilis, QuestionType.MCQ, 15, 0, null);
-        addTypeCount(ingilis, QuestionType.MCQ, 5, 1, "TEXT");
-        addTypeCount(ingilis, QuestionType.MCQ, 3, 2, "LISTENING");
-        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 7, 3, null);
+        addTypeCount(ingilis, QuestionType.MCQ, 16, 0, null);
+        addTypeCount(ingilis, QuestionType.MCQ, 3, 1, "LISTENING");
+        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 3, 2, "LISTENING");
+        addTypeCount(ingilis, QuestionType.MCQ, 4, 3, "TEXT");
+        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 4, 4, "TEXT");
 
-        // Azərbaycan dili: MCQ=20, OPEN_MANUAL=10  |  Max = 100 bal
+        // ── Azərbaycan dili — 30 tapşırıq | Max 100 bal ─────────────────────
+        // Nisbi bal: (5/2)·(2·n_açıq_yazılı + n_qapalı).  qapalı=20, açıq=10 → 2·10+20=40.
+        //   • 10 müstəqil qapalı (dil qaydaları)
+        //   • Oxuyub-anlama mətni: 10 qapalı + 10 açıq (yazılı)
+        // Rəsmi cədvəldə 2 ayrı mətn var; şablon modeli mətnləri tipə görə
+        // qruplaşdırdığı üçün onlar burada tək oxu blokunda birləşir (bal eynidir).
         TemplateSection azDili = TemplateSection.builder()
                 .subtitle(subtitle)
                 .subjectName("Azərbaycan dili")
@@ -700,8 +708,9 @@ public class DataSeeder implements CommandLineRunner {
                 .orderIndex(1)
                 .build();
         azDili = sectionRepository.save(azDili);
-        addTypeCount(azDili, QuestionType.MCQ, 20, 0);
-        addTypeCount(azDili, QuestionType.OPEN_MANUAL, 10, 1);
+        addTypeCount(azDili, QuestionType.MCQ, 10, 0, null);
+        addTypeCount(azDili, QuestionType.MCQ, 10, 1, "TEXT");
+        addTypeCount(azDili, QuestionType.OPEN_MANUAL, 10, 2, "TEXT");
 
         // Riyaziyyat: MCQ=13, OPEN_AUTO=5, OPEN_MANUAL=7  |  Max = 100 bal
         TemplateSection riyaziyyat = TemplateSection.builder()
@@ -1495,7 +1504,7 @@ public class DataSeeder implements CommandLineRunner {
             //    Those exams keep their questions/answers but lose the template
             //    link (the teacher can re-link or delete them later).
             List<?> dimIds = entityManager.createNativeQuery(
-                    "SELECT id FROM templates WHERE title <> 'Olimpiada'").getResultList();
+                    "SELECT id FROM templates WHERE title NOT IN ('Olimpiada', 'DİM Buraxılış')").getResultList();
             for (Object idObj : dimIds) {
                 long tid = ((Number) idObj).longValue();
                 String secSubquery = "(SELECT s.id FROM template_sections s "
@@ -1508,7 +1517,7 @@ public class DataSeeder implements CommandLineRunner {
                 entityManager.createNativeQuery("DELETE FROM template_subtitles WHERE template_id = " + tid).executeUpdate();
                 entityManager.createNativeQuery("DELETE FROM templates WHERE id = " + tid).executeUpdate();
             }
-            log.info("Cleanup: yalnız 'Olimpiada' saxlanıldı — digər nümunə şablon/imtahanlar silindi");
+            log.info("Cleanup: 'Olimpiada' və 'DİM Buraxılış' saxlanıldı — digər nümunə şablon/imtahanlar silindi");
             return null;
         });
     }

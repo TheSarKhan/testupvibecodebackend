@@ -8,5 +8,6 @@ public record TemplateResponse(
         int subtitleCount,
         long examCount,
         LocalDateTime createdAt,
-        String templateType
+        String templateType,
+        boolean visible
 ) {}

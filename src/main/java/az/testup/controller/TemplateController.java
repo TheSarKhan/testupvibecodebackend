@@ -19,14 +19,15 @@ public class TemplateController {
     private final TemplateService templateService;
 
     /**
-     * Returns every active template regardless of legacy templateType. The olimpiada vs
+     * Returns every visible template regardless of legacy templateType. The olimpiada vs
      * standard distinction has been retired — both kinds are surfaced through this single
      * endpoint and the editor treats them uniformly via the template's pointGroups +
-     * allowCustomPoints config.
+     * allowCustomPoints config. Templates an admin has hidden are excluded here; the admin
+     * panel ({@code GET /api/admin/templates}) still lists them.
      */
     @GetMapping
     public ResponseEntity<List<TemplateResponse>> getAllTemplates() {
-        return ResponseEntity.ok(templateService.getAllTemplates());
+        return ResponseEntity.ok(templateService.getVisibleTemplates());
     }
 
     /**

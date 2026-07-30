@@ -31,6 +31,15 @@ public class Template {
     @Builder.Default
     private TemplateType templateType = TemplateType.STANDARD;
 
+    /**
+     * When false, the template is hidden from the teacher-facing picker
+     * (exam editor / create-exam flows) but remains fully editable in the
+     * admin panel. Existing templates default to visible.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean visible = true;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private User createdBy;
