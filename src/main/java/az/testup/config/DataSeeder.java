@@ -133,6 +133,9 @@ public class DataSeeder implements CommandLineRunner {
         // hər fənn max 100 bal. Struktur bundan sonra admin paneldən idarə olunur.
         // Yeni mühitdə (və ya strukturu spesifikasiyaya qaytarmaq üçün) bu sətri aç:
         // seedDimTemplate();
+        // DİM Blok — qəbul imtahanının II mərhələsi (6 ixtisas qrupu × 3 fənn).
+        // Şablon son formasını alandan sonra bu da comment-ə alınır.
+        seedDimBlokTemplate();
         // 'Olimpiada' və 'DİM Buraxılış' həqiqi şablonlardır və aşağıdakı cleanup
         // onları qoruyur; digər nümunə şablon/imtahanlar silinir.
         cleanupNonOlimpiadaSamples();
@@ -807,8 +810,12 @@ public class DataSeeder implements CommandLineRunner {
 
     /** Same fingerprint computed from the spec, so the two can be compared directly. */
     private String signatureOf(DimSectionSpec spec) {
+        return signatureOfTypeCounts(spec.typeCounts());
+    }
+
+    private String signatureOfTypeCounts(List<DimTypeCount> specRows) {
         StringBuilder sb = new StringBuilder();
-        for (DimTypeCount row : spec.typeCounts()) {
+        for (DimTypeCount row : specRows) {
             sb.append(row.type().name()).append(':').append(row.count()).append(':')
               .append(row.passageType() == null ? "-" : row.passageType()).append(':')
               .append(row.passageGroup() == null ? "-" : row.passageGroup()).append('|');
@@ -818,10 +825,171 @@ public class DataSeeder implements CommandLineRunner {
 
     /** Writes a spec's typeCount rows for the given section. */
     private void applyTypeCounts(TemplateSection section, DimSectionSpec spec) {
-        List<DimTypeCount> rows = spec.typeCounts();
+        applyTypeCounts(section, spec.typeCounts());
+    }
+
+    private void applyTypeCounts(TemplateSection section, List<DimTypeCount> rows) {
         for (int i = 0; i < rows.size(); i++) {
             DimTypeCount row = rows.get(i);
             addTypeCount(section, row.type(), row.count(), i, row.passageType(), row.passageGroup());
+        }
+    }
+
+    // ─── DİM Blok (qəbul imtahanının II mərhələsi) ───────────────────────────
+
+    private static final String DIM_BLOK_TITLE = "DİM Blok";
+
+    /** Hər fənn üzrə 30 tapşırıq: 22 qapalı + 5 açıq (kodlaşdırılan) + 3 açıq (yazılı). */
+    private static final int BLOK_QUESTION_COUNT = 30;
+
+    /**
+     * Nisbi bal: NB = NBq + NBa, harada
+     *   NBq = (Dq − Yq/4)·100/33   — qapalı; hər 4 yanlış bir düzgünü aparır
+     *   NBa = (Dkod + 2·Dyazılı)·100/33 — açıq; yazılı tapşırıq ikiqat çəkilidir
+     * Dəyişənlər: a = qapalı düzgün (Dq), b = qapalı yanlış (Yq),
+     * f = OPEN_AUTO düzgün (Dkod), l = OPEN_MANUAL (Dyazılı, 0…1 aralığında kəsr
+     * qiymət alır — markerlərin 0, ⅓, ½, ⅔, 1 qiymətləndirməsi ilə üst-üstə düşür).
+     * Hamısı düzgün olduqda: (100/33)·(22 + 5 + 2·3) = (100/33)·33 = 100.
+     *
+     * Qeyd: rəsmi qaydada NBq ayrıca sıfıra qırxılır ("mənfi alınarsa NBq=0").
+     * Düstur mühərriki max() dəstəkləmir, ona görə yalnız yekun nəticə sıfırda
+     * saxlanılır (SubmissionService) — fərq yalnız çox aşağı nəticələrdə görünür.
+     */
+    private static final String BLOK_FORMULA = "(100.0/33.0)*(a-b/4+f+2*l)";
+
+    private static final List<DimTypeCount> BLOK_TYPE_COUNTS = List.of(
+            new DimTypeCount(QuestionType.MCQ, 22, null, null),
+            new DimTypeCount(QuestionType.OPEN_AUTO, 5, null, null),
+            new DimTypeCount(QuestionType.OPEN_MANUAL, 3, null, null));
+
+    /** Bir fənn + çəki əmsalına uyğun max bal (1,5 → 150; 1 → 100). */
+    private record BlokSubject(String subjectName, double maxScore) {}
+
+    /** Bir ixtisas qrupu (altqrupu) — şablonda altbaşlıq olur. */
+    private record BlokGroup(String subtitle, List<BlokSubject> subjects) {}
+
+    /**
+     * İxtisas qrupları üzrə çəki əmsalları. Hər qrupda 150 + 150 + 100 = 400 bal,
+     * yəni rəsmi "II mərhələ üzrə maksimal ümumi bal: 400".
+     */
+    private static final List<BlokGroup> DIM_BLOK_GROUPS = List.of(
+            new BlokGroup("1ci qrup RK", List.of(
+                    new BlokSubject("Riyaziyyat", 150.0),
+                    new BlokSubject("Fizika", 150.0),
+                    new BlokSubject("Kimya", 100.0))),
+            new BlokGroup("1ci qrup Rİ", List.of(
+                    new BlokSubject("Riyaziyyat", 150.0),
+                    new BlokSubject("Fizika", 150.0),
+                    // Fənn siyahısında ad "Informatika" kimi qeydiyyatdadır.
+                    new BlokSubject("Informatika", 100.0))),
+            new BlokGroup("2ci qrup", List.of(
+                    new BlokSubject("Riyaziyyat", 150.0),
+                    new BlokSubject("Coğrafiya", 150.0),
+                    new BlokSubject("Tarix", 100.0))),
+            new BlokGroup("3cu qrup DT", List.of(
+                    new BlokSubject("Azərbaycan dili", 150.0),
+                    new BlokSubject("Tarix", 150.0),
+                    new BlokSubject("Ədəbiyyat", 100.0))),
+            new BlokGroup("3cu qrup TC", List.of(
+                    new BlokSubject("Azərbaycan dili", 150.0),
+                    new BlokSubject("Tarix", 150.0),
+                    new BlokSubject("Coğrafiya", 100.0))),
+            new BlokGroup("4cu qrup", List.of(
+                    new BlokSubject("Biologiya", 150.0),
+                    new BlokSubject("Kimya", 150.0),
+                    new BlokSubject("Fizika", 100.0))));
+
+    /**
+     * Creates/reconciles the "DİM Blok" template: one subtitle per ixtisas qrupu,
+     * three subject sections inside each. Matching sections are left alone, so a
+     * restart is a no-op; only missing or drifted ones are written.
+     */
+    private void seedDimBlokTemplate() {
+        Template template = templateRepository.findByTitle(DIM_BLOK_TITLE)
+                .orElseGet(() -> templateRepository.save(
+                        Template.builder().title(DIM_BLOK_TITLE).build()));
+        final Template ft = template;
+        final int[] created = {0};
+        final int[] fixed = {0};
+
+        new TransactionTemplate(transactionManager).execute(status -> {
+            for (int gi = 0; gi < DIM_BLOK_GROUPS.size(); gi++) {
+                BlokGroup group = DIM_BLOK_GROUPS.get(gi);
+                TemplateSubtitle subtitle = entityManager.createQuery(
+                        "SELECT s FROM TemplateSubtitle s WHERE s.template = :t AND s.subtitle = :name",
+                        TemplateSubtitle.class)
+                        .setParameter("t", ft)
+                        .setParameter("name", group.subtitle())
+                        .getResultList().stream().findFirst().orElse(null);
+                if (subtitle == null) {
+                    subtitle = subtitleRepository.save(TemplateSubtitle.builder()
+                            .template(ft)
+                            .subtitle(group.subtitle())
+                            .orderIndex(gi)
+                            .build());
+                }
+
+                for (int si = 0; si < group.subjects().size(); si++) {
+                    BlokSubject subj = group.subjects().get(si);
+                    TemplateSection sec = entityManager.createQuery(
+                            "SELECT s FROM TemplateSection s WHERE s.subtitle = :sub"
+                                    + " AND s.subjectName = :name", TemplateSection.class)
+                            .setParameter("sub", subtitle)
+                            .setParameter("name", subj.subjectName())
+                            .getResultList().stream().findFirst().orElse(null);
+
+                    if (sec == null) {
+                        sec = sectionRepository.save(TemplateSection.builder()
+                                .subtitle(subtitle)
+                                .subjectName(subj.subjectName())
+                                .questionCount(BLOK_QUESTION_COUNT)
+                                .formula(BLOK_FORMULA)
+                                .maxScore(subj.maxScore())
+                                .orderIndex(si)
+                                .build());
+                        applyTypeCounts(sec, BLOK_TYPE_COUNTS);
+                        created[0]++;
+                        continue;
+                    }
+
+                    boolean changed = false;
+                    if (!BLOK_FORMULA.equals(sec.getFormula())) { sec.setFormula(BLOK_FORMULA); changed = true; }
+                    if (sec.getMaxScore() == null || sec.getMaxScore() != subj.maxScore()) {
+                        sec.setMaxScore(subj.maxScore());
+                        changed = true;
+                    }
+                    if (sec.getQuestionCount() == null || sec.getQuestionCount() != BLOK_QUESTION_COUNT) {
+                        sec.setQuestionCount(BLOK_QUESTION_COUNT);
+                        changed = true;
+                    }
+                    if (changed) sectionRepository.save(sec);
+
+                    List<TemplateSectionTypeCount> rows = entityManager.createQuery(
+                            "SELECT tc FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid"
+                                    + " ORDER BY tc.orderIndex", TemplateSectionTypeCount.class)
+                            .setParameter("sid", sec.getId())
+                            .getResultList();
+                    if (!signatureOf(rows).equals(signatureOfTypeCounts(BLOK_TYPE_COUNTS))) {
+                        entityManager.createQuery(
+                                "DELETE FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid")
+                                .setParameter("sid", sec.getId())
+                                .executeUpdate();
+                        entityManager.flush();
+                        entityManager.clear();
+                        TemplateSection fresh = sectionRepository.findById(sec.getId()).orElse(null);
+                        if (fresh != null) applyTypeCounts(fresh, BLOK_TYPE_COUNTS);
+                        changed = true;
+                    }
+                    if (changed) fixed[0]++;
+                }
+            }
+            return null;
+        });
+
+        if (created[0] > 0 || fixed[0] > 0) {
+            log.info("DİM Blok: {} bölmə yaradıldı, {} bölmə uyğunlaşdırıldı", created[0], fixed[0]);
+        } else {
+            log.debug("DİM Blok şablonu yoxlanıldı (spesifikasiya ilə üst-üstə düşür)");
         }
     }
 
@@ -1614,7 +1782,7 @@ public class DataSeeder implements CommandLineRunner {
             //    Those exams keep their questions/answers but lose the template
             //    link (the teacher can re-link or delete them later).
             List<?> dimIds = entityManager.createNativeQuery(
-                    "SELECT id FROM templates WHERE title NOT IN ('Olimpiada', 'DİM Buraxılış')").getResultList();
+                    "SELECT id FROM templates WHERE title NOT IN ('Olimpiada', 'DİM Buraxılış', 'DİM Blok')").getResultList();
             for (Object idObj : dimIds) {
                 long tid = ((Number) idObj).longValue();
                 String secSubquery = "(SELECT s.id FROM template_sections s "
