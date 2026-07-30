@@ -127,7 +127,10 @@ public class DataSeeder implements CommandLineRunner {
         // 'Olimpiada'-nı adına görə qoruyur, ona toxunulmur.)
         // seedOlimpiyadaTemplate();
         // seedSampleOlimpiyadaExam();
-        seedDimTemplate();
+        // DİM Buraxılış da canlı DB-də hazırdır (11-ci sinif: İngilis dili 30 +
+        // Azərbaycan dili 30 + Riyaziyyat 25 = 85 tapşırıq, hər fənn max 100 bal).
+        // Struktur bundan sonra admin paneldən idarə olunur.
+        // seedDimTemplate();
         // 'Olimpiada' və 'DİM Buraxılış' həqiqi şablonlardır və aşağıdakı cleanup
         // onları qoruyur; digər nümunə şablon/imtahanlar silinir.
         cleanupNonOlimpiadaSamples();
