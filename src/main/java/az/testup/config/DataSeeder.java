@@ -127,10 +127,10 @@ public class DataSeeder implements CommandLineRunner {
         // 'Olimpiada'-nı adına görə qoruyur, ona toxunulmur.)
         // seedOlimpiyadaTemplate();
         // seedSampleOlimpiyadaExam();
-        // DİM Buraxılış da canlı DB-də hazırdır (11-ci sinif: İngilis dili 30 +
-        // Azərbaycan dili 30 + Riyaziyyat 25 = 85 tapşırıq, hər fənn max 100 bal).
-        // Struktur bundan sonra admin paneldən idarə olunur.
-        // seedDimTemplate();
+        // DİM Buraxılış strukturunu DIM_SECTIONS spesifikasiyası ilə uyğunlaşdırır.
+        // Uyğun olduqda heç nə etmir (restart = no-op). Şablon son formasını alandan
+        // sonra bu çağırış comment-ə alınır və struktur admin paneldən idarə olunur.
+        seedDimTemplate();
         // 'Olimpiada' və 'DİM Buraxılış' həqiqi şablonlardır və aşağıdakı cleanup
         // onları qoruyur; digər nümunə şablon/imtahanlar silinir.
         cleanupNonOlimpiadaSamples();
@@ -726,34 +726,36 @@ public class DataSeeder implements CommandLineRunner {
                 return null;
             }
 
-            // Populated. Repair only what is provably corrupt: the admin panel keeps
-            // questionCount equal to the sum of the typeCount rows (see
-            // TemplateService.updateSection), so a mismatch means duplicated rows —
-            // exactly what the old addTypeCount produced. Legitimate admin edits
-            // satisfy the invariant and are left untouched.
-            java.util.List<Long> corrupt = new java.util.ArrayList<>();
+            // Populated: bring each known section back in line with the spec. A
+            // section is rewritten only when its tapşırıq groups differ from
+            // DIM_SECTIONS — that covers both the rows duplicated by the old
+            // addTypeCount and the older single-passage layout, and it leaves a
+            // section that already matches completely untouched (so a restart is a
+            // no-op). Sections whose subject is not in the spec are never touched.
+            java.util.List<Long> stale = new java.util.ArrayList<>();
             for (TemplateSection sec : existing) {
                 if (sec.getMaxScore() == null) {
                     sec.setMaxScore(100.0);
                     sectionRepository.save(sec);
                 }
-                Long sum = entityManager.createQuery(
-                        "SELECT SUM(tc.count) FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid",
-                        Long.class)
+                DimSectionSpec spec = specFor(sec.getSubjectName());
+                if (spec == null) continue;
+                List<TemplateSectionTypeCount> rows = entityManager.createQuery(
+                        "SELECT tc FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid"
+                                + " ORDER BY tc.orderIndex", TemplateSectionTypeCount.class)
                         .setParameter("sid", sec.getId())
-                        .getSingleResult();
-                long total = sum == null ? 0L : sum;
-                if (sec.getQuestionCount() != null && total != sec.getQuestionCount().longValue()) {
-                    corrupt.add(sec.getId());
+                        .getResultList();
+                if (!signatureOf(rows).equals(signatureOf(spec))) {
+                    stale.add(sec.getId());
                 }
             }
 
-            if (corrupt.isEmpty()) {
-                log.debug("DİM Buraxılış şablonu yoxlanıldı (təmiz)");
+            if (stale.isEmpty()) {
+                log.debug("DİM Buraxılış şablonu yoxlanıldı (spesifikasiya ilə üst-üstə düşür)");
                 return null;
             }
 
-            for (Long sid : corrupt) {
+            for (Long sid : stale) {
                 entityManager.createQuery(
                         "DELETE FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid")
                         .setParameter("sid", sid)
@@ -765,17 +767,51 @@ public class DataSeeder implements CommandLineRunner {
             // cascade updates onto them.
             entityManager.clear();
 
-            for (Long sid : corrupt) {
+            for (Long sid : stale) {
                 TemplateSection sec = sectionRepository.findById(sid).orElse(null);
                 if (sec == null) continue;
-                DIM_SECTIONS.stream()
-                        .filter(sp -> sp.subjectName().equals(sec.getSubjectName()))
-                        .findFirst()
-                        .ifPresent(sp -> applyTypeCounts(sec, sp));
+                DimSectionSpec spec = specFor(sec.getSubjectName());
+                if (spec == null) continue;
+                applyTypeCounts(sec, spec);
+                // Keep the invariant the admin panel maintains: questionCount is the
+                // sum of the tapşırıq counts.
+                if (sec.getQuestionCount() == null || sec.getQuestionCount() != spec.questionCount()) {
+                    sec.setQuestionCount(spec.questionCount());
+                    sectionRepository.save(sec);
+                }
             }
-            log.warn("DİM Buraxılış: {} bölmədə təkrarlanmış tapşırıq sayları təmir edildi", corrupt.size());
+            log.warn("DİM Buraxılış: {} bölmə spesifikasiyaya uyğunlaşdırıldı", stale.size());
             return null;
         });
+    }
+
+    private DimSectionSpec specFor(String subjectName) {
+        return DIM_SECTIONS.stream()
+                .filter(sp -> sp.subjectName().equals(subjectName))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** Order-sensitive fingerprint of the stored tapşırıq groups. */
+    private String signatureOf(List<TemplateSectionTypeCount> rows) {
+        StringBuilder sb = new StringBuilder();
+        for (TemplateSectionTypeCount tc : rows) {
+            sb.append(tc.getQuestionType().name()).append(':').append(tc.getCount()).append(':')
+              .append(tc.getPassageType() == null ? "-" : tc.getPassageType()).append(':')
+              .append(tc.getPassageGroup() == null ? "-" : tc.getPassageGroup()).append('|');
+        }
+        return sb.toString();
+    }
+
+    /** Same fingerprint computed from the spec, so the two can be compared directly. */
+    private String signatureOf(DimSectionSpec spec) {
+        StringBuilder sb = new StringBuilder();
+        for (DimTypeCount row : spec.typeCounts()) {
+            sb.append(row.type().name()).append(':').append(row.count()).append(':')
+              .append(row.passageType() == null ? "-" : row.passageType()).append(':')
+              .append(row.passageGroup() == null ? "-" : row.passageGroup()).append('|');
+        }
+        return sb.toString();
     }
 
     /** Writes a spec's typeCount rows for the given section. */
