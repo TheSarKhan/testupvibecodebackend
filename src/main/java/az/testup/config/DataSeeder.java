@@ -31,6 +31,7 @@ public class DataSeeder implements CommandLineRunner {
     private final TemplateRepository templateRepository;
     private final TemplateSubtitleRepository subtitleRepository;
     private final TemplateSectionRepository sectionRepository;
+    private final az.testup.repository.TemplateSectionTypeCountRepository typeCountRepository;
     private final SubscriptionPlanRepository subscriptionPlanRepository;
     private final SubscriptionPlanPriceRepository subscriptionPlanPriceRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
@@ -639,116 +640,139 @@ public class DataSeeder implements CommandLineRunner {
         log.info("Olimpiada şablonu uğurla yaradıldı");
     }
 
+    /** One tapşırıq-group row in the canonical DİM spec. */
+    private record DimTypeCount(QuestionType type, int count, String passageType) {}
+
+    /** One subject section of the canonical DİM Buraxılış spec. */
+    private record DimSectionSpec(String subjectName, int questionCount, String formula,
+                                  List<DimTypeCount> typeCounts) {}
+
+    /**
+     * DİM Buraxılış — rəsmi cədvəl (cəmi 85 tapşırıq, hər fənn max 100 bal).
+     * Nisbi bal düsturunda: qapalı → MCQ (dəyişən a), açıq yazılı → OPEN_MANUAL
+     * (dəyişən l), kodlaşdırılmış açıq → OPEN_AUTO (dəyişən f).
+     */
+    private static final List<DimSectionSpec> DIM_SECTIONS = List.of(
+            // 30 tapşırıq: 16 müstəqil qapalı + dinləmə mətni (3 qapalı + 3 açıq)
+            // + oxu mətni (4 qapalı + 4 açıq). qapalı=23, açıq=7 → 2·7+23=37.
+            new DimSectionSpec("İngilis dili", 30, "(100.0/37.0)*(2*l+a)", List.of(
+                    new DimTypeCount(QuestionType.MCQ, 16, null),
+                    new DimTypeCount(QuestionType.MCQ, 3, "LISTENING"),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 3, "LISTENING"),
+                    new DimTypeCount(QuestionType.MCQ, 4, "TEXT"),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 4, "TEXT"))),
+            // 30 tapşırıq: 10 dil qaydası (qapalı) + oxu mətni (10 qapalı + 10 açıq).
+            // Rəsmi cədvəldə 2 ayrı mətn var; model mətnləri tipə görə qruplaşdırdığı
+            // üçün onlar tək oxu blokunda birləşir — bal eynidir. qapalı=20, açıq=10.
+            new DimSectionSpec("Azərbaycan dili", 30, "(5.0/2.0)*(2*l+a)", List.of(
+                    new DimTypeCount(QuestionType.MCQ, 10, null),
+                    new DimTypeCount(QuestionType.MCQ, 10, "TEXT"),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 10, "TEXT"))),
+            // 25 tapşırıq: 13 qapalı + 5 kodlaşdırılmış açıq + 7 həlli yazılan açıq.
+            new DimSectionSpec("Riyaziyyat", 25, "(25.0/8.0)*(2*l+f+a)", List.of(
+                    new DimTypeCount(QuestionType.MCQ, 13, null),
+                    new DimTypeCount(QuestionType.OPEN_AUTO, 5, null),
+                    new DimTypeCount(QuestionType.OPEN_MANUAL, 7, null))));
+
     private void seedDimTemplate() {
-        // Find or create the template shell.
         Template template = templateRepository.findByTitle("DİM Buraxılış")
                 .orElseGet(() -> templateRepository.save(Template.builder().title("DİM Buraxılış").build()));
-
-        // How many sections does it already have (across all subtitles)?
-        Long sectionCount = entityManager.createQuery(
-                "SELECT COUNT(s) FROM TemplateSection s WHERE s.subtitle.template = :t", Long.class)
-                .setParameter("t", template)
-                .getSingleResult();
-
-        if (sectionCount != null && sectionCount > 0) {
-            // Already populated. Keep it idempotent: only ensure each section has
-            // its 100-bal cap. Structure/formulas are authored here on first fill
-            // and afterwards edited from the admin panel — never restructured here.
-            final Template finalTemplate = template;
-            new TransactionTemplate(transactionManager).execute(status -> {
-                List<TemplateSection> sections = entityManager.createQuery(
-                        "SELECT s FROM TemplateSection s JOIN s.subtitle sub WHERE sub.template = :t",
-                        TemplateSection.class)
-                        .setParameter("t", finalTemplate)
-                        .getResultList();
-                for (TemplateSection sec : sections) {
-                    if (sec.getMaxScore() == null) {
-                        sec.setMaxScore(100.0);
-                        sectionRepository.save(sec);
-                    }
-                }
-                return null;
-            });
-            log.debug("DİM Buraxılış şablonu yoxlanıldı (dolu)");
-            return;
-        }
-
-        // Template exists but has NO sections — a fresh shell OR a hand-made empty
-        // one (e.g. created in the admin panel with empty subtitles). Self-heal:
-        // drop any empty subtitles and build the canonical structure. Safe because
-        // sectionCount == 0 means every existing subtitle is empty.
         final Template ft = template;
+
         new TransactionTemplate(transactionManager).execute(status -> {
-            entityManager.createQuery("DELETE FROM TemplateSubtitle s WHERE s.template = :t")
+            List<TemplateSection> existing = entityManager.createQuery(
+                    "SELECT s FROM TemplateSection s WHERE s.subtitle.template = :t", TemplateSection.class)
                     .setParameter("t", ft)
-                    .executeUpdate();
+                    .getResultList();
+
+            if (existing.isEmpty()) {
+                // Fresh shell, or a hand-made template whose subtitles are all empty
+                // (created in the admin panel). Drop those and build the canonical
+                // structure — safe precisely because there are no sections to lose.
+                entityManager.createQuery("DELETE FROM TemplateSubtitle s WHERE s.template = :t")
+                        .setParameter("t", ft)
+                        .executeUpdate();
+                entityManager.flush();
+                TemplateSubtitle subtitle = subtitleRepository.save(TemplateSubtitle.builder()
+                        .template(ft)
+                        .subtitle("11-ci sinif")
+                        .orderIndex(0)
+                        .build());
+                for (int i = 0; i < DIM_SECTIONS.size(); i++) {
+                    DimSectionSpec spec = DIM_SECTIONS.get(i);
+                    TemplateSection sec = sectionRepository.save(TemplateSection.builder()
+                            .subtitle(subtitle)
+                            .subjectName(spec.subjectName())
+                            .questionCount(spec.questionCount())
+                            .formula(spec.formula())
+                            .maxScore(100.0)
+                            .orderIndex(i)
+                            .build());
+                    applyTypeCounts(sec, spec);
+                }
+                log.info("DİM Buraxılış şablonu strukturu yaradıldı");
+                return null;
+            }
+
+            // Populated. Repair only what is provably corrupt: the admin panel keeps
+            // questionCount equal to the sum of the typeCount rows (see
+            // TemplateService.updateSection), so a mismatch means duplicated rows —
+            // exactly what the old addTypeCount produced. Legitimate admin edits
+            // satisfy the invariant and are left untouched.
+            java.util.List<Long> corrupt = new java.util.ArrayList<>();
+            for (TemplateSection sec : existing) {
+                if (sec.getMaxScore() == null) {
+                    sec.setMaxScore(100.0);
+                    sectionRepository.save(sec);
+                }
+                Long sum = entityManager.createQuery(
+                        "SELECT SUM(tc.count) FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid",
+                        Long.class)
+                        .setParameter("sid", sec.getId())
+                        .getSingleResult();
+                long total = sum == null ? 0L : sum;
+                if (sec.getQuestionCount() != null && total != sec.getQuestionCount().longValue()) {
+                    corrupt.add(sec.getId());
+                }
+            }
+
+            if (corrupt.isEmpty()) {
+                log.debug("DİM Buraxılış şablonu yoxlanıldı (təmiz)");
+                return null;
+            }
+
+            for (Long sid : corrupt) {
+                entityManager.createQuery(
+                        "DELETE FROM TemplateSectionTypeCount tc WHERE tc.section.id = :sid")
+                        .setParameter("sid", sid)
+                        .executeUpdate();
+            }
+            entityManager.flush();
+            // The bulk delete leaves each section's EAGER typeCounts collection
+            // holding rows that no longer exist; clear so the re-fetch below cannot
+            // cascade updates onto them.
+            entityManager.clear();
+
+            for (Long sid : corrupt) {
+                TemplateSection sec = sectionRepository.findById(sid).orElse(null);
+                if (sec == null) continue;
+                DIM_SECTIONS.stream()
+                        .filter(sp -> sp.subjectName().equals(sec.getSubjectName()))
+                        .findFirst()
+                        .ifPresent(sp -> applyTypeCounts(sec, sp));
+            }
+            log.warn("DİM Buraxılış: {} bölmədə təkrarlanmış tapşırıq sayları təmir edildi", corrupt.size());
             return null;
         });
-
-        TemplateSubtitle subtitle = subtitleRepository.save(TemplateSubtitle.builder()
-                .template(template)
-                .subtitle("11-ci sinif")
-                .orderIndex(0)
-                .build());
-        buildDimSections(subtitle);
-        log.info("DİM Buraxılış şablonu strukturu yaradıldı");
     }
 
-    /** Builds the three DİM Buraxılış subject sections under the given subtitle. */
-    private void buildDimSections(TemplateSubtitle subtitle) {
-        // ── İngilis dili — 30 tapşırıq | Max 100 bal ────────────────────────
-        // Nisbi bal: (100/37)·(2·n_açıq_yazılı + n_qapalı).  qapalı=23, açıq=7 → 2·7+23=37.
-        //   • 16 müstəqil qapalı tapşırıq
-        //   • Dinləyib-anlama mətni: 3 qapalı + 3 açıq (yazılı)
-        //   • Oxuyub-anlama mətni:   4 qapalı + 4 açıq (yazılı)
-        // qapalı → MCQ (dəyişən a), açıq yazılı → OPEN_MANUAL (dəyişən l).
-        TemplateSection ingilis = TemplateSection.builder()
-                .subtitle(subtitle)
-                .subjectName("İngilis dili")
-                .questionCount(30)
-                .formula("(100.0/37.0)*(2*l+a)")
-                .maxScore(100.0)
-                .orderIndex(0)
-                .build();
-        ingilis = sectionRepository.save(ingilis);
-        addTypeCount(ingilis, QuestionType.MCQ, 16, 0, null);
-        addTypeCount(ingilis, QuestionType.MCQ, 3, 1, "LISTENING");
-        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 3, 2, "LISTENING");
-        addTypeCount(ingilis, QuestionType.MCQ, 4, 3, "TEXT");
-        addTypeCount(ingilis, QuestionType.OPEN_MANUAL, 4, 4, "TEXT");
-
-        // ── Azərbaycan dili — 30 tapşırıq | Max 100 bal ─────────────────────
-        // Nisbi bal: (5/2)·(2·n_açıq_yazılı + n_qapalı).  qapalı=20, açıq=10 → 2·10+20=40.
-        //   • 10 müstəqil qapalı (dil qaydaları)
-        //   • Oxuyub-anlama mətni: 10 qapalı + 10 açıq (yazılı)
-        // Rəsmi cədvəldə 2 ayrı mətn var; şablon modeli mətnləri tipə görə
-        // qruplaşdırdığı üçün onlar burada tək oxu blokunda birləşir (bal eynidir).
-        TemplateSection azDili = TemplateSection.builder()
-                .subtitle(subtitle)
-                .subjectName("Azərbaycan dili")
-                .questionCount(30)
-                .formula("(5.0/2.0)*(2*l+a)")
-                .maxScore(100.0)
-                .orderIndex(1)
-                .build();
-        azDili = sectionRepository.save(azDili);
-        addTypeCount(azDili, QuestionType.MCQ, 10, 0, null);
-        addTypeCount(azDili, QuestionType.MCQ, 10, 1, "TEXT");
-        addTypeCount(azDili, QuestionType.OPEN_MANUAL, 10, 2, "TEXT");
-
-        // Riyaziyyat: MCQ=13, OPEN_AUTO=5, OPEN_MANUAL=7  |  Max = 100 bal
-        TemplateSection riyaziyyat = TemplateSection.builder()
-                .subtitle(subtitle)
-                .subjectName("Riyaziyyat")
-                .questionCount(25)
-                .formula("(25.0/8.0)*(2*l+f+a)")
-                .maxScore(100.0)
-                .orderIndex(2)
-                .build();
-        riyaziyyat = sectionRepository.save(riyaziyyat);
-        addTypeCount(riyaziyyat, QuestionType.MCQ, 13, 0);
-        addTypeCount(riyaziyyat, QuestionType.OPEN_AUTO, 5, 1);
-        addTypeCount(riyaziyyat, QuestionType.OPEN_MANUAL, 7, 2);
+    /** Writes a spec's typeCount rows for the given section. */
+    private void applyTypeCounts(TemplateSection section, DimSectionSpec spec) {
+        List<DimTypeCount> rows = spec.typeCounts();
+        for (int i = 0; i < rows.size(); i++) {
+            DimTypeCount row = rows.get(i);
+            addTypeCount(section, row.type(), row.count(), i, row.passageType());
+        }
     }
 
     @Transactional
@@ -914,8 +938,17 @@ public class DataSeeder implements CommandLineRunner {
                 .orderIndex(order)
                 .passageType(passageType)
                 .build();
-        section.getTypeCounts().add(tc);
-        sectionRepository.save(section);
+        // Persist the child row directly — it owns the FK (TemplateSection maps
+        // typeCounts with mappedBy = "section").
+        //
+        // The previous version did `section.getTypeCounts().add(tc)` followed by
+        // `sectionRepository.save(section)`. For an already-persisted section
+        // save() is merge(), which copies each still-transient child into a NEW
+        // managed instance and leaves the caller's instance with id == null. So
+        // every later call re-inserted all earlier children: N calls produced
+        // 1+2+…+N rows. That is what inflated DİM to 113/60/56 questions.
+        // Olimpiada hid the bug because it calls this once per section.
+        typeCountRepository.save(tc);
     }
 
     @Transactional
