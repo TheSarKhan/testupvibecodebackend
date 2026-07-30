@@ -120,13 +120,15 @@ public class DataSeeder implements CommandLineRunner {
         migrateExamSubjectsToList();
         seedSubjectTopics();
         seedTags();
-        seedOlimpiyadaTemplate();
-        seedSampleOlimpiyadaExam();
+        // Olimpiada artıq canlı DB-də mövcuddur — hər deploy-da yenidən seed
+        // etməyə ehtiyac yoxdur. Struktur/nümunə saytdadır; təkrar işə salmamaq
+        // üçün çağırışlar comment-dədir. (cleanupNonOlimpiadaSamples yenə də
+        // 'Olimpiada'-nı adına görə qoruyur, ona toxunulmur.)
+        // seedOlimpiyadaTemplate();
+        // seedSampleOlimpiyadaExam();
         seedDimTemplate();
-        // The "Olimpiada" and "DİM Buraxılış" templates are seeded above. Other
-        // sample templates and sample exams are intentionally disabled and any
-        // previously seeded ones are removed below (the two real templates are
-        // preserved).
+        // 'Olimpiada' və 'DİM Buraxılış' həqiqi şablonlardır və aşağıdakı cleanup
+        // onları qoruyur; digər nümunə şablon/imtahanlar silinir.
         cleanupNonOlimpiadaSamples();
     }
 
@@ -638,13 +640,20 @@ public class DataSeeder implements CommandLineRunner {
     }
 
     private void seedDimTemplate() {
-        Template template = templateRepository.findByTitle("DİM Buraxılış").orElse(null);
+        // Find or create the template shell.
+        Template template = templateRepository.findByTitle("DİM Buraxılış")
+                .orElseGet(() -> templateRepository.save(Template.builder().title("DİM Buraxılış").build()));
 
-        if (template != null) {
-            // Already seeded. Keep it idempotent: just make sure each section has
-            // its 100-bal cap. Structure and formulas are authored here on first
-            // creation and afterwards edited from the admin panel — we never
-            // restructure an existing template on restart.
+        // How many sections does it already have (across all subtitles)?
+        Long sectionCount = entityManager.createQuery(
+                "SELECT COUNT(s) FROM TemplateSection s WHERE s.subtitle.template = :t", Long.class)
+                .setParameter("t", template)
+                .getSingleResult();
+
+        if (sectionCount != null && sectionCount > 0) {
+            // Already populated. Keep it idempotent: only ensure each section has
+            // its 100-bal cap. Structure/formulas are authored here on first fill
+            // and afterwards edited from the admin panel — never restructured here.
             final Template finalTemplate = template;
             new TransactionTemplate(transactionManager).execute(status -> {
                 List<TemplateSection> sections = entityManager.createQuery(
@@ -660,18 +669,33 @@ public class DataSeeder implements CommandLineRunner {
                 }
                 return null;
             });
-            log.debug("DİM Buraxılış şablonu yoxlanıldı");
+            log.debug("DİM Buraxılış şablonu yoxlanıldı (dolu)");
             return;
         }
 
-        template = templateRepository.save(Template.builder().title("DİM Buraxılış").build());
+        // Template exists but has NO sections — a fresh shell OR a hand-made empty
+        // one (e.g. created in the admin panel with empty subtitles). Self-heal:
+        // drop any empty subtitles and build the canonical structure. Safe because
+        // sectionCount == 0 means every existing subtitle is empty.
+        final Template ft = template;
+        new TransactionTemplate(transactionManager).execute(status -> {
+            entityManager.createQuery("DELETE FROM TemplateSubtitle s WHERE s.template = :t")
+                    .setParameter("t", ft)
+                    .executeUpdate();
+            return null;
+        });
 
         TemplateSubtitle subtitle = subtitleRepository.save(TemplateSubtitle.builder()
                 .template(template)
                 .subtitle("11-ci sinif")
                 .orderIndex(0)
                 .build());
+        buildDimSections(subtitle);
+        log.info("DİM Buraxılış şablonu strukturu yaradıldı");
+    }
 
+    /** Builds the three DİM Buraxılış subject sections under the given subtitle. */
+    private void buildDimSections(TemplateSubtitle subtitle) {
         // ── İngilis dili — 30 tapşırıq | Max 100 bal ────────────────────────
         // Nisbi bal: (100/37)·(2·n_açıq_yazılı + n_qapalı).  qapalı=23, açıq=7 → 2·7+23=37.
         //   • 16 müstəqil qapalı tapşırıq
@@ -725,8 +749,6 @@ public class DataSeeder implements CommandLineRunner {
         addTypeCount(riyaziyyat, QuestionType.MCQ, 13, 0);
         addTypeCount(riyaziyyat, QuestionType.OPEN_AUTO, 5, 1);
         addTypeCount(riyaziyyat, QuestionType.OPEN_MANUAL, 7, 2);
-
-        log.info("DİM Buraxılış şablonu uğurla yaradıldı");
     }
 
     @Transactional
